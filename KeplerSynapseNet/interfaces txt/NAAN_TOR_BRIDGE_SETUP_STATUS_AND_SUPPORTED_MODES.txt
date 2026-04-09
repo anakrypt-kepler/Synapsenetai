@@ -1,0 +1,225 @@
+NAAN TOR BRIDGE SETUP STATUS AND SUPPORTED MODES
+Version: v1
+Status Date: 2026-02-27
+Scope: SynapseNet NAAN web/mining Tor routing, external/managed runtime modes, bridge operator workflow
+
+==================================================
+1. CURRENT SUPPORT STATUS (IMPLEMENTED)
+==================================================
+
+[x] Tor runtime mode selection in config (`agent.tor.mode`)
+[x] Modes supported: `auto`, `managed`, `external`
+[x] External Tor path using custom SOCKS port (example: `127.0.0.1:9150`)
+[x] Managed Tor startup path (with startup orchestration tests)
+[x] Safe managed-Tor shutdown (PID file + ownership checks; no blind `killall tor`)
+[x] Managed-Tor FD inheritance fix (RPC/P2P sockets not inherited by Tor child process)
+[x] `torReadyForWeb` runtime field based on real SOCKS traffic probe
+[x] `torBootstrapState` runtime field for operator diagnostics
+[x] `9050` vs `9150` conflict hint (`torConflictHint9050`)
+[x] macOS occupied-port owner diagnostics (`pid` + command hint)
+[x] macOS optional occupied-port takeover mode (`--takeover-port-owner`)
+[x] TUI visibility for external/shared Tor (`9150`) and conflict hints
+[x] Startup wizard bridge-mode step (`none`, `obfs4`, `external`)
+[x] Startup wizard bridge paste flow (press `[P]` on bridge-mode step) writes `<DATA_DIR>/tor/bridges.obfs4.txt`
+[x] Settings menu bridge paste shortcut (press `[T]`) writes `<DATA_DIR>/tor/bridges.obfs4.txt`
+[x] Settings menu site allowlist editor (press `[W]`) writes `clearnet_site_allowlist` + `onion_site_allowlist` in `<DATA_DIR>/naan_agent_web.conf`
+[x] Cross-platform smoke scripts for bridge bootstrap validation (macOS/Linux/Windows)
+
+==================================================
+2. SUPPORTED TOR RUNTIME MODES
+==================================================
+
+Mode: `agent.tor.mode=auto`
+- Behavior: SynapseNet may use existing SOCKS if reachable, and may autostart managed Tor if Tor is required and unavailable.
+- Default managed target ports are typically `9050/9051` unless config overrides.
+- Use when operator does not need strict separation between managed/external runtime.
+
+Mode: `agent.tor.mode=managed`
+- Behavior: SynapseNet is allowed to start and own a Tor process.
+- Recommended only when operator is not already running a bridge-configured external Tor.
+- SynapseNet tracks managed PID and attempts safe owned shutdown on exit.
+
+Mode: `agent.tor.mode=external`
+- Behavior: SynapseNet is SOCKS client only; managed Tor autostart is disabled.
+- Recommended for bridge workflows (obfs4) and shared setup with Tor Browser + CLI tools.
+- Typical config: SOCKS `127.0.0.1:9150` with optional ControlPort `9151`.
+
+==================================================
+3. RECOMMENDED BRIDGE WORKFLOW (EXTERNAL TOR)
+==================================================
+
+Recommended operator architecture:
+- One external Tor process (bridge-enabled) on `127.0.0.1:9150`
+- SynapseNet uses `agent.tor.mode=external`
+- Tor Browser may reuse the same SOCKS5 `127.0.0.1:9150`
+- CLI tools (`curl`, `w3m`, etc.) may use the same SOCKS5 port
+
+Why this is recommended:
+- Avoids `9050` / `9150` conflicts between SynapseNet-managed Tor and external bridge Tor
+- Makes debugging easier (single Tor runtime)
+- Aligns SynapseNet/Browser/CLI traffic path for validation
+
+Bridge pool storage (SynapseNet runtime):
+- Bridge file: `<DATA_DIR>/tor/bridges.obfs4.txt`
+- Cache file: `<DATA_DIR>/tor/bridge_pool_cache.json`
+
+NAAN site policy storage:
+- Site policy file: `<DATA_DIR>/naan_agent_web.conf`
+- Keys edited from TUI:
+  - `clearnet_site_allowlist=...`
+  - `onion_site_allowlist=...`
+
+==================================================
+4. RUNTIME STATUS FIELDS (OPERATOR-RELEVANT)
+==================================================
+
+`naan.status` and `node.status` expose Tor diagnostics including:
+- `torRuntimeMode`
+- `torSocksPort`
+- `torControlPort`
+- `torControlReachable`
+- `torReachable` / `torSocksReachable`
+- `torReadyForWeb`
+- `torBootstrapState`
+- `torConflictHint9050`
+- `torManaged`
+- `torManagedPid`
+- `torReadyForOnionService`
+- `torOnionServiceActive`
+- `torOnionServiceState`
+- `torBridgeProvider`
+- `torBridgeProviderUpdatedAt`
+- `torBridgeCacheAgeSeconds`
+- `torRoute` object with `runtimeMode`, `webReady`, `bootstrapState`, `conflictHint9050`
+
+Operator interpretation:
+- `torReachable=true` means SOCKS listener is reachable
+- `torReadyForWeb=true` means real Tor SOCKS web probe succeeded
+- `torBootstrapState=SOCKS_UP_BOOTSTRAP` usually means SOCKS is up but web circuits are not ready yet
+- `torConflictHint9050=true` usually indicates SynapseNet expects `9050` while working external Tor is on `9150`
+- `torControlReachable=false` with `torReadyForWeb=true` indicates web routing works but ControlPort-dependent onion service may remain unavailable
+- `torOnionServiceState=CONTROL_UNREACHABLE_WEB_READY` indicates exactly that split mode (web-ready, onion-service not ready)
+- `torBridgeCacheAgeSeconds` + `torBridgeProvider.reasonCode/error` help identify stale/expired bridge cache vs transport/bootstrap failures
+
+==================================================
+5. CROSS-PLATFORM SMOKE SCRIPTS
+==================================================
+
+macOS:
+- `KeplerSynapseNet/tools/macos_tor_obfs4_helper.sh`
+- Supports bridge line normalize/dedupe, torrc generation, `--verify-config`, optional bootstrap + curl SOCKS probe, bridge-subset retry rotation (`--bootstrap-attempts`, `--bridge-subset-size`), occupied-port owner diagnostics, optional occupied-port takeover (`--takeover-port-owner`), and SynapseNet external snippet generation
+- Standalone validator: `KeplerSynapseNet/tools/macos_tor_validate.sh` (external + managed mode validation with evidence output)
+- One-shot external e2e runner: `KeplerSynapseNet/tools/macos_tor_external_9150_e2e.sh` (helper bootstrap + external validator + unified evidence bundle)
+  - Supports repeatable `--bridges-file` fallback order and records `selectedBridgeFile` in `summary.json`
+
+Linux:
+- `KeplerSynapseNet/tools/linux_tor_obfs4_smoke.sh`
+- Supports bridge line normalize/dedupe, torrc generation, `--verify-config`, optional bootstrap + curl SOCKS probe, SynapseNet external snippet generation
+- Standalone validator: `KeplerSynapseNet/tools/linux_tor_validate.sh` (external + managed mode validation with evidence output)
+- One-shot external e2e runner: `KeplerSynapseNet/tools/linux_tor_external_9150_e2e.sh` (helper bootstrap + external validator + unified evidence bundle)
+  - Supports repeatable `--bridges-file` fallback order and records `selectedBridgeFile` in `summary.json`
+
+Windows:
+- `KeplerSynapseNet/tools/windows_tor_obfs4_smoke.ps1`
+- Supports Tor Browser/Expert/custom path detection, bridge line normalize/dedupe, torrc generation, `--verify-config`, optional bootstrap + curl SOCKS probe (via `curl.exe`), `user`/`service` mode, safe `tasklist`/`taskkill` ownership checks, and SynapseNet external snippet generation
+- Standalone validator: `KeplerSynapseNet/tools/windows_tor_validate.ps1` (SOCKS + bootstrap-path + DDG probe)
+- One-shot external e2e runner: `KeplerSynapseNet/tools/windows_tor_external_9150_e2e.ps1` (helper bootstrap + validator + unified evidence bundle)
+  - Supports multiple `-BridgesFile` inputs (array fallback order) and records `selectedBridgeFile` in `summary.json`
+
+Note:
+- PowerShell syntax verification was not executed in the current macOS environment if `pwsh` is unavailable.
+
+==================================================
+6. OPERATOR RUNBOOKS (CURRENT)
+==================================================
+
+- `KeplerSynapseNet/docs/naan_tor_validation_runbook.md`
+- `KeplerSynapseNet/docs/macos_tor_obfs4_automation_runbook.md`
+- `KeplerSynapseNet/docs/tor_bridge_troubleshooting_runbook.md`
+- `KeplerSynapseNet/docs/tor_9050_9150_conflict_runbook.md`
+- `KeplerSynapseNet/docs/tor_managed_cleanup_safety_runbook.md`
+- `KeplerSynapseNet/docs/tor_shared_external_9150_runbook.md`
+
+==================================================
+7. KNOWN LIMITS / NEXT WORK
+==================================================
+
+- Bridge distribution is often interactive (CAPTCHA/JS) and should not be scraped.
+  The runtime remote adapter is intentionally conservative: if a remote source looks
+  interactive, it returns `manual_step_required` and asks the operator to provide
+  bridge lines via file/manual config.
+- GitHub Actions live external-9150 workflow is secret-gated and may be disabled in CI:
+  - `.github/workflows/tor-external-9150-live-e2e.yml` requires `TOR_OBFS4_BRIDGES`
+- Cross-platform smoke/validator scripts are operator tools; live network validation is not CI-executed in this workspace, but CI now enforces script syntax/help gates across Linux/macOS/Windows.
+- Windows script behavior should be validated on a real Windows host with tor.exe + obfs4proxy.exe installed.
+- Linux and Windows live external-validation evidence is still pending on real hosts.
+- Site allowlist is operator-controlled and security-sensitive:
+  - adding untrusted domains can expose the node to malicious content
+  - AI/IDE triage is useful, but does not replace AV/EDR controls
+- Latest macOS evidence confirms both managed lifecycle and external `9150` web-ready operation (`torReadyForWeb=true`, `torBootstrapState=WEB_READY`):
+  - `KeplerSynapseNet/build/evidence/macos_tor_validate_20260227T223031Z`
+  - `KeplerSynapseNet/build/evidence/macos_tor_external_9150_e2e_20260227T223047Z`
+
+==================================================
+8. MINIMUM EXTERNAL TOR (9150) CONFIG FOR SYNAPSENET
+==================================================
+
+agent.tor.required=true
+agent.tor.mode=external
+agent.routing.allow_clearnet_fallback=false
+agent.routing.allow_p2p_clearnet_fallback=false
+agent.tor.socks_host=127.0.0.1
+agent.tor.socks_port=9150
+tor.socks.host=127.0.0.1
+tor.socks.port=9150
+
+Optional:
+tor.control.port=9151
+
+Tor Browser (macOS) external SOCKS client shortcut (no Tor ownership, uses the same external Tor on 9150):
+
+TOR_PROVIDER=none TOR_SOCKS_HOST=127.0.0.1 TOR_SOCKS_PORT=9150 "/Applications/Tor Browser.app/Contents/MacOS/firefox" --new-instance
+
+==================================================
+9. QUICK NO-CONFLICT COMMAND SEQUENCE (MACOS)
+==================================================
+
+Repository location is represented as `<repo-root>` on purpose (no machine-specific paths).
+
+1) Stop extra Tor owners (optional but recommended before restart):
+
+pkill -f "/Applications/Tor Browser.app/Contents/MacOS/Tor/tor" || true
+pkill -f "/opt/homebrew/bin/tor" || true
+sleep 1
+
+2) Start one shared external Tor on 9150:
+
+cd <repo-root>/KeplerSynapseNet
+tools/macos_tor_obfs4_helper.sh \
+  --bridges-file /tmp/bridges.txt \
+  --socks-port 9150 \
+  --control-port 9151 \
+  --bootstrap-check \
+  --bootstrap-attempts 6 \
+  --bridge-subset-size 4 \
+  --takeover-port-owner \
+  --keep-running \
+  --out /tmp/tor-obfs4-synapsenet.conf
+
+3) Verify the shared Tor path:
+
+lsof -nP -iTCP:9150 -sTCP:LISTEN
+curl --socks5-hostname 127.0.0.1:9150 https://check.torproject.org/api/ip --max-time 30
+
+4) Start SynapseNet with external Tor config:
+
+cd <repo-root>/KeplerSynapseNet
+TERM=xterm-256color ./build/synapsed -D /tmp/synapsenet_fresh --dev -c /tmp/synapsenet_external_9150.conf
+
+5) Start Tor Browser as SOCKS client of the same Tor:
+
+TOR_PROVIDER=none TOR_SOCKS_HOST=127.0.0.1 TOR_SOCKS_PORT=9150 "/Applications/Tor Browser.app/Contents/MacOS/firefox" --new-instance
+
+Operational rules:
+- Do not run plain `tor` manually after this sequence.
+- If helper reports `9150 already in use` and curl returns `"IsTor":true`, shared Tor is already running; continue with SynapseNet + Tor Browser client mode.

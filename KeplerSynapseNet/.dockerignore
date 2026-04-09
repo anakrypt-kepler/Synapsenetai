@@ -1,0 +1,20 @@
+build/
+.cache/
+.git/
+.github/
+
+# local state (must not be baked into images)
+tmp/
+data/*.db
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/wallet.dat
+**/synapsed.lock
+**/*.log
+
+# local models are huge
+models/
+**/*.gguf
+
+.DS_Store

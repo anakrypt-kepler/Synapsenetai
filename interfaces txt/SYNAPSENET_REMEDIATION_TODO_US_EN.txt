@@ -1,0 +1,1023 @@
+==============================================================================
+                  SYNAPSENET REMEDIATION TODO (US ENGLISH)
+==============================================================================
+
+Snapshot: March 18, 2026
+Scope: KeplerSynapseNet core, wallet, RPC, discovery, Docker defaults, and ops
+Purpose: Turn the reported defects into an implementation backlog with concrete
+repo targets and acceptance criteria.
+
+Source note:
+- This TODO was normalized against the current local repository state.
+- Some original findings are fully confirmed in code.
+- Some are partially addressed already and need hardening, not greenfield work.
+- One item (DHT/Kademlia) does not appear in the current source tree and should
+  be treated as a branch-sync or new-feature decision, not a simple toggle.
+
+
+==============================================================================
+P0 - RELEASE BLOCKERS
+==============================================================================
+
+[x] 1. Replace floating-point wallet balances with atom-based integers
+    Priority: P0
+    Progress update (March 19, 2026):
+    - `core::Wallet` now stores balances in atom units and wallet crypto tests
+      cover integer balance paths in
+      `KeplerSynapseNet/include/core/wallet.h`,
+      `KeplerSynapseNet/src/core/wallet.cpp`, and
+      `KeplerSynapseNet/tests/test_wallet_crypto_runtime.cpp`.
+    - CLI balance/reward output now reads `balanceAtoms`, `creditedAtoms`,
+      `mintedAtoms`, and `mintedSelfAtoms` instead of formatting floating RPC
+      values back into money.
+    - Shared wallet UI state now carries atom integers in
+      `KeplerSynapseNet/include/tui/tui.h`,
+      `KeplerSynapseNet/src/tui/tui.cpp`, and
+      `KeplerSynapseNet/src/tui/tui_dashboard.cpp`.
+    - Remaining work: remove the remaining floating reward/presentation fields
+      outside wallet balance state before closing this item.
+    Current repo state:
+    - Confirmed in `KeplerSynapseNet/include/core/wallet.h` and
+      `KeplerSynapseNet/src/core/wallet.cpp`.
+    - Wallet API and storage still use `double` for `balance`,
+      `pendingBalance`, and `stakedBalance`.
+    - PoE already uses atom-based stake semantics in the main runtime path
+      (`validatorMinStakeAtoms`).
+    Required work:
+    - Introduce a canonical atomic unit type, for example `uint64_t AmountAtoms`.
+    - Define one public constant for conversion, for example
+      `1 NGT = 100000000 atoms`.
+    - Replace all wallet/core balance fields, getters, setters, serializers,
+      RPC payloads, and TUI formatting paths that currently use `double`.
+    - Keep decimal formatting only at UI and RPC presentation boundaries.
+    - Add migration logic for any persisted state that serialized balances as
+      floating-point values.
+    Acceptance criteria:
+    - No financial state in wallet/core code uses `double`.
+    - Internal transfer, staking, pending-balance, and reward logic use atoms.
+    - RPC and TUI expose both human-readable NGT and raw atoms where needed.
+    - Tests cover large values, zero, rounding boundaries, and serialization.
+
+[x] 2. Split `src/main.cpp` into owned modules
+    Priority: P0
+    Progress update (March 19, 2026):
+    - Confirmed on March 19, 2026: `KeplerSynapseNet/src/main.cpp` started this
+      remediation effort at 14,388 lines and is still far too large for safe
+      ownership, review, and maintenance.
+    - Extracted shared startup config into
+      `KeplerSynapseNet/include/node/node_config.h`.
+    - Extracted CLI help/version parsing into
+      `KeplerSynapseNet/include/cli/cli_parser.h` and
+      `KeplerSynapseNet/src/cli/cli_parser.cpp`.
+    - Extracted RPC client auth/config helpers into
+      `KeplerSynapseNet/include/config/config_loader.h` and
+      `KeplerSynapseNet/src/config/config_loader.cpp`.
+    - Extracted the CLI RPC transport and dispatcher into
+      `KeplerSynapseNet/include/cli/cli_rpc_client.h` and
+      `KeplerSynapseNet/src/cli/cli_rpc_client.cpp`.
+    - Extracted the local in-process CLI operator dispatcher out of
+      `main.cpp` and into the shared CLI module in
+      `KeplerSynapseNet/include/cli/cli_rpc_client.h` and
+      `KeplerSynapseNet/src/cli/cli_rpc_client.cpp`, so both RPC and local CLI
+      fallback now run through the same command surface.
+    - Extracted server-side RPC method registration into
+      `KeplerSynapseNet/include/rpc/rpc_commands.h` and
+      `KeplerSynapseNet/src/rpc/rpc_commands.cpp`.
+    - Extracted daemon-mode runtime orchestration and thread lifecycle helpers
+      into `KeplerSynapseNet/include/node/node_runtime.h` and
+      `KeplerSynapseNet/src/node/node_runtime.cpp`.
+    - Extracted directory bootstrap, system checks, signal registration, and
+      daemonization into `KeplerSynapseNet/include/node/node_init.h` and
+      `KeplerSynapseNet/src/node/node_init.cpp`.
+    - Extracted core TUI command dispatch into
+      `KeplerSynapseNet/include/tui/tui_command_bridge.h` and
+      `KeplerSynapseNet/src/tui/tui_command_bridge.cpp`, so the TUI send and
+      PoE command surface no longer lives inline inside `main.cpp`.
+    - Extracted the network loop policy/orchestration into
+      `KeplerSynapseNet/include/node/node_runtime.h` and
+      `KeplerSynapseNet/src/node/node_runtime.cpp`, so fail-closed Tor routing,
+      peer refresh, bootstrap reconnects, and addnode/connectnode orchestration
+      no longer live inline inside `main.cpp`.
+    - Extracted the sync loop and the maintenance loop orchestration into
+      `KeplerSynapseNet/include/node/node_runtime.h` and
+      `KeplerSynapseNet/src/node/node_runtime.cpp`, so sync request scheduling,
+      timed maintenance ticks, auto-vote cadence, and remote model maintenance
+      are no longer owned inline by `main.cpp`.
+    - Extracted the generic TUI refresh thread/runtime into
+      `KeplerSynapseNet/include/tui/tui_runtime.h` and
+      `KeplerSynapseNet/src/tui/tui_runtime.cpp`, so `runWithTUI()` now hands
+      the update cadence and UI push sequence to a dedicated TUI runtime module
+      instead of owning the thread loop directly.
+    - Extracted TUI core snapshot assembly, knowledge snapshot assembly,
+      attached-agent status assembly, observatory feed mapping, and agent-event
+      mapping into
+      `KeplerSynapseNet/include/tui/tui_snapshot_builder.h` and
+      `KeplerSynapseNet/src/tui/tui_snapshot_builder.cpp`, so `main.cpp` no
+      longer owns those large TUI data-shaping blocks inline.
+    - Replaced the remaining inline TUI core and knowledge hook boilerplate in
+      `main.cpp` with direct collector inputs handled by
+      `KeplerSynapseNet/include/tui/tui_snapshot_builder.h` and
+      `KeplerSynapseNet/src/tui/tui_snapshot_builder.cpp`, so `main.cpp` no
+      longer assembles large callback bundles for those views.
+    - Extracted shared node RPC response shapers into
+      `KeplerSynapseNet/include/rpc/rpc_node_views.h` and
+      `KeplerSynapseNet/src/rpc/rpc_node_views.cpp`, including the JSON views
+      for `node.peers`, `node.logs`, `node.seeds`, `node.discovery_stats`, the
+      full `node.status` response, and the normalized `node.tor.control`
+      action/status formatting used by the control path.
+    - Extracted NAAN RPC response shaping for observatory artifacts, signed
+      artifacts, draft records, and pipeline dry-run / drain output into
+      `KeplerSynapseNet/include/rpc/rpc_naan_views.h` and
+      `KeplerSynapseNet/src/rpc/rpc_naan_views.cpp`, so those JSON builders no
+      longer live inline in `main.cpp`.
+    - Extracted the full `naan.status` response shaping into
+      `KeplerSynapseNet/include/rpc/rpc_naan_views.h` and
+      `KeplerSynapseNet/src/rpc/rpc_naan_views.cpp` via
+      `RpcNaanStatusInputs` and `buildRpcNaanStatusResponse(...)`, so
+      `main.cpp` now collects runtime inputs instead of owning the large
+      NAAN status JSON assembly inline.
+    - Extracted `node.tor.control` response shaping into
+      `KeplerSynapseNet/include/rpc/rpc_node_views.h` and
+      `KeplerSynapseNet/src/rpc/rpc_node_views.cpp` via
+      `RpcNodeTorControlResponseInputs` and
+      `buildRpcNodeTorControlResponse(...)`, so `main.cpp` no longer owns the
+      ad hoc Tor-control JSON merge and action-response formatting inline.
+    - Extracted the `reloadNaanWebConfig(...)` bridge-reload path out of
+      `handleRpcNodeTorControl` into
+      `KeplerSynapseNet/include/node/tor_control_runtime.h` and
+      `KeplerSynapseNet/src/node/tor_control_runtime.cpp` via
+      `ReloadNaanWebConfigInputs` and
+      `reloadNaanWebConfigJson(...)`, so the Tor-control handler no longer
+      owns the NAAN web overlay reload, bridge refresh, connector audit
+      reconfiguration, and persistence path inline.
+    - Extracted the `node.tor.control` action orchestration for
+      `refresh_bridges`, `switch_mode`, and `restart_managed_tor` into
+      `KeplerSynapseNet/include/node/tor_control_runtime.h` and
+      `KeplerSynapseNet/src/node/tor_control_runtime.cpp` via
+      `TorControlActionCallbacks` and `handleTorControlAction(...)`, so
+      `main.cpp` no longer owns the Tor control-flow branches, restart guard,
+      runtime mode write path, and action response assembly for that RPC.
+    - Extracted the shared Tor runtime state collector into
+      `KeplerSynapseNet/include/node/tor_status_runtime.h` and
+      `KeplerSynapseNet/src/node/tor_status_runtime.cpp` via
+      `TorStatusRuntimeInputs` and `collectTorStatusInputs(...)`, and reused
+      it in `naan.status`, `node.status`, and `node.tor.control`, so
+      `main.cpp` no longer duplicates the same Tor status snapshot assembly
+      across three RPC paths.
+    - Extracted the shared `node.status` collectors for quantum status and
+      network health into `KeplerSynapseNet/include/node/node_status_runtime.h`
+      and `KeplerSynapseNet/src/node/node_status_runtime.cpp` via
+      `NodeQuantumStatusRuntimeInputs`,
+      `NodeNetworkHealthRuntimeInputs`,
+      `collectNodeQuantumInputs(...)`, and
+      `collectNodeNetworkHealthInputs(...)`, and reused the network-health
+      collector in `naan.status`, so `main.cpp` no longer owns those dense
+      runtime assembly blocks inline.
+    - Moved the shared quantum capability and implementation helpers out of
+      `main.cpp` and into
+      `KeplerSynapseNet/include/node/node_status_runtime.h` and
+      `KeplerSynapseNet/src/node/node_status_runtime.cpp`, including
+      `quantumLiboqsEnabled()`,
+      `quantumKyberImplementationMode()`,
+      `quantumDilithiumImplementationMode()`,
+      `quantumSphincsImplementationMode()`, and
+      `quantumCapabilityMode()`, so startup logging, `node.status`, and TUI
+      snapshot wiring no longer depend on `main.cpp`-local static helpers for
+      that shared logic.
+    - Extracted the attached-agent TUI runtime assembly into
+      `KeplerSynapseNet/include/tui/tui_snapshot_builder.h` and
+      `KeplerSynapseNet/src/tui/tui_snapshot_builder.cpp` via
+      `TuiAttachedAgentStatusCollectorInputs` and
+      `collectAttachedAgentStatus(...)`, so `main.cpp` no longer owns the
+      draft-queue counting, network/ledger/mining/storage shaping, and final
+      attached-agent status mapping inline.
+    - Extracted shared maintenance-loop helpers into
+      `KeplerSynapseNet/include/node/maintenance_runtime.h` and
+      `KeplerSynapseNet/src/node/maintenance_runtime.cpp`, including
+      `collectPoeSyncRetryRequests(...)`,
+      `collectExpiredProviderSessions(...)`,
+      `shouldBuildPendingBlock(...)`, and
+      `shouldBroadcastLocalOffer(...)`, so `main.cpp` no longer owns the
+      dense inline PoE retry collection, provider-session expiry collection,
+      pending-block gating, and local-offer eligibility logic inside
+      `maintenanceLoop()`.
+    - Extracted daemon, network, sync, and consensus wrapper adapters into
+      `KeplerSynapseNet/include/node/node_runtime.h` and
+      `KeplerSynapseNet/src/node/node_runtime.cpp` via
+      `runDaemonRuntimeAdapter(...)`,
+      `runNetworkRuntimeAdapter(...)`,
+      `runSyncRuntimeAdapter(...)`, and
+      `runConsensusRuntimeAdapter(...)`, so `main.cpp` no longer owns the
+      repeated hook-assembly and housekeeping boilerplate for those runtime
+      entry points.
+    - Extracted the shared AI RPC remote-completion flow and generation-param
+      parsing into `KeplerSynapseNet/include/rpc/rpc_ai_runtime.h` and
+      `KeplerSynapseNet/src/rpc/rpc_ai_runtime.cpp` via
+      `buildRpcAiGenerationParams(...)` and
+      `runRpcAiCompleteRemote(...)`, so `main.cpp` no longer owns the remote
+      session lookup, payment submission path, renter request assembly,
+      pending-request wait loop, and duplicated generation-param decoding.
+    - Extracted the local AI RPC web-injection preparation and response
+      shaping into `KeplerSynapseNet/include/rpc/rpc_ai_runtime.h` and
+      `KeplerSynapseNet/src/rpc/rpc_ai_runtime.cpp` via
+      `prepareRpcAiLocalWebContext(...)` and
+      `buildRpcAiLocalResponse(...)`, so `main.cpp` no longer owns the
+      inline web-config rewrite, search-result counting, context injection
+      result shaping, and final local AI response JSON assembly.
+    - Extracted update/install/implant RPC response shaping into
+      `KeplerSynapseNet/include/rpc/rpc_update_views.h` and
+      `KeplerSynapseNet/src/rpc/rpc_update_views.cpp` via
+      `updateManifestToJson(...)`,
+      `updateInstallerStateToJson(...)`,
+      `implantSafetyRecordToJson(...)`,
+      `buildRpcUpdateInstallStateResponse(...)`,
+      `buildRpcUpdateInstallerActionResponse(...)`,
+      `buildRpcImplantUpdateStateResponse(...)`, and
+      `buildRpcImplantUpdateActionResponse(...)`, so `main.cpp` no longer
+      owns the repeated update-manifest JSON conversion, installer-state
+      JSON conversion, implant-safety record JSON conversion, or the final
+      response assembly for the update/install and implant rollout handlers.
+    - Extracted PoE RPC response shaping into
+      `KeplerSynapseNet/include/rpc/rpc_poe_views.h` and
+      `KeplerSynapseNet/src/rpc/rpc_poe_views.cpp` via
+      `buildRpcPoeSubmitResponse(...)`,
+      `buildRpcPoeCodeListResponse(...)`,
+      `buildRpcPoeCodeFetchResponse(...)`,
+      `buildRpcPoeVoteResponse(...)`,
+      `buildRpcPoeFinalizeResponse(...)`,
+      `buildRpcPoeEpochResponse(...)`,
+      `buildRpcPoeExportResponse(...)`,
+      `buildRpcPoeImportResponse(...)`, and
+      `buildRpcPoeValidatorsResponse(...)`, so `main.cpp` no longer owns the
+      dense PoE JSON assembly blocks for submit, code list/fetch, vote,
+      finalize, epoch allocation reporting, export/import, or validator list
+      responses.
+    - Extracted shared PoE runtime helpers into
+      `KeplerSynapseNet/include/node/poe_runtime.h` and
+      `KeplerSynapseNet/src/node/poe_runtime.cpp` via
+      `poeDbPath(...)`,
+      `rewardIdForAcceptance(...)`,
+      `rewardIdForEpoch(...)`,
+      `exportPoeDatabase(...)`, and
+      `importPoeDatabase(...)`, so `main.cpp` no longer owns the PoE DB path
+      resolver, deterministic PoE reward ID derivation, or the export/import
+      file-copy orchestration for DB and sidecar files.
+    - Extracted model, access-control, and marketplace RPC response shaping
+      into `KeplerSynapseNet/include/rpc/rpc_model_views.h` and
+      `KeplerSynapseNet/src/rpc/rpc_model_views.cpp` via
+      `accessModeToString(...)`,
+      `parseAccessMode(...)`,
+      `buildRpcModelStatusResponse(...)`,
+      `buildRpcModelListResponse(...)`,
+      `buildRpcModelLoadResponse(...)`,
+      `buildRpcModelUnloadResponse(...)`,
+      `buildRpcModelRemoteListResponse(...)`,
+      `buildRpcModelRemoteRentResponse(...)`,
+      `buildRpcModelAccessGetResponse(...)`,
+      `buildRpcMarketListingsResponse(...)`, and
+      `buildRpcMarketStatsResponse(...)`, so `main.cpp` no longer owns the
+      repeated model/access JSON assembly and the marketplace listing/stats
+      response shaping.
+    - Extracted update/install and implant rollout runtime orchestration into
+      `KeplerSynapseNet/include/rpc/rpc_update_runtime.h` and
+      `KeplerSynapseNet/src/rpc/rpc_update_runtime.cpp` via
+      `runRpcUpdateInstallState(...)`,
+      `runRpcUpdateInstallPrepare(...)`,
+      `runRpcUpdateInstallAdvance(...)`,
+      `runRpcUpdateInstallCommit(...)`,
+      `runRpcUpdateInstallRollback(...)`,
+      `runRpcImplantUpdateState(...)`,
+      `runRpcImplantUpdatePrepare(...)`,
+      `runRpcImplantUpdateAdvance(...)`,
+      `runRpcImplantUpdateCommit(...)`, and
+      `runRpcImplantUpdateRollback(...)`, so `main.cpp` no longer owns the
+      installer-state readback, signer-threshold rejection handling, implant
+      safety-pipeline transitions, rollout-stage validation, or the final
+      RPC action orchestration for those update handlers.
+    - Extended the same update runtime module so `update_manifest` runtime
+      flow now also lives in
+      `KeplerSynapseNet/include/rpc/rpc_update_runtime.h` and
+      `KeplerSynapseNet/src/rpc/rpc_update_runtime.cpp` via
+      `runRpcUpdateManifestSubmit(...)`,
+      `runRpcUpdateManifestFetch(...)`,
+      `runRpcUpdateManifestList(...)`,
+      `runRpcUpdateManifestApprove(...)`, and
+      `runRpcUpdateManifestApprovals(...)`, so `main.cpp` no longer owns the
+      manifest hex decode and deserialize path, manifest inventory fetch/list
+      orchestration, detached signer approval verification, or approval-state
+      governance response assembly for the update-manifest handlers.
+    - Extended `KeplerSynapseNet/include/rpc/rpc_ai_runtime.h` and
+      `KeplerSynapseNet/src/rpc/rpc_ai_runtime.cpp` with
+      `runRpcAiComplete(...)` and shared `RpcAiCompletionInputs`, so
+      `main.cpp` no longer owns the local `ai.complete` prompt validation,
+      remote-vs-local routing decision, Tor-aware web-injection gating, local
+      model busy/loaded checks, request accounting, web-context orchestration,
+      and final local generation response path inline.
+    - Added `KeplerSynapseNet/include/rpc/rpc_naan_runtime.h` and
+      `KeplerSynapseNet/src/rpc/rpc_naan_runtime.cpp` to move the `NAAN`
+      observatory, draft, and pipeline runtime handlers out of `main.cpp` via
+      `runRpcNaanObservatoryArtifacts(...)`,
+      `runRpcNaanObservatoryArtifactGet(...)`,
+      `runRpcNaanObservatoryDrafts(...)`,
+      `runRpcNaanObservatoryDraftGet(...)`,
+      `runRpcNaanPipelineDryRun(...)`, and
+      `runRpcNaanPipelineDrain(...)`, so `main.cpp` no longer owns the
+      parameter parsing, feed and draft lookup flow, dry-run candidate
+      assembly and sorting, or drain request orchestration for those `NAAN`
+      RPC handlers.
+    - Extended `KeplerSynapseNet/include/rpc/rpc_naan_runtime.h` and
+      `KeplerSynapseNet/src/rpc/rpc_naan_runtime.cpp` with
+      `RpcNaanStatusRuntimeInputs` and `runRpcNaanStatus(...)`, so
+      `handleRpcNaanStatus(...)` in `main.cpp` is now a thin wrapper and the
+      `NAAN` status path no longer owns the failover snapshot, scheduler and
+      draft counters, connector audit snapshot, reward-visibility scan, or
+      final response assembly inline.
+    - `synapsed --help` smoke output still matches the expected operator flow,
+      focused regressions remain green, and `synapsed poe help`,
+      `synapsed model help`, and `synapsed --help` still match the
+      operator-facing CLI.
+    - Focused verification remains green after this extraction:
+      `UpdateManifestTests`,
+      `UpdateInstallerTests`,
+      `ImplantCompatibilityTests`,
+      `ImplantSafetyPipelineTests`,
+      `RpcServerTests`,
+      `RemoteModelTests`,
+      `MarketplaceTests`,
+      `synapsed model help`, and
+      `synapsed --help`.
+    - Focused verification also remained green after the AI runtime
+      extraction: `RpcServerTests`, `RemoteModelTests`, and
+      `synapsed --help`.
+    - Focused verification also remained green after the `NAAN` runtime
+      extraction: `RpcServerTests`, `NaanIntegrationTests`,
+      `NaanRecoveryTests`, and `NaanAdversarialTests`.
+    - Focused verification also remained green after the `NAAN` status
+      runtime extraction: `RpcServerTests`, `NaanIntegrationTests`,
+      `NaanRecoveryTests`, `NaanAdversarialTests`, and `synapsed --help`.
+    - `main.cpp` is now 9,518 lines in the current working tree after the
+      model, update-runtime, update-manifest runtime, AI runtime, and `NAAN`
+      runtime extraction passes. Ownership improved, but the line count
+      increased slightly because `makeRpcNaanStatusRuntimeInputs()` now packs
+      a large callback bundle in `main.cpp`.
+    - Remaining work: continue moving the heavier remaining RPC and runtime
+      blocks out of `main.cpp`, especially the remaining node
+      lifecycle/control orchestration, the remaining TUI and daemon/runtime
+      adapters still living in `main.cpp`, and any still-inline RPC handlers
+      that perform both data collection and response shaping.
+    Current repo state:
+    - Confirmed: `KeplerSynapseNet/src/main.cpp` is now 9,518 lines after
+      the latest extraction pass and remains a single-file risk.
+    - It currently mixes CLI parsing, config loading, node bootstrap, RPC
+      registration, network lifecycle, TUI flow, and operator commands.
+    Required work:
+    - Extract CLI parsing into `src/cli/cli_parser.cpp` plus header(s).
+    - Extract config load/validation into `src/config/config_loader.cpp`.
+    - Extract node/service bootstrap into `src/node/node_init.cpp`.
+    - Extract the CLI-to-RPC command dispatcher into
+      `src/cli/cli_rpc_client.cpp`.
+    - Extract RPC method registration and handlers into
+      `src/rpc/rpc_commands.cpp`.
+    - Continue extracting shared RPC response/view builders into dedicated
+      files like `src/rpc/rpc_node_views.cpp` until `main.cpp` stops owning
+      large JSON construction blocks inline.
+    - Extract node runtime orchestration, service startup, and shutdown flow
+      into dedicated node runtime files such as
+      `src/node/node_runtime.cpp` and related headers.
+    - Extract the remaining node-specific TUI input collection helpers and
+      large inline lifecycle blocks into dedicated modules instead of keeping
+      them embedded in `main.cpp`.
+    - Keep `main.cpp` as a thin composition root only.
+    Acceptance criteria:
+    - `main.cpp` becomes a small entry point, not a 14,000-line feature
+      container.
+    - New modules have explicit ownership and narrow headers.
+    - No behavior regression in daemon, CLI, or TUI startup paths.
+    - Existing tests still pass, and at least one smoke test covers startup.
+
+[x] 3. Add automatic exit from self-validator bootstrap mode
+    Priority: P0
+    Completed (March 19, 2026):
+    - Added deterministic bootstrap-to-strict policy logic in
+      `KeplerSynapseNet/include/core/poe_bootstrap_policy.h`.
+    - Wired persisted strict-mode activation into
+      `KeplerSynapseNet/src/main.cpp` with connected-peer, known-peer, and
+      validator-count thresholds plus activation hysteresis.
+    - Added operator-visible status in RPC (`node.status`) and TUI network
+      panels, plus persisted lock state in `synapsenet.conf`.
+    - Added a temporary explicit override path via
+      `poe.self_validator_bootstrap_force_allow_until`.
+    Current repo state:
+    - Confirmed: `poe.allow_self_validator_bootstrap` is read in
+      `KeplerSynapseNet/src/main.cpp` and written by
+      `KeplerSynapseNet/docker/synapsenet-start.sh`.
+    - The repo needs a deterministic rule for when bootstrap leniency ends.
+    Required work:
+    - Define a strict-mode trigger based on healthy peer count, unique peer
+      count, or validator-set size plus hysteresis.
+    - Disable self-validation automatically once the network crosses that
+      threshold.
+    - Persist the transition and surface it in logs, RPC, and TUI status.
+    - Make the bootstrap override explicit, temporary, and operator-visible.
+    Acceptance criteria:
+    - Self-bootstrap is never left on indefinitely by accident.
+    - Strict mode activates automatically after network growth.
+    - Operators can see why the mode changed and when.
+
+[x] 4. Make quantum-security claims match runtime reality
+    Priority: P0
+    Progress update (March 19, 2026):
+    - Startup logs and `node.status` now report whether PQC is running as
+      `development_simulation`, `compiled_real_backend_unavailable`,
+      `mixed_real_and_simulated`, or `real_pqc`, including per-algorithm
+      implementation modes.
+    - `KeplerSynapseNet/include/quantum/quantum_security.h` now uses the
+      corrected ML-DSA-65-compatible Dilithium size constants for secret keys
+      and signatures.
+    - `KeplerSynapseNet/src/quantum/sphincs.cpp` now has a real liboqs path
+      behind `#ifdef USE_LIBOQS` instead of remaining simulation-only.
+    - The quantum runtime surface now exposes explicit backend truth through
+      `PQCBackendStatus` in
+      `KeplerSynapseNet/include/quantum/quantum_security.h`, with the runtime
+      implementation in
+      `KeplerSynapseNet/src/quantum/pqc_backend_status.cpp`.
+    - `KeplerSynapseNet/CMakeLists.txt` now includes first-class liboqs
+      acquisition controls:
+      `SYNAPSE_FETCH_LIBOQS`,
+      `SYNAPSE_REQUIRE_REAL_PQC`,
+      `SYNAPSE_LIBOQS_GIT_TAG`,
+      and `SYNAPSE_LIBOQS_MINIMAL_BUILD`.
+    - The CMake fetch path now uses a shallow clone for liboqs to avoid pulling
+      the full repository history during PQC-enabled builds.
+    - `.github/workflows/ci.yml` now contains a dedicated
+      `PQC Real Backend (liboqs)` job that configures with
+      `SYNAPSE_FETCH_LIBOQS=ON` and `SYNAPSE_REQUIRE_REAL_PQC=ON`.
+    - `.github/workflows/release-gates.yml` now requires the real PQC backend
+      path during release-gate builds instead of silently accepting simulation.
+    - `node.status` now exposes explicit `kyberReal`, `dilithiumReal`, and
+      `sphincsReal` fields in addition to implementation-mode strings, so the
+      operator can see whether the active build is real, mixed, or simulated.
+    - The operator-facing TUI now surfaces the same backend-truth fields in
+      live status:
+      `KeplerSynapseNet/include/tui/tui.h`,
+      `KeplerSynapseNet/include/tui/tui_snapshot_builder.h`,
+      `KeplerSynapseNet/src/tui/tui_snapshot_builder.cpp`,
+      `KeplerSynapseNet/include/tui/primary_ui_spec.h`,
+      `KeplerSynapseNet/src/tui/primary_ui_spec.cpp`,
+      `KeplerSynapseNet/src/tui/tui.cpp`,
+      and the TUI snapshot wiring in `KeplerSynapseNet/src/main.cpp`.
+    - The TUI security screen no longer hardcodes
+      "QUANTUM-RESISTANT PROTECTION: ACTIVE" when the runtime is actually in
+      simulation mode.
+    - `KeplerSynapseNet/tests/test_primary_ui_snapshot.cpp` now covers the
+      operator-visible simulated-PQC TUI snapshot so this status surface does
+      not silently regress.
+    - The current local build machine still reports simulation mode because
+      `liboqs` is not installed here yet, which is now surfaced honestly.
+    - Root `README.md` no longer presents PQC simulation as an unconditional
+      deployed feature.
+    - Remaining work: confirm the full fetched-liboqs path end-to-end in CI
+      after the initial dependency download completes in a clean runner.
+    Current repo state:
+    - Confirmed: `KeplerSynapseNet/src/quantum/kyber.cpp` logs warnings such as
+      "Kyber using simulated implementation (liboqs not available)".
+    - The repo now has a real liboqs integration path plus an explicit
+      simulation fallback path, and startup logs, RPC, and TUI now all surface
+      the true backend state.
+    - The remaining gap is clean-run validation of the fetched-liboqs path,
+      not basic architecture or operator visibility.
+    Required work:
+    - Keep the real liboqs integration path healthy with build flags, CI,
+      packaging, and runtime capability checks.
+    Acceptance criteria:
+    - README and release notes make no overstated security claims.
+    - Runtime reports whether PQC is simulated, partial, or real.
+    - CI validates the intended build mode.
+    Detailed PQC implementation addendum (March 19, 2026):
+    - Verified current code layout:
+      - `KeplerSynapseNet/src/quantum/kyber.cpp` already contains real liboqs
+        calls behind `#ifdef USE_LIBOQS`, with simulation fallback when liboqs
+        is unavailable.
+      - `KeplerSynapseNet/src/quantum/dilithium.cpp` already contains real
+        liboqs calls behind `#ifdef USE_LIBOQS`, with simulation fallback when
+        liboqs is unavailable.
+      - `KeplerSynapseNet/src/quantum/sphincs.cpp` now contains a real liboqs
+        path behind `#ifdef USE_LIBOQS`, with explicit simulation fallback when
+        liboqs is unavailable.
+      - `KeplerSynapseNet/include/quantum/quantum_security.h` currently defines
+        Kyber-768 sizes as `1184/2400/1088/32`, Dilithium sizes as
+        `1952/4032/3309`, and SPHINCS+-128s sizes as `32/64/7856`.
+    - Architecture assessment:
+      - The PQC architecture is directionally correct because the codebase
+        already supports compile-time liboqs wiring through `USE_LIBOQS`.
+      - The remaining gap is not the overall design; it is end-to-end
+        validation of the fetched-liboqs path and continued CI enforcement.
+    - Required implementation sequence:
+      1. Make liboqs a first-class dependency in
+         `KeplerSynapseNet/CMakeLists.txt`.
+         Add a `FetchContent` fallback when the system library is missing,
+         pinned to a known release such as `0.12.0`, and keep the build minimal
+         to the required algorithms only.
+      2. Correct the Dilithium constants in
+         `KeplerSynapseNet/include/quantum/quantum_security.h` for the NIST
+         final ML-DSA-65 sizes.
+         Replace `DILITHIUM_SECRET_KEY_SIZE = 4016` with `4032`.
+         Replace `DILITHIUM_SIGNATURE_SIZE = 3293` with `3309`.
+      3. Add a real liboqs backend to
+         `KeplerSynapseNet/src/quantum/sphincs.cpp`.
+         Mirror the existing `kyber.cpp` and `dilithium.cpp` pattern:
+         compile real code under `#ifdef USE_LIBOQS`, then use simulation only
+         as an explicit fallback when liboqs is not available.
+      4. Stop silently degrading from real PQC to simulation when liboqs is
+         compiled in but a runtime liboqs call fails.
+         If the liboqs path is compiled in and initialization or operation
+         fails, emit a high-severity runtime warning such as
+         `CRITICAL: liboqs was compiled in but call failed`, then surface that
+         degraded state in status output.
+      5. Add an explicit runtime PQC backend status structure and expose it in
+         both RPC and TUI.
+         Minimum operator-visible fields:
+         `kyberReal`, `dilithiumReal`, `sphincsReal`.
+         The operator must be able to distinguish:
+         real PQC, mixed PQC, and simulation-only.
+      6. Update liboqs algorithm selection to prefer the NIST final names, with
+         compatibility fallbacks for older liboqs releases.
+         Preferred names:
+         `OQS_KEM_alg_ml_kem_768`
+         `OQS_SIG_alg_ml_dsa_65`
+         `OQS_SIG_alg_sphincs_sha2_128s_simple` or the corresponding
+         `slh_dsa_sha2_128s` name when supported.
+         Compatibility fallback must still attempt older identifiers when the
+         new ones are unavailable.
+      7. Add CI coverage for the real liboqs path.
+         The build pipeline must install or fetch liboqs, compile the project
+         with liboqs enabled, and run at least the PQC runtime tests in that
+         mode.
+    - Build-system requirement:
+      - Extend `KeplerSynapseNet/CMakeLists.txt` so missing liboqs does not
+        stop at a warning only.
+      - Either:
+        use a system dependency contract and fail clearly when PQC-real builds
+        are required, or
+        fetch liboqs automatically with `FetchContent`.
+      - If `FetchContent` is used, keep the build minimal to the three required
+        algorithm families so binary size and build time stay bounded.
+    - Runtime behavior requirement:
+      - A build without liboqs may still run in simulation mode for developer
+        convenience, but that state must remain explicit in startup logs, RPC,
+        and TUI.
+      - A build with liboqs must not quietly present simulated SPHINCS+ or
+        degraded backend calls as if the node were fully PQC-real.
+    - Documentation and operator requirement:
+      - Documentation must state exactly which algorithms are real and which
+        are simulated for the active build.
+      - `node.status` and the operator-facing TUI must display whether PQC is
+        `real`, `mixed`, or `simulated`, not only whether quantum mode is
+        enabled.
+    - CI implementation note:
+      - Add a GitHub Actions or equivalent CI step that installs liboqs,
+        performs a PQC-enabled build, and validates that the runtime status
+        reflects the real backends rather than simulation.
+    - Completion criteria for this item:
+      - Kyber, Dilithium, and SPHINCS+ all have real liboqs paths.
+      - ML-KEM / ML-DSA-era names and sizes are updated correctly.
+      - Simulation fallback remains available only as an explicitly visible
+        development mode.
+      - RPC, TUI, startup logs, and CI all reflect the true PQC backend state.
+
+[x] 5. Remove or quarantine legacy XOR wallet decryption
+    Priority: P0
+    Progress update (March 19, 2026):
+    - Legacy XOR wallet loading is now migration-only, logs a warning, and
+      rewrites the wallet into the authenticated encrypted format on
+      successful load.
+    - Remaining work: add an explicit deprecation removal version/date before
+      closing this item.
+    Current repo state:
+    - Confirmed: `KeplerSynapseNet/src/core/wallet.cpp` still falls back to
+      an old XOR-based wallet format after the new AES/HMAC format check.
+    Required work:
+    - Treat legacy XOR support as migration-only, not normal runtime support.
+    - On successful legacy load, immediately re-save the wallet in the new
+      versioned AES-256-CBC + HMAC format.
+    - Emit a high-severity warning and a one-time migration event.
+    - Set a deprecation removal date or version gate.
+    Acceptance criteria:
+    - Old wallets can be migrated once, but not silently kept on weak crypto.
+    - New saves never write the legacy format.
+    - Migration failure is visible and recoverable.
+
+[x] 6. Remove the fake PBKDF2 path after migration support is complete
+    Priority: P0
+    Progress update (March 19, 2026):
+    - The legacy helper was renamed to `legacyIteratedSha256Kdf` and is now
+      isolated to legacy migration flow in
+      `KeplerSynapseNet/src/core/wallet.cpp`.
+    - Remaining work: remove the helper entirely after the migration window
+      closes.
+    Current repo state:
+    - Confirmed: `legacyPbkdf2` in `KeplerSynapseNet/src/core/wallet.cpp` is
+      not real PBKDF2; it is iterative SHA-256-based custom logic.
+    - The new wallet format already uses proper `PKCS5_PBKDF2_HMAC`.
+    Required work:
+    - Rename the legacy helper to make its limited scope obvious.
+    - Restrict it to legacy wallet migration only.
+    - Remove it entirely after the migration window closes.
+    Acceptance criteria:
+    - Production wallet code uses only standard KDFs.
+    - Legacy code is isolated, documented, and easy to delete.
+
+[x] 7. Wire RPC authentication into actual startup behavior
+    Priority: P0
+    Progress update (March 19, 2026):
+    - RPC now binds to `127.0.0.1` by default, creates a cookie file, supports
+      optional Basic Auth, and enforces auth when the startup auth callback is
+      configured.
+    - Regression coverage was added in
+      `KeplerSynapseNet/tests/test_rpc_server.cpp`.
+    - Remaining work: classify method risk and tighten docs around operator
+      auth/rotation before closing this item.
+    Current repo state:
+    - Confirmed: `KeplerSynapseNet/src/web/rpc_server.cpp` supports auth hooks
+      and rate limiting.
+    - Confirmed: `KeplerSynapseNet/src/main.cpp` starts the RPC server without
+      calling `setAuthCallback`, and registered methods are currently exposed
+      with `requiresAuth=false`.
+    Required work:
+    - Add cookie-file auth for local operators as the default secure path.
+    - Optionally support Basic Auth for explicit remote/admin setups.
+    - Classify RPC methods by risk and require auth for all mutating methods at
+      minimum; strongly prefer auth for all methods.
+    - Bind to localhost by default unless explicitly configured otherwise.
+    Acceptance criteria:
+    - Default RPC startup is not open admin access.
+    - Auth failure paths are logged without leaking secrets.
+    - RPC docs show how to authenticate and rotate credentials.
+
+
+==============================================================================
+P1 - HIGH PRIORITY HARDENING
+==============================================================================
+
+[x] 8. Eliminate bootstrap dependence on a single operator-controlled seed path
+    Priority: P1
+    Current repo state:
+    - The repository already contains bootstrap/discovery logic and RPC
+      observability (`node.seeds`, `node.discovery.stats`).
+    - The remaining concern is operational concentration risk, not total
+      absence of discovery code.
+    Required work:
+    - Inventory all default bootstrap endpoints in code, config, and docs.
+    - Require multiple independently operated DNS seeds or bootstrap hosts.
+    - Add health scoring, failover, and quarantine rules for all defaults.
+    - Remove any hardcoded "single IP is enough" assumptions from operator
+      materials and deployment defaults.
+    Acceptance criteria:
+    - Bootstrap survives loss of any one seed operator.
+    - Operators can inspect seed health and source diversity.
+
+[x] 9. Decide whether DHT/Kademlia is real roadmap work or stale review text
+    Priority: P1
+    Current repo state:
+    - No `DHT` or `Kademlia` symbols were found in the current
+      `src/`, `include/`, or `tests/` tree.
+    Required work:
+    - Confirm whether a DHT implementation exists on another branch.
+    - If yes, plan integration, testing, rollout flags, and abuse controls.
+    - If no, remove or defer the claim instead of treating it as "already
+      coded but disabled".
+    Acceptance criteria:
+    - The backlog reflects reality: either real implementation work or a clear
+      de-scope decision.
+
+[x] 10. Raise error handling and observability quality
+    Priority: P1
+    Current repo state:
+    - Multiple paths still return `false` or fail quietly without enough
+      context for production diagnosis.
+    Required work:
+    - Audit silent failure paths in wallet, network bootstrap, RPC, Tor, and
+      persistence code.
+    - Standardize structured logging with subsystem, reason code, and action.
+    - Replace ambiguous boolean returns with richer status objects where useful.
+    - Add operator-facing error summaries in RPC/TUI for degraded states.
+    Acceptance criteria:
+    - Important failures are diagnosable from logs and status endpoints.
+    - Operators can distinguish config errors, runtime errors, and remote
+      dependency failures.
+
+[x] 11. Audit and tighten rate limiting instead of assuming it is absent
+    Priority: P1
+    Current repo state:
+    - RPC already has per-method rate-limit support.
+    - Network code already tracks malformed messages, penalties, and bans.
+    - The gap is coverage, defaults, and validation, not zero implementation.
+    Required work:
+    - Inventory every externally reachable RPC and P2P surface.
+    - Verify that expensive methods have strict quotas and sensible windows.
+    - Add connection-level, IP-level, and global overload backstops where
+      current controls are too weak.
+    - Add abuse tests for burst traffic and malformed message floods.
+    Acceptance criteria:
+    - Rate limiting is enforced end to end on exposed surfaces.
+    - Defaults are safe for production, not only development.
+
+[x] 12. Ship a production-safe Docker profile
+    Priority: P1
+    Completed (March 19, 2026):
+    - `docker-compose.yml` now uses safer defaults with duplicate gates
+      enabled, nonzero novelty bands, and self-validator bootstrap off.
+    - `KeplerSynapseNet/docker/synapsenet-start.sh` now writes the stricter
+      PoE bootstrap policy keys and safer duplicate-gate defaults.
+    - `docker-compose.dev.yml` provides the relaxed developer override path.
+    - `README.md` documents the split between production-safe base compose and
+      relaxed developer startup.
+    Current repo state:
+    - Confirmed: `KeplerSynapseNet/docker/synapsenet-start.sh` defaults
+      `SYNAPSENET_NAAN_DISABLE_DUPLICATE_GATES=true` and
+      `SYNAPSENET_POE_NOVELTY_BANDS=0`.
+    - Those defaults weaken duplicate/novelty protection for convenience.
+    Required work:
+    - Keep fast-start developer defaults separate from production defaults.
+    - Add a production compose/profile with duplicate gates enabled and
+      novelty bands set to a nonzero safe baseline.
+    - Document the performance and quality tradeoffs clearly.
+    Acceptance criteria:
+    - Production operators do not start with weakened gates by accident.
+    - Dev mode and prod mode are explicit and documented.
+
+
+==============================================================================
+P2 - CONSISTENCY, OPERABILITY, AND TESTING
+==============================================================================
+
+[x] 13. Unify wallet/address prefix rules
+    Priority: P2
+    Completed (March 19, 2026):
+    - Added shared wallet-address helpers in
+      `KeplerSynapseNet/include/crypto/address.h` and
+      `KeplerSynapseNet/src/crypto/address.cpp`.
+    - Standardized canonical wallet/public addresses on `ngt1...` in
+      `KeplerSynapseNet/src/core/wallet.cpp`,
+      `KeplerSynapseNet/src/crypto/keys.cpp`, and
+      `KeplerSynapseNet/src/main.cpp`.
+    - Kept legacy `SN...` wallet-address compatibility in
+      `KeplerSynapseNet/src/core/transfer.cpp` so existing rewards and spend
+      paths remain valid during migration.
+    - Exposed canonical plus legacy alias visibility in wallet RPC responses
+      and documented the migration behavior in `README.md`.
+    - Added regression coverage in
+      `KeplerSynapseNet/tests/test_transfer.cpp` and
+      `KeplerSynapseNet/tests/test_wallet_crypto_runtime.cpp`.
+
+[x] 14. Implement graceful daemon shutdown on SIGTERM
+    Priority: P2
+    Completed (March 19, 2026):
+    - `KeplerSynapseNet/src/main.cpp` now uses a signal-safe stop trigger:
+      the signal handler records the shutdown signal and flips atomic run-state
+      flags, while ordered subsystem shutdown runs later outside signal
+      context.
+    - The shutdown sequence logs operator-visible reasons such as
+      `signal:SIGTERM`.
+    - Added a daemon lifecycle regression test in
+      `KeplerSynapseNet/tests/test_daemon_shutdown.cpp` and wired it in
+      `KeplerSynapseNet/tests/CMakeLists.txt`.
+    - Verified that daemon startup reaches steady state, exits on `SIGTERM`,
+      writes shutdown reason to the log, and restarts cleanly on the same data
+      directory.
+
+[x] 15. Add health and readiness endpoints
+    Priority: P2
+    Completed (March 19, 2026):
+    - Added lightweight `GET /health` and `GET /ready` support to
+      `KeplerSynapseNet/src/web/rpc_server.cpp` and
+      `KeplerSynapseNet/include/web/rpc_server.h`.
+    - Wired runtime liveness/readiness payloads in
+      `KeplerSynapseNet/src/main.cpp`, including explicit degraded reasons and
+      PoE bootstrap/Tor readiness state.
+    - Added regression coverage in
+      `KeplerSynapseNet/tests/test_rpc_server.cpp`.
+    - Verified with targeted build and `RpcServerTests`.
+
+[x] 16. Add wallet crypto regression tests
+    Priority: P2
+    Completed (March 19, 2026):
+    - Added wallet crypto runtime coverage in
+      `KeplerSynapseNet/tests/test_wallet_crypto_runtime.cpp`.
+    - Coverage now includes new-format save/load, wrong-password rejection,
+      tamper detection, and legacy wallet migration with immediate re-save.
+    - The test target is wired into `KeplerSynapseNet/tests/CMakeLists.txt`
+      and passes in the current remediation build.
+
+
+==============================================================================
+TEST SUITE INTEGRITY ADDENDUM (MARCH 19, 2026)
+==============================================================================
+
+Overall assessment:
+- Roughly 55 of 63 current test files exercise real project headers, classes,
+  and runtime behavior.
+- Roughly 7 to 8 files still create in-file mocks, trivial vectors, or local
+  helper functions instead of validating production code paths.
+- Those mock-only files should not be treated as meaningful coverage until
+  they are rewritten against real project code.
+
+Immediate rewrite targets:
+- `KeplerSynapseNet/tests/test_crypto.cpp`
+  Current issue:
+  It mostly creates `std::vector<uint8_t>` values and checks `.size()` without
+  calling real `crypto/` code.
+  Required rewrite:
+  Replace it with coverage for real `crypto::Keys`, hashing, and encryption
+  paths, following the style already used in
+  `KeplerSynapseNet/tests/test_crypto_secp.cpp`.
+- `KeplerSynapseNet/tests/test_wallet.cpp`
+  Current issue:
+  It defines `MockWallet`, `TransactionBuilder`, and `CoinSelector` inside the
+  test file instead of using the real wallet implementation.
+  Required rewrite:
+  Replace it with real wallet tests for balance handling, transaction signing,
+  and seed recovery, following the runtime coverage already present in
+  `KeplerSynapseNet/tests/test_wallet_crypto_runtime.cpp`.
+- `KeplerSynapseNet/tests/test_network.cpp`
+  Current issue:
+  It defines `MockPeer`, `MockNetwork`, and `ConnectionPool` locally and does
+  not include real `network/` code.
+  Required rewrite:
+  Replace it with real `network::Network` and message-flow tests, aligned with
+  `KeplerSynapseNet/tests/test_network_soak.cpp` and
+  `KeplerSynapseNet/tests/test_network_message.cpp`.
+- `KeplerSynapseNet/tests/test_model.cpp`
+  Current issue:
+  It defines `MockTokenizer` and `ModelConfig` locally instead of loading the
+  real model stack.
+  Required rewrite:
+  Replace it with real model loader/runtime checks, following
+  `KeplerSynapseNet/tests/test_model_loader.cpp`.
+- `KeplerSynapseNet/tests/test_ledger.cpp`
+  Current issue:
+  It builds manual structs and serialization checks without exercising the real
+  ledger/database implementation.
+  Required rewrite:
+  Replace it with tests for real `Ledger`, persistence, and recovery paths,
+  following `KeplerSynapseNet/tests/test_ledger_recovery.cpp`.
+- `KeplerSynapseNet/tests/test_privacy.cpp`
+  Current issue:
+  It mostly checks enum assignment and mocked SOCKS5 behavior instead of real
+  privacy-routing logic.
+  Required rewrite:
+  Replace it with real privacy-policy and routing tests against the current
+  `privacy/` implementation.
+- `KeplerSynapseNet/tests/test_quantum.cpp`
+  Current issue:
+  It is mixed quality; some checks use real headers, but many assertions are
+  still trivial container/size tests.
+  Required rewrite:
+  Merge meaningful coverage into
+  `KeplerSynapseNet/tests/test_quantum_runtime.cpp` or remove duplicated
+  trivial checks.
+- `KeplerSynapseNet/tests/test_no_secret_logging.cpp`
+  Current issue:
+  It defines `sanitizeLogMessage()` inside the test file instead of validating
+  the real project sanitizer.
+  Required rewrite:
+  Point the test at the real log-sanitization function if it exists in
+  `utils/`; otherwise create one production sanitizer and test that directly.
+
+Strong existing test areas worth preserving:
+- Agent runtime/storage/recovery tests are among the strongest files in the
+  tree:
+  `test_agent_coordination.cpp`,
+  `test_agent_draft_queue.cpp`,
+  `test_agent_runtime.cpp`,
+  `test_agent_scheduler.cpp`,
+  `test_agent_score.cpp`,
+  `test_agent_storage.cpp`,
+  `test_agent_submission_pipeline.cpp`.
+  Improvement target:
+  Add concurrency, race-condition, and timeout coverage.
+- Tor coverage is already strong across routing, bridges, leak prevention, and
+  onion-service policy:
+  `test_tor_bridge_provider.cpp`,
+  `test_tor_bridge_utils.cpp`,
+  `test_tor_external_path.cpp`,
+  `test_tor_managed_startup_path.cpp`,
+  `test_tor_no_clearnet_leak.cpp`,
+  `test_tor_onion_service_policy.cpp`,
+  `test_tor_peer_identity.cpp`,
+  `test_tor_process_guard.cpp`.
+  Improvement target:
+  Consolidate adjacent routing-policy checks, especially
+  `test_tor_route_policy.cpp` and `test_tor_onion_service_policy.cpp`.
+- Web connector and extraction tests already use real headers:
+  `test_web_connector_abuse.cpp`,
+  `test_web_connector_audit.cpp`,
+  `test_web_connector_health.cpp`,
+  `test_web_extraction_risk.cpp`,
+  `test_web_route_policy.cpp`.
+  Improvement target:
+  Add end-to-end integration coverage across multiple web components.
+- NAAN coverage is already strong and should be expanded, not replaced:
+  `test_naan_adversarial.cpp`,
+  `test_naan_integration.cpp`,
+  `test_naan_recovery.cpp`.
+
+Other real-code tests that should remain first-class:
+- `KeplerSynapseNet/tests/test_crypto_secp.cpp`
+- `KeplerSynapseNet/tests/test_bip39_vectors.cpp`
+- `KeplerSynapseNet/tests/test_config.cpp`
+- `KeplerSynapseNet/tests/test_consensus.cpp`
+- `KeplerSynapseNet/tests/test_determinism_replay.cpp`
+- `KeplerSynapseNet/tests/test_implant_compatibility.cpp`
+- `KeplerSynapseNet/tests/test_implant_safety_pipeline.cpp`
+- `KeplerSynapseNet/tests/test_knowledge_antispam.cpp`
+- `KeplerSynapseNet/tests/test_ledger_recovery.cpp`
+- `KeplerSynapseNet/tests/test_marketplace.cpp`
+- `KeplerSynapseNet/tests/test_model_loader.cpp`
+- `KeplerSynapseNet/tests/test_network_message.cpp`
+- `KeplerSynapseNet/tests/test_network_scale_policy.cpp`
+- `KeplerSynapseNet/tests/test_network_soak.cpp`
+- `KeplerSynapseNet/tests/test_peer_discovery.cpp`
+- `KeplerSynapseNet/tests/test_poe.cpp`
+- `KeplerSynapseNet/tests/test_poe_e2e.cpp`
+- `KeplerSynapseNet/tests/test_primary_ui_*.cpp`
+- `KeplerSynapseNet/tests/test_protocol_fuzz.cpp`
+- `KeplerSynapseNet/tests/test_quantum_runtime.cpp`
+- `KeplerSynapseNet/tests/test_remote_model.cpp`
+- `KeplerSynapseNet/tests/test_rpc_server.cpp`
+- `KeplerSynapseNet/tests/test_socks5_timeout.cpp`
+- `KeplerSynapseNet/tests/test_state_manager.cpp`
+- `KeplerSynapseNet/tests/test_transfer.cpp`
+- `KeplerSynapseNet/tests/test_tui_peers.cpp`
+- `KeplerSynapseNet/tests/test_update_installer.cpp`
+- `KeplerSynapseNet/tests/test_update_manifest.cpp`
+- `KeplerSynapseNet/tests/test_wallet_crypto_runtime.cpp`
+
+Cross-suite architecture gaps:
+- Three different test styles are still mixed together:
+  raw `assert()` files with custom `main()`,
+  ad hoc `TestFramework` plus `RUN_TEST` macros,
+  and GoogleTest in `KeplerSynapseNet/tests/test_model_loader.cpp`.
+  Recommendation:
+  Standardize on one framework, preferably GoogleTest or Catch2, so the suite
+  has one runner model, better failure output, parameterized tests, and CI
+  report generation.
+- Code coverage is not wired as a first-class build option.
+  Recommendation:
+  Add an `ENABLE_COVERAGE` CMake option and wire coverage reporting through
+  `lcov` or `gcovr` in CI.
+- Long-running tests do not have explicit timeouts.
+  Recommendation:
+  Add `TIMEOUT` properties, especially for
+  `KeplerSynapseNet/tests/test_network_soak.cpp`, so CI cannot hang forever.
+- The suite is not grouped by labels.
+  Recommendation:
+  Add `LABELS` such as `crypto`, `network`, `tor`, `wallet`, `poe`, and `web`
+  so operators can run focused subsets with `ctest -L`.
+- No CI workflow is currently tracked in the repository.
+  Recommendation:
+  Add at least one GitHub Actions workflow for configure, build, and
+  `ctest --output-on-failure`.
+
+Priority guidance for this addendum:
+- Urgent:
+  Rewrite the mock-only test files so they exercise real code instead of
+  providing false confidence.
+- Important:
+  Standardize on one test framework and add a CI pipeline that runs `ctest`.
+- Useful:
+  Add coverage, labels, and timeouts.
+- Later:
+  Add more cross-module integration tests so the suite validates real
+  subsystem interaction rather than only isolated units.
+
+
+==============================================================================
+RECOMMENDED IMPLEMENTATION ORDER
+==============================================================================
+
+1. Wallet money model migration (`double` -> atoms).
+2. Wallet crypto migration hardening (legacy XOR + legacy KDF).
+3. RPC authentication wiring and secure defaults.
+4. `main.cpp` decomposition to unblock safer maintenance.
+5. Self-validator strict-mode automation.
+6. Production Docker profile and bootstrap-seed diversification.
+7. Error-handling audit plus health/readiness endpoints.
+8. Address-format unification and wallet crypto tests.
+9. Rewrite mock-only tests to target real project code.
+10. Standardize the suite on one test framework and shared runner model.
+11. Add CI execution, coverage wiring, labels, and explicit timeouts.
+12. Add more cross-module integration tests after the fake-test cleanup.
+
+
+==============================================================================
+DONE DEFINITION FOR THIS BACKLOG
+==============================================================================
+
+An item is not done when the code compiles. It is done when:
+- code is merged,
+- configuration defaults are safe,
+- docs match runtime behavior,
+- migration behavior is tested,
+- operator observability is in place,
+- and at least one regression test protects the fix.

@@ -1,0 +1,308 @@
+════════════════════════════════════════════════════════════════════════════════
+          NAAN TOR BRIDGE AUTOMATION (MAC / LINUX / WINDOWS) - TODO
+════════════════════════════════════════════════════════════════════════════════
+
+Snapshot: February 25, 2026
+Scope: KeplerSynapseNet (synapsed) + NAAN web/mining connectors + TUI/RPC status
+Goal: Make Tor-first operation reliable and operator-friendly across macOS, Linux,
+Windows, with bridge-capable bootstrap and deterministic fail-closed behavior.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                            CURRENT REALITY (FACTS)
+════════════════════════════════════════════════════════════════════════════════
+
+Observed in local testing:
+  • SynapseNet can report `torReachable=true` when a local SOCKS port is open.
+  • This does NOT guarantee Tor bootstrap is complete or that web traffic works.
+  • Managed Tor on `127.0.0.1:9050` can be up but stall/timeout for real traffic.
+  • Manual obfs4 bridge config on `127.0.0.1:9150` was able to bootstrap to 100%
+    and fetch DuckDuckGo HTML successfully.
+
+Practical implication:
+  • Tor readiness must be measured by usable traffic/bootstrap state, not only TCP
+    connect-to-SOCKS checks.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                                  OUTCOME
+════════════════════════════════════════════════════════════════════════════════
+
+Target behavior:
+  • Each node can use Tor-only mode with bridges (obfs4 first; more later).
+  • NAAN web/mining waits for Tor readiness and fails closed if Tor is required.
+  • Bridge source selection is randomized per node from a validated pool.
+  • SynapseNet can safely stop only the Tor processes it started (not arbitrary user
+    Tor instances) unless operator explicitly allows takeover.
+  • TUI main screen shows Node/Tor/Bootstrap/Web readiness clearly.
+  • Operator can run a single external Tor on `127.0.0.1:9150` and share it across:
+      - SynapseNet / NAAN (terminal)
+      - Tor Browser (configured as SOCKS client, not Tor owner)
+      - curl / w3m / other CLI tools
+
+
+════════════════════════════════════════════════════════════════════════════════
+                              IMPLEMENTATION RULES
+════════════════════════════════════════════════════════════════════════════════
+
+Hard rules for this work:
+  • Default mode stays Tor-first / fail-closed for NAAN web paths.
+  • Never kill unrelated Tor processes by default.
+  • Only manage Tor processes with PID file + command fingerprint + dataDir match.
+  • Support "shared external Tor" workflow where SynapseNet is a SOCKS client only and
+    does not try to own/replace the operator's Tor process on `9150`.
+  • Config parsing must be strict for known keys and ignore/flag invalid lines.
+  • Runtime status must distinguish:
+      - `SOCKS_LISTENING`
+      - `BOOTSTRAPPING`
+      - `READY`
+      - `DEGRADED`
+      - `FAILED`
+
+
+════════════════════════════════════════════════════════════════════════════════
+                              PHASED TODO PLAN
+════════════════════════════════════════════════════════════════════════════════
+
+PHASE 0 - Baseline and instrumentation
+  [x] Add explicit Tor readiness state machine (socket-only vs usable circuit).
+  [x] Add bootstrap progress fields to `naan.status` / `node.status`:
+      - `torSocksReachable`
+      - `torBootstrapPercent`
+      - `torReadyForWeb`
+      - `torReadyForOnion`
+      - `torLastBootstrapError`
+  [x] Add log lines for readiness transitions (BOOTSTRAPPING -> READY / FAILED).
+  [x] Add timeout reason codes (SOCKS_UP_BUT_NO_CIRCUIT, BRIDGE_PARSE_ERROR, etc.).
+
+PHASE 1 - Config schema + validation (cross-platform)
+  [x] Define/implement NAAN Tor bridge config keys (US English docs + parser support):
+      - `agent.tor.mode=external|managed|auto`
+      - `agent.tor.socks_host`
+      - `agent.tor.socks_port`
+      - `agent.tor.control.port`
+      - `agent.tor.bootstrap_required`
+      - `agent.tor.bridge.transport=obfs4|snowflake|none`
+      - `agent.tor.bridge.source=manual|file|cache|remote`
+      - `agent.tor.bridge.remote_url`
+      - `agent.tor.bridge.randomize_per_node=true`
+      - `agent.tor.bridge.min_pool_size`
+      - `agent.tor.process.allow_kill_managed_only=true`
+      - `agent.tor.process.allow_takeover_external=false`
+  [x] Add parser validation for duplicate keys / malformed bridge lines.
+  [x] Add config sanitizer + dedupe writer for `naan_agent_web.conf`.
+  [x] Add migration logic for old keys (`route_clearnet_through_tor`, etc.).
+
+PHASE 2 - macOS automation (first platform)
+  [x] Detect Homebrew `tor`, `obfs4proxy`, optional `snowflake-client`.
+  [x] Generate validated Tor config file (`torrc`) for SynapseNet-managed runtime.
+  [x] Add macOS bridge bootstrap helper (obfs4 first).
+  [x] Support external Tor on `9150` (operator-run bridge Tor) without takeover.
+  [x] Add "shared external Tor (Tor Browser + SynapseNet)" operator workflow:
+      - one Tor process on `127.0.0.1:9150`
+      - SynapseNet uses `agent.tor.mode=external`
+      - Tor Browser configured to use SOCKS5 `127.0.0.1:9150` (external proxy mode)
+      - no managed-Tor autostart on `9150`
+  [x] Add validation helper/checklist for shared external Tor workflow:
+      - `curl --socks5-hostname 127.0.0.1:9150 https://check.torproject.org/api/ip`
+      - Tor Browser `https://check.torproject.org`
+      - `naan.status` shows `torRuntimeMode=external`
+  [x] Add safe cleanup:
+      - stop only SynapseNet-managed Tor via PID file
+      - kill fallback only when commandline/dataDir match SynapseNet-owned runtime
+  [x] Add bootstrap readiness probe using real test request through SOCKS.
+  [x] Add bridge subset rotation for bootstrap retries in macOS helper:
+      - `--bootstrap-attempts`
+      - `--bridge-subset-size`
+  [x] Add explicit operator takeover mode for occupied SOCKS port:
+      - `--takeover-port-owner` (disabled by default)
+      - reclaim port from listener PID; Tor Browser mode also stops
+        `__OwningControllerProcess` for deterministic port handoff
+
+PHASE 3 - Linux automation
+  [x] Detect distro package layout (`tor`, `obfs4proxy`, `snowflake-client`).
+  [x] Support systemd service mode and local user-process mode.
+  [x] Implement Linux torrc generation paths and runtime directory ownership checks.
+  [x] Implement safe process cleanup (PID file + commandline fingerprint).
+  [x] Add Linux bootstrap/web readiness verification script.
+
+PHASE 4 - Windows automation
+  [x] Add Windows path detection (Tor Browser / Expert Bundle / custom path).
+  [x] Implement torrc generation for Windows paths and plugin executables.
+  [x] Add process control wrappers (`tasklist` / `taskkill`) with ownership checks.
+  [x] Add PowerShell validation script for SOCKS + bootstrap + DDG test.
+  [x] Handle Windows service vs user-process mode (documented, explicit selection).
+
+PHASE 5 - Bridge sources and randomized assignment
+  [x] Create bridge provider abstraction (`manual`, `file`, `cache`, `remote`).
+  [x] Implement bridge pool cache with TTL + checksum + dedupe.
+  [x] Implement deterministic per-node random selection:
+      - seed from node identity + epoch window
+      - avoid identical bridge subset across all nodes
+  [x] Validate bridge line parser (strict `Bridge obfs4 ... cert=... iat-mode=...`).
+  [x] Add fallback chain (obfs4 primary -> cached obfs4 -> manual file -> fail).
+  [x] Optional remote bridge fetch adapter:
+      - retrieve bridge material when available
+      - respect source requirements/rate limits
+      - fail closed with actionable error if source requires manual step
+
+PHASE 6 - NAAN integration and runtime lifecycle
+  [x] Block NAAN web/mining until `torReadyForWeb=true` when Tor is required.
+  [x] Auto-retry Tor bootstrap with backoff and bounded restarts.
+  [x] Distinguish `web search timeout` from `Tor bootstrap incomplete` in logs.
+  [x] Route clearnet + onion fetches through configured Tor SOCKS consistently.
+  [x] Add runtime command / RPC to:
+      - refresh bridges
+      - restart managed Tor
+      - switch external <-> managed mode
+  [x] Persist last-known-good bridge subset per node.
+
+PHASE 7 - TUI/UX improvements (operator clarity)
+  [x] Main screen Tor panel shows:
+      - `Tor socket`
+      - `Bootstrap %`
+      - `Circuit ready`
+      - `Web ready`
+      - `Onion ready`
+      - `Managed/External`
+      - current SOCKS port
+  [x] Add "Tor diagnostics" screen/log view shortcut.
+  [x] Show operator hint when 9050 conflict occurs (`SynapseNet managed Tor` vs external).
+  [x] Add explicit message when SynapseNet is using external Tor on 9150.
+  [x] Add explicit shared-mode hint when `torRuntimeMode=external` and port is `9150`:
+      - "Tor Browser can use the same external Tor via SOCKS5 127.0.0.1:9150"
+      - "Do not start SynapseNet managed Tor on the same port"
+  [x] Add startup wizard step for bridge mode:
+      - no bridges
+      - obfs4
+      - external Tor (already running)
+  [x] Add startup wizard bridge paste flow (press `[P]` on the bridge-mode step):
+      - paste `obfs4 ...` or `Bridge obfs4 ...` lines from BridgeDB
+      - sanitize + dedupe
+      - write `<DATA_DIR>/tor/bridges.obfs4.txt`
+      - do not print bridge lines to logs (counts only)
+  [x] Add Settings menu shortcut to update bridges without restarting SynapseNet:
+      - Settings -> `[T] Tor Bridges (paste obfs4)`
+      - writes `<DATA_DIR>/tor/bridges.obfs4.txt`
+  [x] Add Settings menu shortcut to manage NAAN site allowlists:
+      - Settings -> `[W] NAAN Site Allowlist (clearnet/onion)`
+      - writes `clearnet_site_allowlist` + `onion_site_allowlist` into
+        `<DATA_DIR>/naan_agent_web.conf`
+      - UI shows exact file path + key names so non-technical users can edit safely
+
+PHASE 8 - Tests and deterministic replay
+  [x] Unit tests: bridge line parser, config dedupe/sanitizer, readiness transitions.
+  [x] Unit tests: safe process ownership checks (do-not-kill-unrelated Tor).
+  [x] Integration tests: managed Tor startup path (mocked process + mocked probe).
+  [x] Integration tests: external Tor path (mocked SOCKS readiness + bootstrap state).
+  [x] Replay tests: same inputs -> same bridge subset selection for same node+epoch.
+  [x] Cross-platform smoke scripts:
+      - [x] macOS (`tools/macos_tor_obfs4_helper.sh`)
+      - [x] Linux (`tools/linux_tor_obfs4_smoke.sh`)
+      - [x] Windows (`tools/windows_tor_obfs4_smoke.ps1`)
+  [x] macOS runtime validator script:
+      - `tools/macos_tor_validate.sh` (external + managed mode checks with evidence output)
+  [x] Linux runtime validator script:
+      - `tools/linux_tor_validate.sh` (external + managed mode checks with evidence output)
+  [x] macOS one-shot external e2e runner:
+      - `tools/macos_tor_external_9150_e2e.sh`
+      - helper bootstrap + external validator + unified evidence bundle
+  [x] Linux one-shot external e2e runner:
+      - `tools/linux_tor_external_9150_e2e.sh`
+      - helper bootstrap + external validator + unified evidence bundle
+  [x] Windows one-shot external e2e runner:
+      - `tools/windows_tor_external_9150_e2e.ps1`
+      - helper bootstrap + external validator + unified evidence bundle
+  [x] One-shot external e2e bridge-file fallback chain:
+      - macOS/Linux/Windows runners accept repeatable bridge-file inputs
+      - attempts run in deterministic input order
+      - evidence `summary.json` records `selectedBridgeFile` + attempted helper logs
+  [x] CI script-validation gate for Tor automation helpers:
+      - Bash syntax + `--help` checks on Linux/macOS jobs
+      - PowerShell parser syntax checks on Windows job
+  [x] GitHub Actions live external-9150 workflow (manual dispatch, secret-gated):
+      - `.github/workflows/tor-external-9150-live-e2e.yml`
+
+PHASE 9 - Docs and operator runbooks
+  [x] `interfaces txt` doc: Tor bridge setup status and supported modes.
+  [x] `README` operator section: Tor-only + bridges (external and managed modes).
+  [x] `docs/` runbook: troubleshooting TLS handshake stalls / bridge parse errors.
+  [x] `docs/` runbook: 9050/9150 conflict and how to fix quickly.
+  [x] `docs/` runbook: safe cleanup of SynapseNet-managed Tor runtimes.
+  [x] `docs/` runbook: "One Tor, many clients" shared external Tor (`9150`) setup
+      for SynapseNet + Tor Browser + CLI tools, including Tor Browser proxy settings.
+  [x] Docs: bridge handling policy (do not commit bridge lines; no scraping of interactive
+      BridgeDB sources; use manual/file/cache/remote with `manual_step_required` fallback)
+      and macOS Tor Browser external SOCKS launch shortcut.
+  [x] Docs: NAAN allowlist operator guidance and security warning:
+      - operator is responsible for evaluating site trust/risk
+      - malicious sites may carry payloads/phishing/exploits
+      - AI/IDE triage is advisory and does not replace AV/EDR
+  [x] `docs/` runbook: macOS helper + validator flow
+      (`docs/macos_tor_obfs4_automation_runbook.md`).
+  [x] `docs/` runbook: Linux helper + validator flow
+      (`docs/linux_tor_obfs4_automation_runbook.md`).
+  [x] `docs/` runbook: Windows helper + validator flow
+      (`docs/windows_tor_obfs4_automation_runbook.md`).
+
+
+════════════════════════════════════════════════════════════════════════════════
+                    FIRST IMPLEMENTATION SLICE (DO NEXT FIRST)
+════════════════════════════════════════════════════════════════════════════════
+
+Start with these (smallest high-value slice):
+  [x] Add `torReadyForWeb` runtime field based on real SOCKS traffic probe.
+  [x] Add TUI Tor panel line showing `SOCKS up` vs `Circuit ready`.
+  [x] Add external Tor `9150` config path (documented and tested).
+  [x] Add safe managed-Tor PID-file shutdown (no blind `killall tor`).
+  [x] Fix managed-Tor spawn FD inheritance (close inherited RPC/P2P sockets before exec).
+  [x] Add macOS helper script to generate obfs4 torrc and validate bootstrap.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                         KNOWN RISKS / OPEN QUESTIONS
+════════════════════════════════════════════════════════════════════════════════
+
+  [x] Remote bridge retrieval may require human/manual steps depending on source
+      availability and anti-abuse controls; design supports manual fallback via
+      `manual_step_required` + provider fallback chain (`remote -> cache -> file -> manual`).
+  [x] Tor Browser SOCKS (`9150`) may not expose a ControlPort; onion-service FULL mode
+      can fail while web routing still works. Status now exposes
+      `torControlReachable` + `torOnionServiceState` to separate web-ready vs onion-service-ready.
+  [x] Bridge pools expire; stale bridge cache can look like "Tor broken" unless
+      diagnostics identify bridge/bootstrap failure cause clearly.
+      `naan.status`/`node.status` now expose `torBridgeProvider`, `torBridgeProviderUpdatedAt`,
+      and `torBridgeCacheAgeSeconds`.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                              COMPLETION CRITERIA
+════════════════════════════════════════════════════════════════════════════════
+
+Release-level done for this track means:
+  [x] macOS: SynapseNet uses external obfs4 Tor (`9150`) and NAAN web fetch works.
+  [x] macOS: SynapseNet managed Tor can be started/stopped safely and diagnosed.
+  [ ] Linux: same behavior validated.
+  [ ] Windows: same behavior validated.
+  [x] TUI shows accurate Tor readiness (not just open SOCKS port).
+  [x] NAAN web/mining is fail-closed when Tor required and Tor not ready.
+  [x] Tests cover parser/config/process safety/readiness transitions.
+
+Latest evidence note (2026-02-27):
+  - managed mode criterion validated with `tools/macos_tor_validate.sh --skip-external`
+    (managed PID lifecycle + status diagnostics pass in this workspace),
+    evidence: `KeplerSynapseNet/build/evidence/macos_tor_validate_20260227T191322Z`.
+  - occupied-port diagnostics validated with fake-listener run:
+    `KeplerSynapseNet/build/evidence/macos_tor_validate_20260227T201859Z`
+    (validator emits owner PID/command hint for external SOCKS).
+  - takeover flow validated on real Tor Browser conflict (`DisableNetwork=1`):
+    helper reclaimed `9150` by stopping Tor PID + owning controller PID and
+    continued bootstrap path, evidence:
+    `/tmp/synapsenet_tor_obfs4_9150/tor_bootstrap_attempt1.log`.
+  - external obfs4 criterion validated on `9150` with fresh BridgeDB lines:
+    `curl --socks5-hostname 127.0.0.1:9150 https://check.torproject.org/api/ip`
+    returned `{\"IsTor\":true,...}` and validator passed with `torReadyForWeb=true`,
+    evidence:
+    `KeplerSynapseNet/build/evidence/macos_tor_validate_20260227T223031Z`,
+    `KeplerSynapseNet/build/evidence/macos_tor_external_9150_e2e_20260227T223047Z`,
+    `/tmp/synapsenet_tor_obfs4_9150/tor_bootstrap_attempt1.log`.

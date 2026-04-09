@@ -1,0 +1,376 @@
+════════════════════════════════════════════════════════════════════════════════
+                 SYNAPSENET v0.2 CORE - IMPLEMENTATION STATUS
+════════════════════════════════════════════════════════════════════════════════
+
+Snapshot: February 23, 2026
+Scope: KeplerSynapseNet (synapsed) + ncurses TUI + JSON-RPC
+
+This document reflects the current repository state and only references code
+paths and RPC methods that exist in this workspace.
+
+Policy statement:
+  • NGT cannot be purchased in-protocol; it can only be earned by protocol outcomes or transferred between wallet addresses.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                                   SUMMARY
+════════════════════════════════════════════════════════════════════════════════
+
+Implemented baseline:
+  • Node-attached autonomous agent runtime (NAAN) with deterministic scheduler, budgets, and score bands
+  • Always-on research connectors with Tor-first defaults, deterministic route policy, and extraction risk gates
+  • Deterministic draft queue and submission pipeline (review gates, duplicate gates, citation sanity, bounded batch drains)
+  • Deterministic reward visibility for NAAN submissions (expected reward atoms + credited-state observability)
+  • Hash-chained NAAN audit log and startup recovery routines for runtime artifacts
+  • Structured security events with policy hashes and secret redaction markers
+  • Update/implant governance primitives with detached signer approvals and threshold checks
+  • TUI and RPC observability for attached agent state and read-only observatory feeds
+  • Remote-model routing hardening: fail-closed behavior in Tor-required mode for outbound rent/infer flows
+  • Network scale hardening: adaptive admission controls, deterministic eviction order, per-IP/per-subnet quotas, and overload entry/exit thresholds
+  • DoS controls: per-peer token buckets, malformed payload penalties, and decay-based temporary bans
+  • Bootstrap seed health rotation with deterministic quarantine/recovery and health-scored selection
+  • Bounded high-fanout protection: deterministic inventory subset routing, overload-aware `inv/getdata` caps, and deterministic PoE vote dedup windows
+
+Verified locally on February 23, 2026:
+  • `cmake --build KeplerSynapseNet/build --parallel 6`
+  • `ctest --test-dir KeplerSynapseNet/build --output-on-failure`
+  • Result: 230/230 tests passed
+
+Open release-level items:
+  • Cross-platform determinism replay validation in release workflows remains a release gate
+  • Security/reproducibility gate completion must be validated by CI on current branch head
+  • 1k/5k/10k stress coverage is currently synthetic (policy/admission simulation); long-run fd/memory soak under real sockets remains a follow-up gate
+
+
+════════════════════════════════════════════════════════════════════════════════
+                         QUANTUM SECURITY STATUS
+════════════════════════════════════════════════════════════════════════════════
+
+Updated on February 23, 2026.
+
+Implemented in code:
+  • CLI now accepts `--security quantum-ready` and maps it to `SecurityLevel::QUANTUM_READY`.
+  • Config defaults now include `security.quantum_enabled=true` and `security.level=high`.
+  • Runtime config loading now honors CLI precedence and applies config defaults for quantum enablement and security level.
+  • `QuantumManager` now keeps persistent hybrid KEM and hybrid signature keypairs instead of generating ephemeral signing keys per call.
+  • `QuantumManager` now enforces non-classic KEM/signature policy when level is not `standard`.
+  • Kyber shared-secret derivation is now symmetric between encapsulation and decapsulation paths.
+  • Dilithium and SPHINCS+ signatures are now deterministic and verifiable against public keys.
+  • Hybrid signature verification now validates both the classic signature segment and the Dilithium segment.
+  • Quantum payload framing now supports explicit mode signaling (hybrid or QKD) with backward-compatible decode handling.
+  • Quantum-ready mode now attempts QKD session establishment and falls back to hybrid KEM when QKD material is unavailable.
+  • Runtime quantum status now exposes selected algorithms and QKD/hybrid operation counters.
+  • `CryptoSelector` algorithm availability checks are now mutex-safe across selection and listing calls.
+  • `node.status` now includes a structured `quantum` status object with:
+      - `enabled`, `requestedLevel`, `effectiveLevel`, `managerInitialized`, `isQuantumSafe`
+      - `qkdConnected`, `qkdSessionActive`
+      - `selectedKEM`, `selectedSignature`, `selectedEncryption`
+      - `qkdEncryptOperations`, `hybridEncryptOperations`, `qkdDecryptOperations`, `hybridDecryptOperations`, `qkdFallbackDecryptOperations`
+      - `counters` (`hybridOperations`, `qkdSessionsEstablished`, and PQC signature/KEM counters)
+
+Operational behavior:
+  • Default runtime behavior is quantum-enabled with `high` policy unless overridden by CLI/config.
+  • `standard`: quantum subsystem is disabled unless explicitly enabled.
+  • `high` / `paranoid`: hybrid quantum-safe encryption and signature paths are active.
+  • `quantum-ready`: QKD is used when available; hybrid fallback remains active for graceful degradation.
+  • Downgrade boundary is explicit: decrypting a QKD-framed payload after runtime downgrade from `quantum-ready` fails closed and increments `qkdFallbackDecryptOperations`.
+
+Local verification on February 23, 2026:
+  • `cmake -S KeplerSynapseNet -B KeplerSynapseNet/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON`
+  • `cmake --build KeplerSynapseNet/build --parallel 6`
+  • `ctest --test-dir KeplerSynapseNet/build -R "QuantumRuntimeTests|QuantumTests" --output-on-failure`
+  • `ctest --test-dir KeplerSynapseNet/build --output-on-failure`
+  • Result: build succeeded, `QuantumTests` and `QuantumRuntimeTests` passed, full suite passed.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                         OPERATOR-FACING UI (TUI)
+════════════════════════════════════════════════════════════════════════════════
+
+Run:
+  TERM=xterm-256color ./KeplerSynapseNet/build/synapsed
+
+AI chat key bindings:
+  • `Ctrl+W` (or `C`): clear chat history and stop generation
+  • `Ctrl+X` (or `X`): stop current generation
+  • `PgUp` / `PgDn`: scroll chat history
+  • AI Query route controls are read-only; route policy is configured in `synapsenet.conf`
+
+NAAN observability:
+  • [A] Attached Agent: score, budgets, connector states, last actions
+  • [A] Network & Mining panel now includes network pressure, overload state, buffered RX bytes, reject/evict/ban/rate/malformed counters, backpressure drops, and consensus lag
+  • [0] Agent Network: read-only observatory feed (artifacts + drafts)
+
+
+════════════════════════════════════════════════════════════════════════════════
+                       POLICY + CONNECTOR STATUS MODEL
+════════════════════════════════════════════════════════════════════════════════
+
+Connectors:
+  • Clearnet: Tor-routed fetch in Tor-required mode
+  • Tor: clearnet fetch routed through Tor SOCKS
+  • Onion: .onion fetch via Tor
+
+Defaults:
+  • `agent.tor.required=true` by default
+  • `web.inject.enabled=true`, `web.inject.onion=true`, and `web.inject.tor_clearnet=true` by default
+  • `agent.routing.allow_clearnet_fallback=false` and `agent.routing.allow_p2p_clearnet_fallback=false` by default
+  • Tor-required mode enables SOCKS proxy routing for outbound P2P and web connectors
+
+Safety behavior:
+  • Tor-required mode uses fail-closed policy when Tor is unavailable (no uncontrolled clearnet fallback)
+  • Remote model rent/infer RPC paths fail closed with `tor_fail_closed_remote_model` when Tor-required route policy blocks outbound P2P discovery
+  • Route-policy rejections do not trigger score penalties
+  • Connector health transitions are explicit (ONLINE/DEGRADED/OFFLINE/POLICY_BLOCKED)
+  • Extraction risk gate blocks unsafe outputs with deterministic reasons
+
+Status surfaces:
+  • `node.status` includes Tor route fields: `torRequired`, `torReachable`, `torManaged`, `torDegraded`, `routeMode`, fallback flags, and route allow flags
+  • `node.status` and `naan.status` include `networkHealth` with pressure, overload, buffered RX bytes, rejection/eviction/temp-ban totals, malformed/rate-limited totals, backpressure counters, gossip suppression/subset routing counters, and consensus lag
+  • `node.status` includes `quantum` runtime status with effective policy, selected algorithms, and QKD/hybrid operation counters
+  • `naan.status` includes matching route fields plus deterministic reward visibility counters:
+      - `agentRewardObservedSubmissions`
+      - `agentRewardFinalizedSubmissions`
+      - `agentRewardCreditedSubmissions`
+      - `agentRewardExpectedAtoms`
+      - `agentRewardCreditedAtoms`
+
+
+════════════════════════════════════════════════════════════════════════════════
+                    NETWORK SCALE + OVERLOAD PROTECTION
+════════════════════════════════════════════════════════════════════════════════
+
+Implemented controls:
+  • Adaptive inbound admission with deterministic eviction of lower-priority peers under pressure
+  • Adaptive outbound admission with bounded `maxOutboundConnections` and subnet/IP quota checks
+  • Per-IP and per-subnet concurrent connection limits to reduce concentration and Sybil pressure
+  • Per-peer token-bucket message throttling with deterministic refill and consume semantics
+  • Malformed payload tracking with decay; temporary bans use bounded decay-based durations
+  • Overload mode enters/exits based on deterministic peer/message pressure thresholds
+  • Inventory fanout compression path under heavy fanout (subset routing + suppression counters)
+  • `getdata` request/serve caps when overloaded to avoid amplification collapse
+  • Deterministic bounded vote dedup cache for PoE vote handling
+
+Bootstrap discovery hardening:
+  • Bootstrap nodes carry health metadata (`healthScore`, `lastFailureAt`, `quarantineUntil`)
+  • Seed failures quarantine entries for a bounded TTL; healthy seeds rotate first
+  • `node.seeds` and `node.discovery.stats` expose active vs quarantined seed state
+
+Code anchors:
+  • KeplerSynapseNet/include/network/scale_policy.h
+  • KeplerSynapseNet/src/network/scale_policy.cpp
+  • KeplerSynapseNet/include/network/network.h
+  • KeplerSynapseNet/src/network/network.cpp
+  • KeplerSynapseNet/include/network/discovery.h
+  • KeplerSynapseNet/src/network/discovery.cpp
+  • KeplerSynapseNet/src/main.cpp
+  • KeplerSynapseNet/src/tui/tui.cpp
+
+
+════════════════════════════════════════════════════════════════════════════════
+                            STORAGE + RECOVERY (NAAN)
+════════════════════════════════════════════════════════════════════════════════
+
+Persistence layout (default data dir: ~/.synapsenet):
+  • NAAN DB and audit:
+      - ~/.synapsenet/naan/naan.db
+      - ~/.synapsenet/naan/audit/segment_*.log
+      - ~/.synapsenet/naan/storage/audit/segment_*.log
+  • Runtime state:
+      - ~/.synapsenet/naan/runtime.state
+      - ~/.synapsenet/naan/scheduler.state
+      - ~/.synapsenet/naan/score.state
+      - ~/.synapsenet/naan/score_decay.state
+  • Connector audit artifacts:
+      - ~/.synapsenet/audit/connectors/
+
+Recovery:
+  • Startup recovery verifies/repairs NAAN audit chain and index consistency
+  • Draft/coordination/submission consistency checks run during maintenance cycle
+
+Code anchors:
+  • KeplerSynapseNet/include/core/agent_storage.h
+  • KeplerSynapseNet/src/core/agent_storage.cpp
+  • KeplerSynapseNet/src/main.cpp
+
+
+════════════════════════════════════════════════════════════════════════════════
+                             TOR RUNTIME (MANAGED)
+════════════════════════════════════════════════════════════════════════════════
+
+Tor is supported as:
+  • External daemon on localhost, or
+  • Managed runtime started by synapsed
+
+P2P/onion behavior:
+  • Tor-first routing flags and discovery status are exposed in `node.status` and `naan.status`
+  • Managed runtime auto-start is attempted in Tor-required mode when SOCKS is unavailable
+  • Managed runtime startup and bootstrap retries are bounded and observable
+
+NAAN reward visibility:
+  • `naan.pipeline.drain` items include `expectedAcceptanceRewardAtoms` and `acceptanceRewardCredited`
+  • NAAN pipeline audit payload includes deterministic `rewardVisibility` entries per submitted draft
+  • `naan.status` publishes deterministic aggregate reward observability counters
+
+Code anchors:
+  • KeplerSynapseNet/src/main.cpp
+  • KeplerSynapseNet/src/web/tor_fetch.cpp
+
+
+════════════════════════════════════════════════════════════════════════════════
+                                 JSON-RPC
+════════════════════════════════════════════════════════════════════════════════
+
+PoE and wallet/model:
+  • poe.submit
+  • poe.submit_code
+  • poe.list_code
+  • poe.fetch_code
+  • poe.vote
+  • poe.finalize
+  • poe.epoch
+  • poe.export
+  • poe.import
+  • poe.validators
+  • wallet.address
+  • wallet.balance
+  • model.status
+  • model.list
+  • model.load
+  • model.unload
+  • model.access.get
+  • model.access.set
+
+Remote model and market:
+  • market.listings
+  • market.stats
+  • model.remote.list
+  • model.remote.rent
+  • model.remote.end
+  • ai.complete
+  • ai.stop
+
+Update and implant:
+  • update.manifest.submit
+  • update.manifest.fetch
+  • update.manifest.list
+  • update.manifest.approve
+  • update.manifest.approvals
+  • update.install.state
+  • update.install.prepare
+  • update.install.advance
+  • update.install.commit
+  • update.install.rollback
+  • implant.update.state
+  • implant.update.prepare
+  • implant.update.advance
+  • implant.update.commit
+  • implant.update.rollback
+
+NAAN and node observability:
+  • naan.status
+  • naan.observatory.artifacts
+  • naan.observatory.artifact.get
+  • naan.observatory.drafts
+  • naan.observatory.draft.get
+  • naan.pipeline.dryrun
+  • naan.pipeline.drain
+  • node.status
+  • node.peers
+  • node.logs
+  • node.seeds
+  • node.discovery.stats
+
+
+════════════════════════════════════════════════════════════════════════════════
+                          v0.2 UPDATE / IMPLANT BASELINE
+════════════════════════════════════════════════════════════════════════════════
+
+UpdateManifest and governance:
+  • Deterministic serialization + hashing + signature verification
+  • Strict manifest validation (version/target/protocol/chunks/signature)
+  • Trusted signer policy + detached signer approval threshold checks
+
+Implant compatibility:
+  • HAL v1 framing validation
+  • Intent schema v1 validation
+  • Safety pipeline and staged installer gates before commit
+  • Machine-readable compatibility/governance reasons:
+      - `unsupported_hal_version`
+      - `unsupported_intent_schema`
+      - `trusted_signer_allowlist_empty`
+      - `insufficient_signer_approvals`
+      - `invalid_detached_approval_signature`
+
+Runtime status outputs:
+  • `update.install.state` includes:
+      - installer snapshot
+      - policy view (`policy`)
+      - `policyHashNaan`
+      - `policyHashImplant`
+      - pending signer threshold readiness/reason fields (`pendingSignerThresholdReady`, `pendingSignerThresholdReason`)
+  • `implant.update.state` includes:
+      - installer snapshot + policy hashes
+      - pending signer threshold readiness/reason
+      - safety readiness/reason (`safetyCommitReady`, `safetyCommitReason`)
+  • install/implant rejection paths include machine-readable prefixes:
+      - `update_signer_threshold_failed:<reason>`
+      - `implant_policy_rejected:<reason>`
+      - `safety_pipeline_rejected:<reason>`
+
+Spec + code anchors:
+  • interfaces txt/V0_2_RUNTIME_UPDATE_IMPLANT_SPEC.txt
+  • KeplerSynapseNet/include/core/update_bundle.h
+  • KeplerSynapseNet/src/core/update_bundle.cpp
+  • KeplerSynapseNet/include/core/implant_compatibility.h
+  • KeplerSynapseNet/src/core/implant_compatibility.cpp
+  • KeplerSynapseNet/include/core/update_installer.h
+  • KeplerSynapseNet/src/core/update_installer.cpp
+
+
+════════════════════════════════════════════════════════════════════════════════
+                                TESTS + CI
+════════════════════════════════════════════════════════════════════════════════
+
+Local verification command set:
+  cmake -S KeplerSynapseNet -B build -DCMAKE_BUILD_TYPE=Release -DUSE_LLAMA_CPP=OFF -DBUILD_PRIVACY=OFF -DBUILD_TESTS=ON
+  cmake --build build --parallel
+  ctest --test-dir build --output-on-failure
+
+Scale/overload verification command set:
+  ctest --test-dir build --output-on-failure -R "NetworkScalePolicyTests|PeerDiscoveryTests"
+  ctest --test-dir build --output-on-failure -R "NaanIntegrationTests|DeterminismReplayTests"
+
+Quantum/replay verification command set:
+  ctest --test-dir build --output-on-failure -R "QuantumTests|QuantumRuntimeTests|DeterminismReplayTests|NaanRecoveryTests|NaanAdversarialTests"
+  ./build/tests/test_determinism_replay > /tmp/replay_run_1.txt
+  ./build/tests/test_determinism_replay > /tmp/replay_run_2.txt
+  diff -u /tmp/replay_run_1.txt /tmp/replay_run_2.txt
+
+Representative tests in this repository:
+  • KeplerSynapseNet/tests/test_quantum_runtime.cpp
+  • KeplerSynapseNet/tests/test_agent_scheduler.cpp
+  • KeplerSynapseNet/tests/test_agent_submission_pipeline.cpp
+  • KeplerSynapseNet/tests/test_agent_score.cpp
+  • KeplerSynapseNet/tests/test_naan_integration.cpp
+  • KeplerSynapseNet/tests/test_naan_recovery.cpp
+  • KeplerSynapseNet/tests/test_naan_adversarial.cpp
+  • KeplerSynapseNet/tests/test_web_route_policy.cpp
+  • KeplerSynapseNet/tests/test_web_extraction_risk.cpp
+  • KeplerSynapseNet/tests/test_web_connector_audit.cpp
+  • KeplerSynapseNet/tests/test_update_manifest.cpp
+  • KeplerSynapseNet/tests/test_update_installer.cpp
+  • KeplerSynapseNet/tests/test_implant_compatibility.cpp
+  • KeplerSynapseNet/tests/test_implant_safety_pipeline.cpp
+  • KeplerSynapseNet/tests/test_determinism_replay.cpp
+  • KeplerSynapseNet/tests/test_peer_discovery.cpp
+  • KeplerSynapseNet/tests/test_network_scale_policy.cpp
+
+Determinism/replay hardening highlights:
+  • `test_determinism_replay` includes NAAN restart/recovery and projection-repair replay digests.
+  • `test_naan_recovery` validates repeated restart replay stability for audit-tail repair + observatory projection repair.
+  • `test_naan_adversarial` validates replay-signature rejection and stable adversarial outcome hashes across repeated runs.
+
+CI workflow config:
+  • .github/workflows/ci.yml includes Linux/macOS builds, Windows (MSYS2), Docker build, security-gate test runs, explicit quantum gate checks (`QuantumTests|QuantumRuntimeTests`) on Linux/macOS/Windows, and determinism replay diff gates.
+  • .github/workflows/release-gates.yml runs release-gate subsets plus explicit quantum suite and determinism replay diff checks on pull requests.

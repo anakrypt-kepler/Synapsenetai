@@ -1,0 +1,452 @@
+================================================================================
+                         SYNAPSENET PROJECT ARCHITECTURE (US)
+================================================================================
+
+--------------------------------------------------------------------------------
+CREATOR RULES (IMMUTABLE)
+--------------------------------------------------------------------------------
+- The creator's rules and the project's meaning/purpose are immutable. No one has the right to change them.
+- These interface documents define the core rules and logic of SynapseNet; the core rules/logic must not be altered.
+- You may improve implementation, fix bugs, add features, expand documentation, and optimize performance as long as you do not change core behavior or bypass prohibitions/safeguards.
+- Any fork or modification that changes core behavior, removes safeguards, or bypasses prohibitions is not an official SynapseNet project.
+- NGT earned by such a fork is not recognized or associated with SynapseNet.
+- Wallets tied to such violations are subject to automatic burn by community decision.
+
+This document is a practical, code-aligned map of how SynapseNet works today.
+Scope: KeplerSynapseNet (C++ node "synapsed") + SynapseIDE (Go client).
+
+
+--------------------------------------------------------------------------------
+1) What you run
+--------------------------------------------------------------------------------
+
+- synapsed
+  - The core node process (P2P + PoE v1 + NGT + local LLM + optional Web4).
+  - Entry point: KeplerSynapseNet/src/main.cpp
+
+- synapseide
+  - Terminal IDE client (Go) that calls synapsed RPC.
+  - Location: KeplerSynapseNet/crush-main
+  - UX: /tangent isolated threads, /patch unified diff preview/apply/submit, remote rentals (opt-in)
+
+
+--------------------------------------------------------------------------------
+2) Repository layout (high level)
+--------------------------------------------------------------------------------
+
+KeplerSynapseNet/
+  include/               Public headers
+  src/                   C++ implementation
+    main.cpp             Node orchestration, RPC, P2P dispatch
+    network/             Network socket layer + discovery + sync
+    infrastructure/      Wire messages and serialization
+    core/                Ledger, Transfer (UTXO), Knowledge, PoE v1, Consensus
+    model/               Model loading/inference/access/marketplace
+    web/                 Optional Web4 search + Tor + injection helpers
+    tui/                 ncurses UI
+  tests/                 C++ tests (ctest)
+  crush-main/            SynapseIDE (Go)
+
+
+--------------------------------------------------------------------------------
+3) Runtime subsystem map
+--------------------------------------------------------------------------------
+
+The node is a single process with multiple subsystems initialized in order.
+
+Initialization order (real in code):
+- Config + Logger
+- Database + Keys/Crypto
+- Quantum Security (optional)
+- P2P Network + Discovery (unless CLI-only)
+- Core: Ledger, Knowledge, Transfer, Consensus, PoE v1
+- Model: local LLM loader + access + marketplace (if needed)
+- Agent: node-attached autonomous agent runtime (NAAN)
+- Privacy layer (unless CLI-only)
+- RPC server (unless CLI-only)
+- Mempool config (unless CLI-only)
+
+See: KeplerSynapseNet/src/main.cpp (SynapseNet::initialize)
+
+
+--------------------------------------------------------------------------------
+4) Main components and responsibilities
+--------------------------------------------------------------------------------
+
+- Network (P2P sockets)
+  - File: KeplerSynapseNet/src/network/network.cpp
+  - Responsibilities:
+    - TCP accept + outbound connect
+    - Per-peer framed reads/writes
+    - Rate limiting and max message size enforcement
+    - Exposes callbacks: onMessage, onPeerConnected, onPeerDisconnected
+
+- Discovery (bootstrap, DNS seeds, peer exchange)
+  - Files: KeplerSynapseNet/src/network/discovery.cpp, include/network/discovery.h
+  - Responsibilities:
+    - Bootstrap seed list (host:port)
+    - DNS seeds resolution and peer list growth
+    - Peer exchange via GETPEERS/PEERS
+    - Discovery stats (knownPeersCount, dnsQueries, etc.)
+
+- Message wire layer
+  - Files:
+    - KeplerSynapseNet/src/infrastructure/messages.h
+    - KeplerSynapseNet/src/infrastructure/messages.cpp
+  - Responsibilities:
+    - Message structs (version, peers, inv/getdata, PoE objects, remote model wire)
+    - Serialization/deserialization
+
+- PoE v1 engine (deterministic knowledge acceptance + epochs)
+  - Files: KeplerSynapseNet/src/core/poe_v1_engine.cpp, poe_v1_objects.cpp
+  - Responsibilities:
+    - Store entries + votes
+    - Deterministic validator selection (static set or stake-mode config)
+    - Finalization record creation (M-of-N validator votes)
+    - Epoch computation (deterministic allocations)
+
+- Transfer manager (NGT UTXO + mempool)
+  - Files: KeplerSynapseNet/src/core/transfer.cpp
+  - Responsibilities:
+    - Transaction creation, signing, and verification
+    - Mempool policy (expiry, size cap, fee checks)
+    - Apply/rollback in blocks (deterministic UTXO updates)
+    - Deterministic reward crediting (rewardId -> unique UTXO)
+
+- Ledger (append-only chain-ish log)
+  - Files: KeplerSynapseNet/src/core/ledger.cpp
+  - Responsibilities:
+    - Store blocks/events, height, tip hash, event history
+
+- Model subsystem (local LLM)
+  - Files: KeplerSynapseNet/src/model/model_loader.cpp, model_inference.cpp
+  - Responsibilities:
+    - Load GGUF (llama.cpp backend when compiled with USE_LLAMA_CPP)
+    - Generate completions and stream tokens
+
+- Autonomous agent network (NAAN)
+  - Spec: interfaces txt/NODE_ATTACHED_AGENT_NETWORK.txt
+  - Code:
+    - KeplerSynapseNet/include/core/agent_coordination.h
+    - KeplerSynapseNet/include/core/agent_draft_queue.h
+    - KeplerSynapseNet/include/core/agent_runtime.h
+    - KeplerSynapseNet/include/core/agent_scheduler.h
+    - KeplerSynapseNet/include/core/agent_score.h
+    - KeplerSynapseNet/include/core/agent_storage.h
+    - KeplerSynapseNet/include/core/agent_submission_pipeline.h
+    - KeplerSynapseNet/src/core/agent_coordination.cpp
+    - KeplerSynapseNet/src/core/agent_draft_queue.cpp
+    - KeplerSynapseNet/src/core/agent_runtime.cpp
+    - KeplerSynapseNet/src/core/agent_scheduler.cpp
+    - KeplerSynapseNet/src/core/agent_score.cpp
+    - KeplerSynapseNet/src/core/agent_storage.cpp
+    - KeplerSynapseNet/src/core/agent_submission_pipeline.cpp
+  - Responsibilities:
+    - Node-attached background agent runtime (always-on)
+    - Agent-to-agent coordination (rooms, signed artifacts, observatory)
+    - Draft queue + KnowledgeEntry proposal pipeline (PoE-gated)
+    - UpdateBundle seeding (signed manifests + P2P distribution)
+
+- ModelAccess + Marketplace + Remote routing (opt-in)
+  - Files:
+    - KeplerSynapseNet/src/model/model_access.cpp
+    - KeplerSynapseNet/src/model/model_marketplace.cpp
+    - KeplerSynapseNet/src/main.cpp (remote P2P handlers)
+  - Responsibilities:
+    - Slot accounting, rate limiting, access modes
+    - Listings + rentals + accounting in integer atoms
+    - Remote inference protocol over P2P + payment verification
+
+- Web4 module (optional search + Tor)
+  - Files: KeplerSynapseNet/src/web/*
+  - Responsibilities:
+    - WebSearch + Darknet routing
+    - TorEngine/TorFetch for onion access (external Tor daemon or managed Tor runtime)
+    - AIWrapper to inject context into prompts
+
+- RPC server (JSON-RPC over HTTP)
+  - Files: KeplerSynapseNet/src/web/rpc_server.cpp and main.cpp registration
+  - Responsibilities:
+    - Expose methods: ai.*, model.*, wallet.*, poe.*, market.*, node.*, update.*, implant.*, naan.*
+
+- TUI (ncurses)
+  - Files: KeplerSynapseNet/src/tui/*
+  - Responsibilities:
+    - Local UX for node status, wallet, PoE submission, chat, etc.
+
+
+--------------------------------------------------------------------------------
+5) P2P message dispatch model
+--------------------------------------------------------------------------------
+
+P2P messages are framed with a header containing a 12-byte command string plus a
+payload. The main dispatch is a string switch:
+
+See: KeplerSynapseNet/src/main.cpp (SynapseNet::handleMessage)
+
+Key command families:
+- Connectivity:
+  - version / verack
+  - ping / pong
+
+- Discovery:
+  - getpeers / peers
+  - getaddr / addr
+
+- Gossip:
+  - inv / getdata
+
+- Objects:
+  - tx
+  - block
+  - poe_entry / poe_vote / poe_epoch
+  - poe_getinv / poe_inv (paging inventory for PoE objects)
+
+- Remote models (opt-in):
+  - m_offer / m_rent / m_rentok / m_infer / m_out
+
+
+--------------------------------------------------------------------------------
+6) Core flows (diagrams)
+--------------------------------------------------------------------------------
+
+6.1 Node startup (high-level)
+
+```mermaid
+flowchart TD
+  Start[Start] --> Config[LoadConfig_Logger]
+  Config --> Crypto[InitCrypto_Keys]
+  Crypto --> Quantum[InitQuantum_optional]
+  Quantum --> Net[InitNetwork_and_Discovery]
+  Net --> Core[InitCore_Ledger_Knowledge_Transfer_Consensus_PoE]
+  Core --> Model[InitModel_if_needed]
+  Model --> Privacy[InitPrivacy_optional]
+  Privacy --> RPC[InitRPC_optional]
+  RPC --> Run[RunThreads_and_UI]
+```
+
+6.2 Peer discovery and bootstrap
+
+```mermaid
+sequenceDiagram
+  participant NodeA as NodeA_synapsed
+  participant DNS as DNS_seed1_4
+  participant Seed as SeedNode_synapsed
+  participant NodeB as NodeB_synapsed
+
+  NodeA->>DNS: resolve(seed1..seed4)
+  NodeA->>Seed: connect(seed:8333)
+  NodeA->>Seed: getpeers
+  Seed-->>NodeA: peers(peer_addresses)
+  NodeA->>NodeB: connect(peer:8333)
+```
+
+Notes:
+- Bootstrap nodes are configured in main.cpp and can be extended by --seednode.
+- DNS seeds add more candidate addresses into Discovery.
+
+6.3 Gossip: inv/getdata
+
+```mermaid
+sequenceDiagram
+  participant A as NodeA
+  participant B as NodeB
+  A-->>B: inv(type,hash)
+  B->>A: getdata(type,hash)
+  A-->>B: object_payload(tx_or_block_or_poe)
+```
+
+6.4 PoE v1 lifecycle (knowledge acceptance and epoch rewards)
+
+```mermaid
+flowchart TD
+  Submit[poe_submit_entry] --> BroadcastEntry[p2p_poe_entry]
+  BroadcastEntry --> Vote[validators_poe_vote]
+  Vote --> Finalize[poe_finalize_MofN]
+  Finalize --> Epoch[poe_run_epoch]
+  Epoch --> Reward[transfer_creditRewardDeterministic]
+  Epoch --> BroadcastEpoch[p2p_poe_epoch]
+```
+
+6.5 NGT transaction (UTXO) lifecycle
+
+```mermaid
+flowchart LR
+  Create[create_tx] --> Sign[sign_tx]
+  Sign --> Mempool[submit_to_mempool]
+  Mempool --> P2P[inv_getdata_tx]
+  P2P --> Block[block_import_or_mine]
+  Block --> Apply[apply_utxo_changes]
+```
+
+Mathematical notes (UTXO invariants):
+  • For any valid transaction tx:
+        sum(inputs_amounts) >= sum(outputs_amounts) + fee
+
+    Where:
+      inputs_amounts  = amounts of referenced unspent outputs (UTXOs)
+      outputs_amounts = amounts of all outputs created by tx
+      fee             = network fee (integer atoms)
+
+  • Total supply evolves deterministically as:
+        total_supply_next = total_supply_prev + minted_rewards - burned_amounts
+
+    In SynapseNet, minted_rewards are tied to:
+      - PoE acceptance rewards
+      - PoE epoch rewards
+      - other protocol-defined mint events
+
+Code anchors (Transfer / UTXO implementation):
+  • File: KeplerSynapseNet/src/core/transfer.cpp
+
+    // Sum of all outputs for a transaction
+    uint64_t Transaction::totalOutput() const {
+        uint64_t total = 0;
+        for (const auto& outp : outputs) total += outp.amount;
+        return total;
+    }
+
+    // Signature verification over tx hash for each input
+    bool Transaction::verify() const {
+        for (const auto& inp : inputs) {
+            crypto::Hash256 sigHash = computeHash();
+            if (!crypto::verify(sigHash, inp.signature, inp.pubKey)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+  • TransferManager internal state (simplified):
+
+    struct TransferManager::Impl {
+        database::Database db;
+        std::unordered_map<std::string, std::vector<UTXO>> utxoSet;
+        std::unordered_map<std::string, Transaction> mempool;
+        uint64_t txCounter   = 0;
+        uint64_t totalSupply_ = 0;
+        mutable std::mutex mtx;
+        // fee config and callbacks omitted
+    };
+
+    bool TransferManager::open(const std::string& dbPath) {
+        std::lock_guard<std::mutex> lock(impl_->mtx);
+        if (!impl_->db.open(dbPath)) return false;
+        // load or initialize transfer DB version, txCounter, totalSupply, utxoSet
+        // ...
+        return true;
+    }
+
+
+6.6 Local AI completion + optional Web4 injection
+
+```mermaid
+flowchart TD
+  Prompt[UserPrompt] --> RPC[ai_complete_RPC]
+  RPC --> Toggle{Web4Enabled}
+  Toggle -- no --> LLM[ModelLoader_generate]
+  Toggle -- yes --> Web[WebSearch_Tor_AIWrapper]
+  Web --> Enriched[EnrichedPrompt]
+  Enriched --> LLM
+  LLM --> Output[AnswerText]
+```
+
+6.7 Remote model rental (opt-in) with NGT payment enforcement
+
+```mermaid
+sequenceDiagram
+  participant Renter as RenterNode
+  participant Provider as ProviderNode
+  participant Wallet as TransferManager
+
+  Provider-->>Renter: m_offer(offerId,priceAtoms,slots)
+  Renter->>Provider: m_rent(offerId)
+  Provider-->>Renter: m_rentok(sessionId,providerAddress,priceAtoms)
+  Renter->>Wallet: create_and_submit_payment_tx
+  Renter->>Provider: m_infer(sessionId,prompt,paymentTxidHex)
+  Provider->>Wallet: verifyPaymentToSelf
+  Provider-->>Renter: m_out(resultText)
+```
+
+
+--------------------------------------------------------------------------------
+7) RPC surface (practical)
+--------------------------------------------------------------------------------
+
+RPC is JSON-RPC over HTTP. It is used by:
+- CLI mode (calls RPC when daemon is running)
+- SynapseIDE (Go client)
+- External tools
+
+Common methods:
+- node.status / node.peers / node.logs
+- node.seeds / node.discovery.stats
+- wallet.address / wallet.balance
+- poe.submit / poe.vote / poe.finalize / poe.epoch / poe.validators
+- ai.complete / ai.stop
+- model.list / model.load / model.unload
+- model.access.get / model.access.set
+- market.listings / market.stats
+- model.remote.list / model.remote.rent / model.remote.end
+- update.manifest.* / update.install.* / implant.update.*
+- naan.status / naan.observatory.* / naan.pipeline.*
+
+See: KeplerSynapseNet/src/main.cpp (rpc_->registerMethod calls)
+
+
+--------------------------------------------------------------------------------
+8) Data directory (persistence)
+--------------------------------------------------------------------------------
+
+Default: ~/.synapsenet (or --datadir)
+
+Typical folders:
+- ledger/ledger.db
+- knowledge/knowledge.db
+- transfer/transfer.db
+- poe/poe.db
+- models/ (GGUF)
+- synapsenet.conf
+- synapsenet.log
+
+
+--------------------------------------------------------------------------------
+9) Key navigation pointers ("where to read next")
+--------------------------------------------------------------------------------
+
+- Orchestration and glue:
+  - KeplerSynapseNet/src/main.cpp
+
+- Discovery + networking:
+  - KeplerSynapseNet/src/network/network.cpp
+  - KeplerSynapseNet/src/network/discovery.cpp
+
+- Wire formats:
+  - KeplerSynapseNet/src/infrastructure/messages.h
+  - KeplerSynapseNet/src/infrastructure/messages.cpp
+
+- PoE v1:
+  - KeplerSynapseNet/src/core/poe_v1_engine.cpp
+  - KeplerSynapseNet/src/core/poe_v1_objects.cpp
+
+- NGT/UTXO:
+  - KeplerSynapseNet/src/core/transfer.cpp
+
+- Local AI:
+  - KeplerSynapseNet/src/model/model_loader.cpp
+  - KeplerSynapseNet/src/model/model_inference.cpp
+
+- Web4/Tor:
+  - KeplerSynapseNet/src/web/web_search.cpp
+  - KeplerSynapseNet/src/web/ai_wrapper.cpp
+  - KeplerSynapseNet/src/web/tor_fetch.cpp
+
+- SynapseIDE (Go client):
+  - KeplerSynapseNet/crush-main/internal/agent/synapsenet/provider.go
+  - KeplerSynapseNet/crush-main/internal/config/*
+
+- Autonomous agent network (spec):
+  - interfaces txt/NODE_ATTACHED_AGENT_NETWORK.txt
+
+- Implant AI stack (spec):
+  - interfaces txt/IMPLANT_AI_STACK_FOR_SYNAPSENET.txt

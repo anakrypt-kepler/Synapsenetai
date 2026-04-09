@@ -1,0 +1,186 @@
+{
+  "name": "synapsenet",
+  "displayName": "SynapseNet",
+  "description": "Local AI + PoE CODE submissions via synapsed RPC",
+  "version": "0.0.1",
+  "publisher": "kepler",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "synapsenet.modelStatus",
+        "title": "SynapseNet: Model Status"
+      },
+      {
+        "command": "synapsenet.modelList",
+        "title": "SynapseNet: Model List (Quick Pick)"
+      },
+      {
+        "command": "synapsenet.modelLoad",
+        "title": "SynapseNet: Load Model"
+      },
+      {
+        "command": "synapsenet.modelUnload",
+        "title": "SynapseNet: Unload Model"
+      },
+      {
+        "command": "synapsenet.remoteList",
+        "title": "SynapseNet: Remote Offers"
+      },
+      {
+        "command": "synapsenet.remoteRent",
+        "title": "SynapseNet: Remote Rent Model"
+      },
+      {
+        "command": "synapsenet.remoteEnd",
+        "title": "SynapseNet: Remote End Session"
+      },
+      {
+        "command": "synapsenet.aiComplete",
+        "title": "SynapseNet: AI Complete (Insert)"
+      },
+      {
+        "command": "synapsenet.aiStop",
+        "title": "SynapseNet: AI Stop"
+      },
+      {
+        "command": "synapsenet.openChat",
+        "title": "SynapseNet: Open Chat (Web4 optional)"
+      },
+      {
+        "command": "synapsenet.toggleInline",
+        "title": "SynapseNet: Toggle Inline Completions"
+      },
+      {
+        "command": "synapsenet.questConfigure",
+        "title": "SynapseNet: Quest Configure"
+      },
+      {
+        "command": "synapsenet.questSelect",
+        "title": "SynapseNet: Quest Select Active Issue"
+      },
+      {
+        "command": "synapsenet.questActive",
+        "title": "SynapseNet: Quest Active"
+      },
+      {
+        "command": "synapsenet.questClear",
+        "title": "SynapseNet: Quest Clear Active"
+      },
+      {
+        "command": "synapsenet.questCheckoutBranch",
+        "title": "SynapseNet: Quest Checkout Branch"
+      },
+      {
+        "command": "synapsenet.questForkRepo",
+        "title": "SynapseNet: Quest Fork Repo"
+      },
+      {
+        "command": "synapsenet.questCommit",
+        "title": "SynapseNet: Quest Commit"
+      },
+      {
+        "command": "synapsenet.questCreatePr",
+        "title": "SynapseNet: Quest Create PR"
+      },
+      {
+        "command": "synapsenet.suggestPatch",
+        "title": "SynapseNet: Suggest Patch (Preview/Apply)"
+      },
+      {
+        "command": "synapsenet.poeSubmitCode",
+        "title": "SynapseNet: Submit Code Patch (PoE)"
+      }
+    ],
+    "configuration": {
+      "title": "SynapseNet",
+      "properties": {
+        "synapsenet.rpcHost": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "synapsed RPC host"
+        },
+        "synapsenet.rpcPort": {
+          "type": "number",
+          "default": 8332,
+          "description": "synapsed RPC port"
+        },
+        "synapsenet.aiMaxTokens": {
+          "type": "number",
+          "default": 256,
+          "description": "Max tokens for ai.complete"
+        },
+        "synapsenet.aiTemperature": {
+          "type": "number",
+          "default": 0.2,
+          "description": "Temperature for ai.complete"
+        },
+        "synapsenet.inlineEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable inline (ghost text) completions via ai.complete"
+        },
+        "synapsenet.inlineMaxTokens": {
+          "type": "number",
+          "default": 96,
+          "description": "Max tokens for inline completions"
+        },
+        "synapsenet.inlineDebounceMs": {
+          "type": "number",
+          "default": 250,
+          "description": "Debounce (ms) before requesting inline completions"
+        },
+        "synapsenet.inlineTemperature": {
+          "type": "number",
+          "default": 0.2,
+          "description": "Temperature for inline completions"
+        },
+        "synapsenet.patchMaxTokens": {
+          "type": "number",
+          "default": 1024,
+          "description": "Max tokens for patch suggestions"
+        },
+        "synapsenet.patchTemperature": {
+          "type": "number",
+          "default": 0.2,
+          "description": "Temperature for patch suggestions"
+        },
+        "synapsenet.remoteSessionId": {
+          "type": "string",
+          "default": "",
+          "description": "Active remote model session ID used by remote completions"
+        },
+        "synapsenet.remoteUseByDefault": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use remote session for AI Complete and chat by default"
+        },
+        "synapsenet.questRepo": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub repo for quests in owner/name format"
+        },
+        "synapsenet.questToken": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub token used for quest fork/PR flows"
+        },
+        "synapsenet.questMinSubmitPowBits": {
+          "type": "number",
+          "default": 16,
+          "description": "Minimum leading-zero PoW bits required for quest submitId checks"
+        }
+      }
+    }
+  }
+}
