@@ -27,7 +27,7 @@
 <p align="center">
   <a href="https://anakrypt-kepler.github.io/Synapsenet-site/"><img src="https://img.shields.io/badge/Website-000000?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website" /></a>
   <a href="https://github.com/anakrypt-kepler"><img src="https://img.shields.io/badge/Kepler-000000?style=for-the-badge&logo=github&logoColor=white" alt="Profile" /></a>
-  <a href="https://discord.gg/wGhkWgHK"><img src="https://img.shields.io/badge/Discord-000000?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
+  <a href="https://discord.gg/CayxcvKt"><img src="https://img.shields.io/badge/Discord-000000?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
   <a href="https://github.com/anakrypt-kepler/SynapseNet"><img src="https://img.shields.io/badge/SynapseNet_Docs-000000?style=for-the-badge&logo=gitbook&logoColor=white" alt="Docs" /></a>
   <a href="https://github.com/anakrypt-kepler/SynapseNet/blob/main/SynapseNet_Whitepaper.pdf"><img src="https://img.shields.io/badge/Whitepaper-000000?style=for-the-badge&logo=adobeacrobatreader&logoColor=white" alt="Whitepaper" /></a>
   <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/Contributing-000000?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="Contributing" /></a>
