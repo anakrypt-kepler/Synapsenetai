@@ -507,6 +507,30 @@ bool TransferManager::signTransaction(Transaction& tx, const crypto::PrivateKey&
     return true;
 }
 
+bool TransferManager::signTransaction(Transaction& tx, const crypto::PrivateKey& key,
+                                      const quantum::HybridKeyPair& quantumKeyPair) {
+    tx.quantumSignature.clear();
+    if (!signTransaction(tx, key)) {
+        return false;
+    }
+    if (quantumKeyPair.primarySecretKey.empty() || quantumKeyPair.secondarySecretKey.empty()) {
+        return false;
+    }
+    const auto& firstPubKey = tx.inputs.empty() ? crypto::PublicKey{} : tx.inputs.front().pubKey;
+    std::vector<uint8_t> binding(firstPubKey.begin(), firstPubKey.end());
+    std::vector<uint8_t> payload = tx.serialize();
+    auto envelope = quantum::signApplicationPayload(
+        "core.transfer.transaction",
+        payload,
+        binding,
+        quantumKeyPair);
+    if (envelope.empty()) {
+        return false;
+    }
+    tx.quantumSignature = std::move(envelope);
+    return true;
+}
+
 bool TransferManager::submitTransaction(const Transaction& tx) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
 

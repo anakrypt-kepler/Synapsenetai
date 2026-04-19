@@ -1,6 +1,7 @@
 #pragma once
 
 #include "crypto/crypto.h"
+#include "quantum/quantum_security.h"
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -82,6 +83,8 @@ public:
     );
     
     bool signTransaction(Transaction& tx, const crypto::PrivateKey& key);
+    bool signTransaction(Transaction& tx, const crypto::PrivateKey& key,
+                         const quantum::HybridKeyPair& quantumKeyPair);
     bool submitTransaction(const Transaction& tx);
     bool confirmTransaction(const crypto::Hash256& txid);
     bool rejectTransaction(const crypto::Hash256& txid);
