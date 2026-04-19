@@ -1,6 +1,7 @@
 #include "crypto/keys.h"
 #include "crypto/address.h"
 #include "crypto/crypto.h"
+#include "quantum/application_signature.h"
 #include "tui/bip39_wordlist.h"
 #include <fstream>
 #include <sstream>
@@ -45,9 +46,13 @@ struct Keys::Impl {
     std::string mnemonic;
     KeyType keyType = KeyType::SECP256K1;
     bool valid = false;
-    
+    quantum::HybridKeyPair hybridKeyPair;
+    bool hybridReady = false;
+
     void derivePublicKey();
     std::vector<uint8_t> hmacSha512(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data);
+    void ensureHybridKeyPair();
+    void wipeHybrid();
 };
 
 void Keys::Impl::derivePublicKey() {
@@ -60,6 +65,36 @@ void Keys::Impl::derivePublicKey() {
 
 std::vector<uint8_t> Keys::Impl::hmacSha512(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data) {
     return synapse::crypto::hmacSha512(key, data);
+}
+
+void Keys::Impl::ensureHybridKeyPair() {
+    if (hybridReady
+        && !hybridKeyPair.classicPublicKey.empty()
+        && !hybridKeyPair.classicSecretKey.empty()
+        && !hybridKeyPair.pqcPublicKey.empty()
+        && !hybridKeyPair.pqcSecretKey.empty()) {
+        return;
+    }
+    quantum::HybridSig signer;
+    hybridKeyPair = signer.generateKeyPair();
+    hybridReady = !hybridKeyPair.classicPublicKey.empty()
+               && !hybridKeyPair.classicSecretKey.empty()
+               && !hybridKeyPair.pqcPublicKey.empty()
+               && !hybridKeyPair.pqcSecretKey.empty();
+}
+
+void Keys::Impl::wipeHybrid() {
+    if (!hybridKeyPair.classicSecretKey.empty()) {
+        secureZero(hybridKeyPair.classicSecretKey.data(), hybridKeyPair.classicSecretKey.size());
+        hybridKeyPair.classicSecretKey.clear();
+    }
+    if (!hybridKeyPair.pqcSecretKey.empty()) {
+        secureZero(hybridKeyPair.pqcSecretKey.data(), hybridKeyPair.pqcSecretKey.size());
+        hybridKeyPair.pqcSecretKey.clear();
+    }
+    hybridKeyPair.classicPublicKey.clear();
+    hybridKeyPair.pqcPublicKey.clear();
+    hybridReady = false;
 }
 
 Keys::Keys() : impl_(std::make_unique<Impl>()) {}
@@ -82,6 +117,7 @@ bool Keys::generate(KeyType type) {
             auto rnd2 = randomBytes(64);
             std::memcpy(impl_->seed.data(), rnd2.data(), 64);
             impl_->valid = true;
+            impl_->ensureHybridKeyPair();
             return true;
         }
     }
@@ -370,28 +406,142 @@ std::vector<uint8_t> Keys::sharedSecret(const std::vector<uint8_t>& otherPublicK
 #endif
 }
 
+static std::string hybridSidecarPath(const std::string& path) {
+    return path + ".pq";
+}
+
+static std::vector<uint8_t> encodeHybridSidecar(const quantum::HybridKeyPair& kp) {
+    auto writeU32 = [](std::vector<uint8_t>& out, uint32_t v) {
+        out.push_back(static_cast<uint8_t>(v & 0xff));
+        out.push_back(static_cast<uint8_t>((v >> 8) & 0xff));
+        out.push_back(static_cast<uint8_t>((v >> 16) & 0xff));
+        out.push_back(static_cast<uint8_t>((v >> 24) & 0xff));
+    };
+    auto writeVec = [&](std::vector<uint8_t>& out, const std::vector<uint8_t>& v) {
+        writeU32(out, static_cast<uint32_t>(v.size()));
+        out.insert(out.end(), v.begin(), v.end());
+    };
+    std::vector<uint8_t> plaintext;
+    plaintext.reserve(32 + kp.classicPublicKey.size() + kp.classicSecretKey.size()
+                         + kp.pqcPublicKey.size() + kp.pqcSecretKey.size());
+    plaintext.push_back('P');
+    plaintext.push_back('Q');
+    plaintext.push_back('K');
+    plaintext.push_back('1');
+    writeVec(plaintext, kp.classicPublicKey);
+    writeVec(plaintext, kp.classicSecretKey);
+    writeVec(plaintext, kp.pqcPublicKey);
+    writeVec(plaintext, kp.pqcSecretKey);
+    return plaintext;
+}
+
+static bool decodeHybridSidecar(const std::vector<uint8_t>& plaintext, quantum::HybridKeyPair& kpOut) {
+    if (plaintext.size() < 4 + 4 * 4) return false;
+    if (plaintext[0] != 'P' || plaintext[1] != 'Q' || plaintext[2] != 'K' || plaintext[3] != '1') return false;
+    size_t pos = 4;
+    auto readVec = [&](std::vector<uint8_t>& out) -> bool {
+        if (pos + 4 > plaintext.size()) return false;
+        uint32_t len = static_cast<uint32_t>(plaintext[pos])
+                     | (static_cast<uint32_t>(plaintext[pos + 1]) << 8)
+                     | (static_cast<uint32_t>(plaintext[pos + 2]) << 16)
+                     | (static_cast<uint32_t>(plaintext[pos + 3]) << 24);
+        pos += 4;
+        if (len > 1 << 16) return false;
+        if (pos + len > plaintext.size()) return false;
+        out.assign(plaintext.begin() + pos, plaintext.begin() + pos + len);
+        pos += len;
+        return true;
+    };
+    if (!readVec(kpOut.classicPublicKey)) return false;
+    if (!readVec(kpOut.classicSecretKey)) return false;
+    if (!readVec(kpOut.pqcPublicKey)) return false;
+    if (!readVec(kpOut.pqcSecretKey)) return false;
+    if (pos != plaintext.size()) return false;
+    kpOut.classicAlgo = quantum::CryptoAlgorithm::CLASSIC_ED25519;
+    kpOut.pqcAlgo = quantum::CryptoAlgorithm::LATTICE_DILITHIUM65;
+    return true;
+}
+
+static bool saveHybridSidecar(const std::string& path,
+                              const std::string& password,
+                              const quantum::HybridKeyPair& kp) {
+    auto plaintext = encodeHybridSidecar(kp);
+    auto salt = randomBytes(16);
+    auto keyArr = deriveKey(password, salt);
+    auto ciphertext = encryptAES(plaintext, keyArr);
+    secureZero(plaintext.data(), plaintext.size());
+    if (ciphertext.empty()) return false;
+    std::vector<uint8_t> out;
+    out.insert(out.end(), salt.begin(), salt.end());
+    out.insert(out.end(), ciphertext.begin(), ciphertext.end());
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file.is_open()) return false;
+    file.write(reinterpret_cast<const char*>(out.data()), out.size());
+    return file.good();
+}
+
+static bool loadHybridSidecar(const std::string& path,
+                              const std::string& password,
+                              quantum::HybridKeyPair& kpOut) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) return false;
+    std::streampos size = file.tellg();
+    if (size <= 16 + 12 + 16) return false;
+    file.seekg(0);
+    std::vector<uint8_t> data(static_cast<size_t>(size));
+    file.read(reinterpret_cast<char*>(data.data()), data.size());
+    std::vector<uint8_t> salt(data.begin(), data.begin() + 16);
+    std::vector<uint8_t> ciphertext(data.begin() + 16, data.end());
+    auto keyArr = deriveKey(password, salt);
+    auto plaintext = decryptAES(ciphertext, keyArr);
+    if (plaintext.empty()) return false;
+    bool ok = decodeHybridSidecar(plaintext, kpOut);
+    secureZero(plaintext.data(), plaintext.size());
+    return ok;
+}
+
 bool Keys::save(const std::string& path, const std::string& password) {
     std::vector<uint8_t> encrypted;
     if (!exportEncrypted(encrypted, password)) return false;
-    
+
     std::ofstream file(path, std::ios::binary);
     if (!file.is_open()) return false;
-    
+
     file.write(reinterpret_cast<const char*>(encrypted.data()), encrypted.size());
+    if (!file.good()) return false;
+    file.close();
+
+    impl_->ensureHybridKeyPair();
+    if (impl_->hybridReady) {
+        saveHybridSidecar(hybridSidecarPath(path), password, impl_->hybridKeyPair);
+    }
     return true;
 }
 
 bool Keys::load(const std::string& path, const std::string& password) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) return false;
-    
+
     size_t size = file.tellg();
     file.seekg(0);
-    
+
     std::vector<uint8_t> data(size);
     file.read(reinterpret_cast<char*>(data.data()), size);
-    
-    return importEncrypted(data, password);
+
+    if (!importEncrypted(data, password)) return false;
+
+    quantum::HybridKeyPair kp;
+    const std::string sidecarPath = hybridSidecarPath(path);
+    if (loadHybridSidecar(sidecarPath, password, kp)) {
+        impl_->hybridKeyPair = std::move(kp);
+        impl_->hybridReady = true;
+    } else {
+        impl_->ensureHybridKeyPair();
+        if (impl_->hybridReady) {
+            saveHybridSidecar(sidecarPath, password, impl_->hybridKeyPair);
+        }
+    }
+    return true;
 }
 
 bool Keys::exportEncrypted(std::vector<uint8_t>& output, const std::string& password) {
@@ -445,11 +595,33 @@ void Keys::wipe() {
         secureZero(const_cast<char*>(impl_->mnemonic.data()), impl_->mnemonic.size());
         impl_->mnemonic.clear();
     }
+    impl_->wipeHybrid();
     impl_->valid = false;
 }
 
 bool Keys::isValid() const {
     return impl_->valid && !impl_->privateKey.empty() && !impl_->publicKey.empty();
+}
+
+bool Keys::hasHybridKeyPair() const {
+    return impl_->hybridReady
+        && !impl_->hybridKeyPair.classicPublicKey.empty()
+        && !impl_->hybridKeyPair.classicSecretKey.empty()
+        && !impl_->hybridKeyPair.pqcPublicKey.empty()
+        && !impl_->hybridKeyPair.pqcSecretKey.empty();
+}
+
+quantum::HybridKeyPair Keys::getHybridKeyPair() const {
+    if (!hasHybridKeyPair()) return quantum::HybridKeyPair{};
+    return impl_->hybridKeyPair;
+}
+
+std::string Keys::getHybridIdentityId() const {
+    std::string id;
+    if (!quantum::applicationSignatureIdentityIdFromPublicKey(impl_->hybridKeyPair, id)) {
+        return std::string();
+    }
+    return id;
 }
 
 std::vector<std::string> Keys::getWordlist() {

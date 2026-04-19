@@ -1,6 +1,7 @@
 #pragma once
 
 #include "crypto.h"
+#include "quantum/quantum_security.h"
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -77,6 +78,10 @@ public:
     
     void wipe();
     bool isValid() const;
+
+    bool hasHybridKeyPair() const;
+    quantum::HybridKeyPair getHybridKeyPair() const;
+    std::string getHybridIdentityId() const;
     
     static std::vector<std::string> getWordlist();
     static bool isValidWord(const std::string& word);

@@ -1835,7 +1835,10 @@ std::string createAndSubmitPaymentTx(const std::string& to, uint64_t amountAtoms
         throw std::runtime_error("Invalid private key");
     }
     std::memcpy(pk.data(), pkv.data(), pk.size());
-    if (!transfer_->signTransaction(tx, pk)) {
+    const bool signed_ok = keys_->hasHybridKeyPair()
+        ? transfer_->signTransaction(tx, pk, keys_->getHybridKeyPair())
+        : transfer_->signTransaction(tx, pk);
+    if (!signed_ok) {
         throw std::runtime_error("Failed to sign transaction");
     }
     if (!transfer_->submitTransaction(tx)) {
