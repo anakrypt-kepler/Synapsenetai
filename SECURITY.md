@@ -12,7 +12,7 @@ Send a detailed report (including reproduction steps, affected commit hash, and 
 
 ## Post-Quantum Cryptography: Current State
 
-This project ships a hybrid classical+post-quantum (PQ) crypto stack backed by [liboqs](https://github.com/open-quantum-safe/liboqs). Release builds fail at configure time if liboqs is unavailable (`SYNAPSE_REQUIRE_REAL_PQC=ON` by default for `Release`, `RelWithDebInfo`, `MinSizeRel`).
+This project ships a hybrid classical+post-quantum (PQ) crypto stack backed by [liboqs](https://github.com/open-quantum-safe/liboqs). **liboqs is mandatory for all build types** — CMake will fail at configure time if it cannot find or fetch liboqs. Simulated / hash-based PQC fallback implementations have been removed; every cryptographic operation requires a real liboqs backend.
 
 ### Primitives in use
 

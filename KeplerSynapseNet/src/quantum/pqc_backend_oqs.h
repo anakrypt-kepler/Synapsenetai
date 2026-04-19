@@ -1,7 +1,5 @@
 #pragma once
 
-#ifdef USE_LIBOQS
-
 #include <oqs/oqs.h>
 
 namespace synapse::quantum::detail {
@@ -58,5 +56,3 @@ inline OQS_SIG* newPreferredSphincsSig() {
 }
 
 } // namespace synapse::quantum::detail
-
-#endif

@@ -189,15 +189,9 @@ static bool testQuantumRuntimeStatusAndDowngradeBoundary() {
 
 static bool testPqcBackendStatusSurface() {
     const auto pqc = getPQCBackendStatus();
-#ifdef USE_LIBOQS
     if (!pqc.kyberReal) return false;
     if (!pqc.dilithiumReal) return false;
     if (!pqc.sphincsReal) return false;
-#else
-    if (pqc.kyberReal) return false;
-    if (pqc.dilithiumReal) return false;
-    if (pqc.sphincsReal) return false;
-#endif
 
     QuantumManager manager;
     if (!manager.init(SecurityLevel::HIGH)) return false;

@@ -7,10 +7,8 @@
 #include <sodium.h>
 #include <openssl/evp.h>
 
-#ifdef USE_LIBOQS
 #include <oqs/oqs.h>
 #include "pqc_backend_oqs.h"
-#endif
 
 namespace synapse {
 namespace quantum {
@@ -54,7 +52,6 @@ std::vector<uint8_t> shake256Expand(const std::vector<uint8_t>& seed, size_t out
     return out;
 }
 
-#ifdef USE_LIBOQS
 std::mutex& detRngMutex() {
     static std::mutex m;
     return m;
@@ -76,7 +73,6 @@ void detRngCallback(uint8_t* out, size_t n) {
         n -= take;
     }
 }
-#endif
 
 }
 
@@ -137,7 +133,6 @@ HybridKeyPair HybridSig::generateKeyPairFromSeed(const std::vector<uint8_t>& mas
         return kp;
     }
 
-#ifdef USE_LIBOQS
     {
         std::lock_guard<std::mutex> rngLock(detRngMutex());
         const size_t streamLen = 64 * 1024;
@@ -171,11 +166,6 @@ HybridKeyPair HybridSig::generateKeyPairFromSeed(const std::vector<uint8_t>& mas
         tl_det_stream = std::move(prevStream);
         tl_det_pos = prevPos;
     }
-#else
-    auto dilithiumKp = impl_->dilithium.generateKeyPair();
-    kp.pqcPublicKey.assign(dilithiumKp.publicKey.begin(), dilithiumKp.publicKey.end());
-    kp.pqcSecretKey.assign(dilithiumKp.secretKey.begin(), dilithiumKp.secretKey.end());
-#endif
 
     return kp;
 }

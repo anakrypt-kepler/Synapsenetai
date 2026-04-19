@@ -31,11 +31,7 @@ std::string quantumAlgorithmToString(quantum::CryptoAlgorithm algo) {
 }
 
 bool quantumLiboqsEnabled() {
-#ifdef USE_LIBOQS
     return true;
-#else
-    return false;
-#endif
 }
 
 std::string quantumKyberImplementationMode() {

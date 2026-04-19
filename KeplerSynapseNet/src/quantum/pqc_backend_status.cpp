@@ -7,7 +7,6 @@ namespace quantum {
 
 PQCBackendStatus getPQCBackendStatus() {
     PQCBackendStatus status;
-#ifdef USE_LIBOQS
     if (auto* kem = detail::newPreferredKyberKem()) {
         status.kyberReal = true;
         OQS_KEM_free(kem);
@@ -20,7 +19,6 @@ PQCBackendStatus getPQCBackendStatus() {
         status.sphincsReal = true;
         OQS_SIG_free(sig);
     }
-#endif
     return status;
 }
 

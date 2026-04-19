@@ -6,17 +6,10 @@ using namespace synapse::quantum;
 
 static bool testBackendStatusConsistency() {
     PQCBackendStatus status = getPQCBackendStatus();
-#ifdef USE_LIBOQS
-    if (!status.kyberReal && !status.dilithiumReal && !status.sphincsReal) {
-        std::fprintf(stderr, "FAIL: liboqs compiled in but no algorithm reported real\n");
+    if (!status.kyberReal || !status.dilithiumReal || !status.sphincsReal) {
+        std::fprintf(stderr, "FAIL: liboqs is mandatory but not all algorithms reported real\n");
         return false;
     }
-#else
-    if (status.kyberReal || status.dilithiumReal || status.sphincsReal) {
-        std::fprintf(stderr, "FAIL: no liboqs but algorithm reported real\n");
-        return false;
-    }
-#endif
     return true;
 }
 
