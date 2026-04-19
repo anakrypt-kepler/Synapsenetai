@@ -105,6 +105,7 @@
 #include "utils/utils.h"
 #include "privacy/privacy.h"
 #include "python/sandbox.h"
+#include "quantum/application_signature.h"
 #include "quantum/quantum_security.h"
 #include "infrastructure/messages.h"
 #include "web/rpc_server.h"
@@ -3987,6 +3988,37 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         miningHashAttemptsTotal_.fetch_add(attempts);
         miningLastSolvedAt_.store(static_cast<uint64_t>(std::time(nullptr)));
         miningActive_.store(false);
+
+        const bool pastCutover = block.height >= core::BLOCK_PQ_MANDATORY_HEIGHT;
+        const char* pqEnvOverride = std::getenv("SYNAPSE_EMIT_PQ_BLOCKS");
+        const bool envOptIn = pqEnvOverride && *pqEnvOverride && std::string(pqEnvOverride) != "0";
+        const bool emitVersionedBlock = pastCutover || envOptIn;
+        if (emitVersionedBlock && keys_ && keys_->isValid()) {
+            block.version = core::BLOCK_VERSION_PQ;
+            auto producerPub = keys_->getPublicKey();
+            if (producerPub.size() == block.producer.size()) {
+                std::memcpy(block.producer.data(), producerPub.data(), block.producer.size());
+                crypto::PrivateKey producerPriv{};
+                auto pkv = keys_->getPrivateKey();
+                if (pkv.size() >= producerPriv.size()) {
+                    std::memcpy(producerPriv.data(), pkv.data(), producerPriv.size());
+                    block.producerSignature = crypto::sign(block.hash, producerPriv);
+                    crypto::secureZero(producerPriv.data(), producerPriv.size());
+                    if (keys_->hasHybridKeyPair()) {
+                        std::vector<uint8_t> binding(block.producer.begin(), block.producer.end());
+                        std::vector<uint8_t> payload(block.hash.begin(), block.hash.end());
+                        auto envelope = quantum::signApplicationPayload(
+                            "core.block.producer",
+                            payload,
+                            binding,
+                            keys_->getHybridKeyPair());
+                        if (!envelope.empty()) {
+                            block.producerQuantumSignature = std::move(envelope);
+                        }
+                    }
+                }
+            }
+        }
 
         if (!ledger_->appendBlockWithValidation(block)) {
             return;
