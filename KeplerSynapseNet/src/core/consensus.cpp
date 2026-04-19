@@ -1,5 +1,6 @@
 #include "core/consensus.h"
 #include "database/database.h"
+#include "quantum/application_signature.h"
 #include "utils/logger.h"
 #include <unordered_map>
 #include <mutex>
@@ -43,6 +44,9 @@ static uint64_t mulSaturatingU64(uint64_t a, uint64_t b) {
     return a * b;
 }
 
+static constexpr uint8_t VOTE_TRAILER_V1_QUANTUM_SIG = 0x01;
+static constexpr uint32_t VOTE_MAX_QUANTUM_SIGNATURE_SIZE = 65536;
+
 std::vector<uint8_t> Vote::serialize() const {
     std::vector<uint8_t> out;
     writeU64(out, eventId);
@@ -53,20 +57,35 @@ std::vector<uint8_t> Vote::serialize() const {
     writeU64(out, scoreBits);
     writeU64(out, timestamp);
     out.insert(out.end(), signature.begin(), signature.end());
+    if (!quantumSignature.empty()) {
+        out.push_back(VOTE_TRAILER_V1_QUANTUM_SIG);
+        writeU32(out, static_cast<uint32_t>(quantumSignature.size()));
+        out.insert(out.end(), quantumSignature.begin(), quantumSignature.end());
+    }
     return out;
 }
 
 Vote Vote::deserialize(const std::vector<uint8_t>& data) {
     Vote v;
-    if (data.size() < 8 + 33 + 1 + 8 + 8 + 64) return v;
+    const size_t fixedSize = 8 + 33 + 1 + 8 + 8 + 64;
+    if (data.size() < fixedSize) return v;
     const uint8_t* p = data.data();
+    const uint8_t* end = data.data() + data.size();
     v.eventId = readU64(p); p += 8;
     std::memcpy(v.validator.data(), p, 33); p += 33;
     v.type = static_cast<VoteType>(*p++);
     uint64_t scoreBits = readU64(p); p += 8;
     std::memcpy(&v.scoreGiven, &scoreBits, sizeof(double));
     v.timestamp = readU64(p); p += 8;
-    std::memcpy(v.signature.data(), p, 64);
+    std::memcpy(v.signature.data(), p, 64); p += 64;
+    if (end - p >= 1 && *p == VOTE_TRAILER_V1_QUANTUM_SIG) {
+        ++p;
+        if (static_cast<size_t>(end - p) < sizeof(uint32_t)) return Vote{};
+        uint32_t qsLen = readU32(p); p += 4;
+        if (qsLen > VOTE_MAX_QUANTUM_SIGNATURE_SIZE) return Vote{};
+        if (static_cast<size_t>(end - p) < qsLen) return Vote{};
+        v.quantumSignature.assign(p, p + qsLen);
+    }
     return v;
 }
 
@@ -83,8 +102,17 @@ crypto::Hash256 Vote::computeHash() const {
 }
 
 bool Vote::verify() const {
+    bool allZero = true;
+    for (size_t i = 0; i < signature.size(); ++i) {
+        if (signature[i] != 0) { allZero = false; break; }
+    }
+    if (allZero) return false;
     crypto::Hash256 hash = computeHash();
-    return crypto::verify(hash, signature, validator);
+    if (!crypto::verify(hash, signature, validator)) return false;
+    if (!quantumSignature.empty() && !quantum::isApplicationSignatureEnvelope(quantumSignature)) {
+        return false;
+    }
+    return true;
 }
 
 // Validator/result persistence helpers

@@ -45,7 +45,8 @@ struct Vote {
     double scoreGiven;
     uint64_t timestamp;
     crypto::Signature signature;
-    
+    std::vector<uint8_t> quantumSignature;
+
     std::vector<uint8_t> serialize() const;
     static Vote deserialize(const std::vector<uint8_t>& data);
     crypto::Hash256 computeHash() const;

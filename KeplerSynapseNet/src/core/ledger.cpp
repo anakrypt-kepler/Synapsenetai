@@ -1,5 +1,6 @@
 #include "core/ledger.h"
 #include "database/database.h"
+#include "quantum/application_signature.h"
 #include <mutex>
 #include <cstring>
 #include <ctime>
@@ -53,6 +54,8 @@ static uint16_t readU16(const uint8_t* p) {
 
 constexpr uint32_t MAX_EVENTS_PER_BLOCK = 1000;
 constexpr size_t MAX_EVENT_SIZE = 1 << 20; // 1MB
+static constexpr uint8_t EVENT_TRAILER_V1_QUANTUM_SIG = 0x01;
+static constexpr uint32_t EVENT_MAX_QUANTUM_SIGNATURE_SIZE = 65536;
 
 static uint64_t maxEventIdFromBlocks(const std::vector<Block>& blocks) {
     uint64_t maxId = 0;
@@ -95,6 +98,11 @@ std::vector<uint8_t> Event::serialize() const {
     out.insert(out.end(), prevHash.begin(), prevHash.end());
     out.insert(out.end(), author.begin(), author.end());
     out.insert(out.end(), signature.begin(), signature.end());
+    if (!quantumSignature.empty()) {
+        out.push_back(EVENT_TRAILER_V1_QUANTUM_SIG);
+        writeU32(out, static_cast<uint32_t>(quantumSignature.size()));
+        out.insert(out.end(), quantumSignature.begin(), quantumSignature.end());
+    }
     return out;
 }
 
@@ -113,7 +121,15 @@ Event Event::deserialize(const std::vector<uint8_t>& buf) {
     e.data.assign(p, p + dataLen); p += dataLen;
     std::memcpy(e.prevHash.data(), p, 32); p += 32;
     std::memcpy(e.author.data(), p, 33); p += 33;
-    std::memcpy(e.signature.data(), p, 64);
+    std::memcpy(e.signature.data(), p, 64); p += 64;
+    if (end - p >= 1 && *p == EVENT_TRAILER_V1_QUANTUM_SIG) {
+        ++p;
+        if (static_cast<size_t>(end - p) < sizeof(uint32_t)) return Event{};
+        uint32_t qsLen = readU32(p); p += 4;
+        if (qsLen > EVENT_MAX_QUANTUM_SIGNATURE_SIZE) return Event{};
+        if (static_cast<size_t>(end - p) < qsLen) return Event{};
+        e.quantumSignature.assign(p, p + qsLen); p += qsLen;
+    }
     e.hash = e.computeHash();
     return e;
 }
@@ -132,7 +148,16 @@ crypto::Hash256 Event::computeHash() const {
 bool Event::verify() const {
     crypto::Hash256 computed = computeHash();
     if (computed != hash) return false;
-    if (type == EventType::GENESIS) return true;
+    if (!quantumSignature.empty() && !quantum::isApplicationSignatureEnvelope(quantumSignature)) {
+        return false;
+    }
+    if (type == EventType::GENESIS) {
+        if (id != 0) return false;
+        if (prevHash != crypto::Hash256{}) return false;
+        if (author != crypto::PublicKey{}) return false;
+        if (signature != crypto::Signature{}) return false;
+        return true;
+    }
     return crypto::verify(hash, signature, author);
 }
 

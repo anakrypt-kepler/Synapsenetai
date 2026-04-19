@@ -1,6 +1,7 @@
 #include "core/transfer.h"
 #include "crypto/address.h"
 #include "database/database.h"
+#include "quantum/application_signature.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <mutex>
@@ -101,6 +102,8 @@ static bool safeAddU64(uint64_t a, uint64_t b, uint64_t& out) {
 static constexpr size_t MAX_TX_INPUTS = 1024;
 static constexpr size_t MAX_TX_OUTPUTS = 1024;
 static constexpr uint64_t MAX_TX_FUTURE_SKEW_SECONDS = 2 * 60 * 60;
+static constexpr uint8_t TX_TRAILER_V1_QUANTUM_SIG = 0x01;
+static constexpr uint32_t TX_MAX_QUANTUM_SIGNATURE_SIZE = 65536;
 
 static bool verifyTransactionLocked(
     const Transaction& tx,
@@ -168,7 +171,13 @@ std::vector<uint8_t> Transaction::serialize() const {
         writeU32(out, outpData.size());
         out.insert(out.end(), outpData.begin(), outpData.end());
     }
-    
+
+    if (!quantumSignature.empty()) {
+        out.push_back(TX_TRAILER_V1_QUANTUM_SIG);
+        writeU32(out, static_cast<uint32_t>(quantumSignature.size()));
+        out.insert(out.end(), quantumSignature.begin(), quantumSignature.end());
+    }
+
     return out;
 }
 
@@ -226,6 +235,16 @@ Transaction Transaction::deserialize(const std::vector<uint8_t>& data) {
         tx.outputs.push_back(std::move(outp));
     }
 
+    if (end - p >= 1 && *p == TX_TRAILER_V1_QUANTUM_SIG) {
+        ++p;
+        if (static_cast<size_t>(end - p) < sizeof(uint32_t)) return Transaction{};
+        uint32_t qsLen = readU32(p); p += 4;
+        if (qsLen > TX_MAX_QUANTUM_SIGNATURE_SIZE) return Transaction{};
+        if (static_cast<size_t>(end - p) < qsLen) return Transaction{};
+        tx.quantumSignature.assign(p, p + qsLen);
+        p += qsLen;
+    }
+
     if (p != end) return Transaction{};
     return tx;
 }
@@ -264,6 +283,9 @@ bool Transaction::verify() const {
         if (!crypto::verify(sigHash, inp.signature, inp.pubKey)) {
             return false;
         }
+    }
+    if (!quantumSignature.empty() && !quantum::isApplicationSignatureEnvelope(quantumSignature)) {
+        return false;
     }
     return true;
 }

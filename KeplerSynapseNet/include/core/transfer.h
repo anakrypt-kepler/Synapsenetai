@@ -41,7 +41,8 @@ struct Transaction {
     std::vector<TxOutput> outputs;
     uint64_t fee;
     TxStatus status;
-    
+    std::vector<uint8_t> quantumSignature;
+
     std::vector<uint8_t> serialize() const;
     static Transaction deserialize(const std::vector<uint8_t>& data);
     crypto::Hash256 computeHash() const;
