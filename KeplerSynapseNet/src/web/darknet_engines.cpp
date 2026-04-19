@@ -4,6 +4,40 @@
 namespace synapse {
 namespace web {
 
+struct KnownDarknetSite {
+    const char* hostSubstring;
+    const char* searchTemplate;
+};
+
+static const KnownDarknetSite knownDarknetSites[] = {
+    {"piratebay",    "/search.php?q={query}"},
+    {"galaxy3",      "/search?q={query}"},
+    {"breached",     "/search?q={query}"},
+    {"dread",        "/search?q={query}"},
+    {"breachforums", "/search?q={query}"},
+};
+static constexpr size_t knownDarknetSiteCount = sizeof(knownDarknetSites) / sizeof(knownDarknetSites[0]);
+
+static std::string extractHost(const std::string& url) {
+    auto schemeEnd = url.find("://");
+    if (schemeEnd == std::string::npos) return "";
+    size_t hostStart = schemeEnd + 3;
+    size_t hostEnd = url.find('/', hostStart);
+    if (hostEnd == std::string::npos) hostEnd = url.size();
+    auto portPos = url.find(':', hostStart);
+    if (portPos != std::string::npos && portPos < hostEnd) hostEnd = portPos;
+    return url.substr(hostStart, hostEnd - hostStart);
+}
+
+static std::string baseOrigin(const std::string& url) {
+    auto schemeEnd = url.find("://");
+    if (schemeEnd == std::string::npos) return url;
+    size_t hostStart = schemeEnd + 3;
+    size_t pathStart = url.find('/', hostStart);
+    if (pathStart == std::string::npos) return url;
+    return url.substr(0, pathStart);
+}
+
 static std::string applyTemplate(const std::string& base, const std::string& query) {
     std::string encoded = urlEncode(query);
     std::string url = base;
@@ -16,6 +50,22 @@ static std::string applyTemplate(const std::string& base, const std::string& que
     if (pos != std::string::npos) {
         url.replace(pos, 2, encoded);
         return url;
+    }
+    std::string host = extractHost(base);
+    if (!host.empty()) {
+        std::string lowerHost = host;
+        std::transform(lowerHost.begin(), lowerHost.end(), lowerHost.begin(), ::tolower);
+        for (size_t i = 0; i < knownDarknetSiteCount; ++i) {
+            if (lowerHost.find(knownDarknetSites[i].hostSubstring) != std::string::npos) {
+                std::string origin = baseOrigin(base);
+                std::string tpl = origin + knownDarknetSites[i].searchTemplate;
+                pos = tpl.find("{query}");
+                if (pos != std::string::npos) {
+                    tpl.replace(pos, 7, encoded);
+                }
+                return tpl;
+            }
+        }
     }
     if (url.find('?') == std::string::npos) {
         return url + "?q=" + encoded;
