@@ -2,6 +2,7 @@
 
 #include "core/poe_v1.h"
 #include "crypto/crypto.h"
+#include "quantum/quantum_security.h"
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -62,6 +63,7 @@ struct ValidationVoteV1 {
     uint32_t flags = 0;
     std::array<uint16_t, 3> scores{0, 0, 0};
     crypto::Signature signature{};
+    std::vector<uint8_t> quantumSignature;
 
     std::vector<uint8_t> payloadBytes() const;
     crypto::Hash256 payloadHash() const;
@@ -85,6 +87,8 @@ struct FinalizationRecordV1 {
 crypto::Hash256 validatorSetHashV1(const std::vector<crypto::PublicKey>& validators);
 bool signKnowledgeEntryV1(KnowledgeEntryV1& entry, const crypto::PrivateKey& authorKey);
 bool signValidationVoteV1(ValidationVoteV1& vote, const crypto::PrivateKey& validatorKey);
+bool signValidationVoteV1(ValidationVoteV1& vote, const crypto::PrivateKey& validatorKey,
+                          const quantum::HybridKeyPair& quantumKeyPair);
 
 }
 

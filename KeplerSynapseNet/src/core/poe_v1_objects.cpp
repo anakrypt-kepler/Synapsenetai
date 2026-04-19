@@ -1,4 +1,5 @@
 #include "core/poe_v1_objects.h"
+#include "quantum/application_signature.h"
 #include <algorithm>
 #include <cstring>
 
@@ -264,10 +265,17 @@ crypto::Hash256 ValidationVoteV1::payloadHash() const {
     return crypto::sha256(buf.data(), buf.size());
 }
 
+static constexpr uint8_t POE_VOTE_TRAILER_V1_QUANTUM_SIG = 0x01;
+static constexpr uint32_t POE_VOTE_MAX_QUANTUM_SIGNATURE_SIZE = 65536;
+
 bool ValidationVoteV1::verifySignature(std::string* reason) const {
     crypto::Hash256 h = payloadHash();
     if (!crypto::verify(h, signature, validatorPubKey)) {
         if (reason) *reason = "vote_sig_failed";
+        return false;
+    }
+    if (!quantumSignature.empty() && !quantum::isApplicationSignatureEnvelope(quantumSignature)) {
+        if (reason) *reason = "vote_pq_envelope_invalid";
         return false;
     }
     return true;
@@ -276,6 +284,11 @@ bool ValidationVoteV1::verifySignature(std::string* reason) const {
 std::vector<uint8_t> ValidationVoteV1::serialize() const {
     auto out = payloadBytes();
     out.insert(out.end(), signature.begin(), signature.end());
+    if (!quantumSignature.empty()) {
+        out.push_back(POE_VOTE_TRAILER_V1_QUANTUM_SIG);
+        writeU32LE(out, static_cast<uint32_t>(quantumSignature.size()));
+        out.insert(out.end(), quantumSignature.begin(), quantumSignature.end());
+    }
     return out;
 }
 
@@ -306,6 +319,16 @@ std::optional<ValidationVoteV1> ValidationVoteV1::deserialize(const std::vector<
     if (p + v.signature.size() > end) return std::nullopt;
     std::memcpy(v.signature.data(), p, v.signature.size());
     p += v.signature.size();
+
+    if (end - p >= 1 && *p == POE_VOTE_TRAILER_V1_QUANTUM_SIG) {
+        ++p;
+        uint32_t qsLen = readU32LE(p, end, ok);
+        if (!ok) return std::nullopt;
+        if (qsLen > POE_VOTE_MAX_QUANTUM_SIGNATURE_SIZE) return std::nullopt;
+        if (p + qsLen > end) return std::nullopt;
+        v.quantumSignature.assign(p, p + qsLen);
+        p += qsLen;
+    }
 
     if (p != end) return std::nullopt;
     return v;
@@ -379,8 +402,27 @@ bool signKnowledgeEntryV1(KnowledgeEntryV1& entry, const crypto::PrivateKey& aut
 }
 
 bool signValidationVoteV1(ValidationVoteV1& vote, const crypto::PrivateKey& validatorKey) {
+    vote.quantumSignature.clear();
     vote.validatorPubKey = crypto::derivePublicKey(validatorKey);
     vote.signature = crypto::sign(vote.payloadHash(), validatorKey);
+    return true;
+}
+
+bool signValidationVoteV1(ValidationVoteV1& vote, const crypto::PrivateKey& validatorKey,
+                          const quantum::HybridKeyPair& quantumKeyPair) {
+    if (!signValidationVoteV1(vote, validatorKey)) return false;
+    if (quantumKeyPair.classicSecretKey.empty() || quantumKeyPair.pqcSecretKey.empty()) {
+        return false;
+    }
+    std::vector<uint8_t> binding(vote.validatorPubKey.begin(), vote.validatorPubKey.end());
+    auto payload = vote.serialize();
+    auto envelope = quantum::signApplicationPayload(
+        "core.poe.validation_vote",
+        payload,
+        binding,
+        quantumKeyPair);
+    if (envelope.empty()) return false;
+    vote.quantumSignature = std::move(envelope);
     return true;
 }
 
