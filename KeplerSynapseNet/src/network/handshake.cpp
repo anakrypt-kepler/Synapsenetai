@@ -14,6 +14,12 @@ static const uint32_t HANDSHAKE_MAGIC = 0x534E4554;
 static constexpr size_t HANDSHAKE_NONCE_SIZE = 32;
 static constexpr uint32_t HANDSHAKE_CAP_HYBRID_KEM = 0x1u;
 
+static bool handshakePqStrictMode() {
+    const char* env = std::getenv("SYNAPSE_HANDSHAKE_PQ_STRICT");
+    if (!env || !*env) return false;
+    return std::string(env) != "0";
+}
+
 static std::vector<uint8_t> deriveHandshakeSessionKey(const std::vector<uint8_t>& classicalSharedSecret,
                                                       const std::vector<uint8_t>& pqcSharedSecret,
                                                       const std::vector<uint8_t>& localPublicKey,
@@ -365,6 +371,13 @@ HandshakeResult Handshake::processInitMessage(const std::vector<uint8_t>& data) 
                 crypto::secureZero(enc.sharedSecret.data(), enc.sharedSecret.size());
             }
         }
+    }
+
+    if (handshakePqStrictMode()
+        && impl_->kyberSharedSecret.size() != quantum::KYBER_SHARED_SECRET_SIZE) {
+        crypto::secureZero(classicalShared.data(), classicalShared.size());
+        result.error = "Hybrid KEM strict mode: peer did not contribute a Kyber shared secret";
+        return result;
     }
 
     auto sessionKey = impl_->deriveSessionKeyLocked();
