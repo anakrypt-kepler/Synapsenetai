@@ -11,7 +11,12 @@ option(BUILD_PRIVACY "Build with privacy layer" OFF)
 option(BUILD_TESTS "Build tests" ON)
 
 option(SYNAPSE_FETCH_LIBOQS "Fetch liboqs automatically when the system library is unavailable" ON)
-option(SYNAPSE_REQUIRE_REAL_PQC "Fail configure when liboqs-backed PQC support is unavailable" OFF)
+if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo" OR CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+    set(SYNAPSE_REQUIRE_REAL_PQC_DEFAULT ON)
+else()
+    set(SYNAPSE_REQUIRE_REAL_PQC_DEFAULT OFF)
+endif()
+option(SYNAPSE_REQUIRE_REAL_PQC "Fail configure when liboqs-backed PQC support is unavailable" ${SYNAPSE_REQUIRE_REAL_PQC_DEFAULT})
 set(SYNAPSE_LIBOQS_GIT_TAG "0.12.0" CACHE STRING "liboqs git tag used when SYNAPSE_FETCH_LIBOQS is enabled")
 set(SYNAPSE_LIBOQS_MINIMAL_BUILD
     "KEM_ml_kem_768;KEM_kyber_768;SIG_dilithium_3;SIG_ml_dsa_65;SIG_sphincs_sha2_128s_simple;SIG_slh_dsa_sha2_128s"
