@@ -366,6 +366,7 @@ set(QUANTUM_SOURCES
     src/quantum/hwrng.cpp
     src/quantum/hybrid_kem.cpp
     src/quantum/hybrid_sig.cpp
+    src/quantum/identity_registry.cpp
     src/quantum/key_derivation.cpp
     src/quantum/knowledge_crypto.cpp
     src/quantum/kyber.cpp

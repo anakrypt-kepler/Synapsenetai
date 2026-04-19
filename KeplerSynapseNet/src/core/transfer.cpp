@@ -2,6 +2,7 @@
 #include "crypto/address.h"
 #include "database/database.h"
 #include "quantum/application_signature.h"
+#include "quantum/identity_registry.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <mutex>
@@ -562,6 +563,14 @@ bool TransferManager::submitTransaction(const Transaction& tx) {
     const std::string hex = crypto::toHex(tx.txid);
     if (impl_->mempool.find(hex) != impl_->mempool.end()) return false;
     if (!verifyTransactionLocked(tx, impl_->utxoSet, impl_->mempool, impl_->pending, impl_->config.minFeePerKB)) return false;
+
+    if (!tx.quantumSignature.empty() && !tx.inputs.empty()) {
+        auto& registry = quantum::IdentityRegistry::instance();
+        const std::string ownerAddress = addressFromPubKey(tx.inputs.front().pubKey);
+        if (!registry.verifyBinding(ownerAddress, tx.quantumSignature)) {
+            return false;
+        }
+    }
 
     if (impl_->mempool.size() >= impl_->config.maxMempoolSize) {
         auto feeRateLess = [](const Transaction& lhs, const Transaction& rhs) -> bool {
