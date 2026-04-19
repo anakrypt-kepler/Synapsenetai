@@ -63,7 +63,7 @@ struct NodeConfig {
     bool networkUseHardcodedBootstrap = true;
     bool showVersion = false;
     bool showHelp = false;
-    bool privacyMode = false;
+    bool privacyMode = true;
     bool quantumSecurity = false;
     bool resetNgt = false;
     bool dev = false;

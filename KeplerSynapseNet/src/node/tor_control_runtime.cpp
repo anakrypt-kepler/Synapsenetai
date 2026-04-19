@@ -37,6 +37,8 @@ void ensureDefaultNaanWebConfig(const std::string& path, const std::string& ahmi
     naanCfg << "custom_darknet_urls=" << ahmiaOnion << "\n";
     naanCfg << "route_clearnet_through_tor=1\n";
     naanCfg << "naan_force_tor_mode=1\n";
+    naanCfg << "allow_clearnet_fallback=0\n";
+    naanCfg << "allow_p2p_clearnet_fallback=0\n";
     naanCfg << "naan_auto_search_enabled=1\n";
     naanCfg << "naan_auto_search_mode=both\n";
     naanCfg << "naan_auto_search_queries=latest space engineering research,latest ai research papers,open source systems engineering best practices\n";

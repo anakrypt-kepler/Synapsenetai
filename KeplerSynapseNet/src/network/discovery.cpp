@@ -22,6 +22,15 @@
 namespace synapse {
 namespace network {
 
+namespace {
+
+bool isOnionAddress(const std::string& address) {
+    return address.size() > 6 &&
+           address.substr(address.size() - 6) == ".onion";
+}
+
+} // namespace
+
 struct Discovery::Impl {
     std::vector<BootstrapNode> bootstrapNodes;
     std::vector<std::string> dnsSeeds;
@@ -152,8 +161,31 @@ void Discovery::Impl::refreshLoop() {
             }
         }
         
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            for (const auto& node : bootstrapNodes) {
+                if (!node.active || node.quarantineUntil > now) continue;
+                if (!isOnionAddress(node.address)) continue;
+                if (knownPeers.size() >= config.maxKnownPeers) break;
+                std::string key = node.address + ":" + std::to_string(node.port);
+                if (knownPeers.find(key) != knownPeers.end()) continue;
+                PeerInfo info{};
+                info.address = node.address;
+                info.port = node.port;
+                info.timestamp = now;
+                info.lastSeen = now;
+                info.services = 1;
+                info.state = DiscoveryPeerState::UNKNOWN;
+                info.attempts = 0;
+                knownPeers[key] = info;
+                totalDiscovered++;
+                if (discoveredCallback) discoveredCallback(info);
+            }
+        }
+
         if (config.enableDNS && now - lastRefresh > config.refreshInterval) {
             for (const auto& target : dnsTargets) {
+                if (isOnionAddress(target.first)) continue;
                 auto addrs = resolveDNS(target.first);
                 dnsQueries++;
                 std::lock_guard<std::mutex> lock(mtx);

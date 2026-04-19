@@ -170,6 +170,58 @@ PeersMessage PeersMessage::deserialize(const std::vector<uint8_t>& data) {
     return m;
 }
 
+std::vector<uint8_t> OnionPeerAddress::serialize() const {
+    std::vector<uint8_t> out;
+    writeString(out, onionHost);
+    writeU16(out, port);
+    writeU64(out, services);
+    writeU64(out, timestamp);
+    return out;
+}
+
+OnionPeerAddress OnionPeerAddress::deserialize(const uint8_t* data, size_t len, size_t& consumed) {
+    OnionPeerAddress a;
+    size_t offset = 0;
+    if (offset >= len) { consumed = 0; return a; }
+    uint64_t hostLen = readVarInt(data, offset);
+    if (offset + hostLen > len || hostLen > 256) { consumed = 0; return a; }
+    a.onionHost.assign(reinterpret_cast<const char*>(data + offset), static_cast<size_t>(hostLen));
+    offset += static_cast<size_t>(hostLen);
+    if (offset + 18 > len) { consumed = 0; return a; }
+    a.port = readU16(data + offset); offset += 2;
+    a.services = readU64(data + offset); offset += 8;
+    a.timestamp = readU64(data + offset); offset += 8;
+    consumed = offset;
+    return a;
+}
+
+std::vector<uint8_t> OnionPeersMessage::serialize() const {
+    std::vector<uint8_t> out;
+    writeVarInt(out, peers.size());
+    for (const auto& p : peers) {
+        auto s = p.serialize();
+        out.insert(out.end(), s.begin(), s.end());
+    }
+    return out;
+}
+
+OnionPeersMessage OnionPeersMessage::deserialize(const std::vector<uint8_t>& data) {
+    OnionPeersMessage m;
+    if (data.empty()) return m;
+    size_t offset = 0;
+    uint64_t count = readVarInt(data.data(), offset);
+    if (count > 1000) return m;
+    for (uint64_t i = 0; i < count; i++) {
+        if (offset >= data.size()) break;
+        size_t consumed = 0;
+        auto peer = OnionPeerAddress::deserialize(data.data() + offset, data.size() - offset, consumed);
+        if (consumed == 0) break;
+        offset += consumed;
+        m.peers.push_back(std::move(peer));
+    }
+    return m;
+}
+
 std::vector<uint8_t> InvItem::serialize() const {
     std::vector<uint8_t> out;
     out.push_back(static_cast<uint8_t>(type));

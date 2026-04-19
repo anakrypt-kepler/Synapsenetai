@@ -228,6 +228,7 @@ bool isLoopbackPeerAddress(const std::string& address) const {
 
 bool isDiscoveryEligiblePeerAddress(const std::string& address) const {
     if (isLoopbackPeerAddress(address)) return false;
+    if (address.size() > 6 && address.substr(address.size() - 6) == ".onion") return true;
     in_addr ipv4{};
     return inet_pton(AF_INET, address.c_str(), &ipv4) == 1;
 }
@@ -1143,13 +1144,57 @@ bool refreshTorWebReadiness(bool torSocksReachable, bool force = false) {
     return effectiveReady;
 }
 
+void ensureManagedTorrc(const std::filesystem::path& torDir,
+                        const std::string& socksHost,
+                        uint16_t socksPort,
+                        uint16_t controlPort) {
+    const auto torrcPath = torDir / "torrc";
+    if (std::filesystem::exists(torrcPath)) return;
+
+    std::error_code ec;
+    std::filesystem::create_directories(torDir, ec);
+    if (ec) return;
+
+    const auto hsDir = torDir / "hidden_service";
+    std::filesystem::create_directories(hsDir, ec);
+
+    const uint16_t nodePort = network_ ? network_->getPort() : config_.port;
+
+    std::ofstream out(torrcPath);
+    if (!out.is_open()) return;
+    out << "SocksPort " << socksHost << ":" << socksPort << "\n";
+    out << "ControlPort 127.0.0.1:" << controlPort << "\n";
+    out << "CookieAuthentication 1\n";
+    out << "DataDirectory " << torDir.string() << "\n";
+    out << "RunAsDaemon 1\n";
+    out << "HiddenServiceDir " << hsDir.string() << "\n";
+    out << "HiddenServicePort " << nodePort << " 127.0.0.1:" << nodePort << "\n";
+    out << "HiddenServiceVersion 3\n";
+    utils::Logger::info("Generated managed torrc at " + torrcPath.string());
+}
+
+bool tryBootstrapTorBinary(const std::filesystem::path& torDir) {
+#ifdef SYNAPSE_TOR_BOOTSTRAP_SCRIPT
+    const std::string script = SYNAPSE_TOR_BOOTSTRAP_SCRIPT;
+    if (!std::filesystem::exists(script)) return false;
+    const std::string cmd = "bash " + script + " " + torDir.string() + " > /dev/null 2>&1";
+    utils::Logger::info("Running Tor bootstrap script: " + script);
+    return std::system(cmd.c_str()) == 0;
+#else
+    (void)torDir;
+    return false;
+#endif
+}
+
 bool startManagedTorRuntime() {
-    const std::string torBin = utils::Config::instance().getString("agent.tor.binary", "tor");
+    std::string torBin = utils::Config::instance().getString("agent.tor.binary", "tor");
     const std::string host = configuredTorSocksHost();
     const uint16_t socksPort = configuredTorSocksPort();
     const uint16_t controlPort = configuredTorControlPort();
     std::filesystem::path torDir = managedTorDirPath();
     std::filesystem::path pidFile = managedTorPidFilePath();
+
+    ensureManagedTorrc(torDir, host, socksPort, controlPort);
 
     const auto startup = core::runManagedTorStartup(
         allowManagedTorAutostart(),
@@ -1157,7 +1202,20 @@ bool startManagedTorRuntime() {
         [&]() { return probeTorSocks(); },
         [&]() {
             const std::string checkCmd = torBin + " --version > /dev/null 2>&1";
-            return std::system(checkCmd.c_str()) == 0;
+            if (std::system(checkCmd.c_str()) == 0) return true;
+            if (tryBootstrapTorBinary(torDir)) {
+                auto bundled = torDir / "tor" / "tor";
+                if (std::filesystem::exists(bundled)) {
+                    torBin = bundled.string();
+                    return true;
+                }
+                bundled = torDir / "tor";
+                if (std::filesystem::exists(bundled) && !std::filesystem::is_directory(bundled)) {
+                    torBin = bundled.string();
+                    return true;
+                }
+            }
+            return false;
         },
         [&]() {
             std::error_code ec;

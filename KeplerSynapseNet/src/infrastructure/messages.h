@@ -97,6 +97,23 @@ struct PeersMessage {
     static PeersMessage deserialize(const std::vector<uint8_t>& data);
 };
 
+struct OnionPeerAddress {
+    std::string onionHost;
+    uint16_t port;
+    uint64_t services;
+    uint64_t timestamp;
+
+    std::vector<uint8_t> serialize() const;
+    static OnionPeerAddress deserialize(const uint8_t* data, size_t len, size_t& consumed);
+};
+
+struct OnionPeersMessage {
+    std::vector<OnionPeerAddress> peers;
+
+    std::vector<uint8_t> serialize() const;
+    static OnionPeersMessage deserialize(const std::vector<uint8_t>& data);
+};
+
 struct InvItem {
     InvType type;
     std::array<uint8_t, 32> hash;

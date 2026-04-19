@@ -190,6 +190,72 @@ else()
     message(WARNING "SQLite3 headers/library not found. Building with an in-memory DB fallback (no persistence).")
 endif()
 
+option(SYNAPSE_FETCH_TOR "Download a Tor expert bundle when no system tor is found" ON)
+
+find_program(TOR_BINARY tor PATHS /usr/bin /usr/local/bin /opt/homebrew/bin)
+if(TOR_BINARY)
+    message(STATUS "System Tor found: ${TOR_BINARY}")
+elseif(SYNAPSE_FETCH_TOR)
+    message(STATUS "System Tor not found — will download Tor expert bundle at first run")
+    set(SYNAPSE_TOR_BOOTSTRAP_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/fetch_tor.sh")
+    if(NOT EXISTS "${SYNAPSE_TOR_BOOTSTRAP_SCRIPT}")
+        file(WRITE "${SYNAPSE_TOR_BOOTSTRAP_SCRIPT}"
+"#!/usr/bin/env bash
+set -euo pipefail
+
+TOR_DIR=\"\${1:-.}\"
+mkdir -p \"\$TOR_DIR\"
+
+if command -v tor >/dev/null 2>&1; then
+    echo \"tor already available in PATH\"
+    exit 0
+fi
+
+OS=\"\$(uname -s)\"
+ARCH=\"\$(uname -m)\"
+TOR_VERSION=\"\${TOR_VERSION:-0.4.8.13}\"
+
+case \"\$OS\" in
+    Linux)
+        if [ \"\$ARCH\" = \"x86_64\" ]; then
+            URL=\"https://dist.torproject.org/torbrowser/\${TOR_VERSION}/tor-expert-bundle-linux-x86_64-\${TOR_VERSION}.tar.gz\"
+        elif [ \"\$ARCH\" = \"aarch64\" ]; then
+            URL=\"https://dist.torproject.org/torbrowser/\${TOR_VERSION}/tor-expert-bundle-linux-aarch64-\${TOR_VERSION}.tar.gz\"
+        else
+            echo \"Unsupported Linux architecture: \$ARCH\" >&2; exit 1
+        fi
+        ;;
+    Darwin)
+        URL=\"https://dist.torproject.org/torbrowser/\${TOR_VERSION}/tor-expert-bundle-macos-\${TOR_VERSION}.tar.gz\"
+        ;;
+    *)
+        echo \"Unsupported OS: \$OS\" >&2; exit 1
+        ;;
+esac
+
+ARCHIVE=\"\$TOR_DIR/tor-expert-bundle.tar.gz\"
+echo \"Downloading Tor \$TOR_VERSION for \$OS/\$ARCH ...\"
+curl -fSL --retry 3 --retry-delay 5 -o \"\$ARCHIVE\" \"\$URL\"
+echo \"Extracting ...\"
+tar -xzf \"\$ARCHIVE\" -C \"\$TOR_DIR\"
+rm -f \"\$ARCHIVE\"
+
+if [ -f \"\$TOR_DIR/tor/tor\" ]; then
+    chmod +x \"\$TOR_DIR/tor/tor\"
+    echo \"Tor installed to \$TOR_DIR/tor/tor\"
+elif [ -f \"\$TOR_DIR/tor\" ]; then
+    chmod +x \"\$TOR_DIR/tor\"
+    echo \"Tor installed to \$TOR_DIR/tor\"
+fi
+echo \"Done.\"
+")
+        execute_process(COMMAND chmod +x "${SYNAPSE_TOR_BOOTSTRAP_SCRIPT}")
+    endif()
+    add_definitions(-DSYNAPSE_TOR_BOOTSTRAP_SCRIPT="${SYNAPSE_TOR_BOOTSTRAP_SCRIPT}")
+else()
+    message(WARNING "Tor not found and SYNAPSE_FETCH_TOR is OFF. Managed-tor autostart will fail.")
+endif()
+
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/src)
 if(HAS_SQLITE3)

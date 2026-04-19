@@ -163,6 +163,10 @@
             handleGetPeersMessage(peerId, msg);
         } else if (msg.command == "peers") {
             handlePeersMessage(peerId, msg);
+        } else if (msg.command == "get_onion_peers") {
+            handleGetOnionPeersMessage(peerId, msg);
+        } else if (msg.command == "onion_peers") {
+            handleOnionPeersMessage(peerId, msg);
         } else if (msg.command == "inv") {
             handleInvMessage(peerId, msg);
         } else if (msg.command == "getdata") {
@@ -494,6 +498,10 @@
         sendVerack(peerId);
         sendPeerHello(peerId);
         sendGetAddr(peerId);
+        if (agentTorRequired_.load()) {
+            auto onionReq = makeMessage("get_onion_peers", {});
+            network_->send(peerId, onionReq);
+        }
         sendMempoolRequest(peerId);
         sendPoeInventory(peerId);
         sendUpdateBundleInventory(peerId);
@@ -506,9 +514,27 @@
             utils::Logger::warn("Ignored malformed peer_hello from " + peerId);
             return;
         }
+
+        if (agentTorRequired_.load() && parsed->transport == "clearnet") {
+            utils::Logger::warn("Rejected clearnet-only peer_hello from " + peerId + " (tor-only mode)");
+            if (network_) network_->disconnect(peerId);
+            return;
+        }
+
         {
             std::lock_guard<std::mutex> lock(peerHelloMtx_);
             peerHelloById_[peerId] = *parsed;
+        }
+
+        if (discovery_ && core::isValidOnionHost(parsed->advertisedHost) && parsed->advertisedPort > 0) {
+            network::PeerInfo peerInfo{};
+            peerInfo.address = parsed->advertisedHost;
+            peerInfo.port = parsed->advertisedPort;
+            peerInfo.timestamp = std::time(nullptr);
+            peerInfo.lastSeen = peerInfo.timestamp;
+            peerInfo.services = 1;
+            peerInfo.state = network::DiscoveryPeerState::CONNECTED;
+            discovery_->addKnownPeer(peerInfo);
         }
     }
     
@@ -527,7 +553,18 @@
         if (!discovery_) return;
         auto peers = discovery_->getKnownPeers(100);
         synapse::PeersMessage peersMsg;
+        synapse::OnionPeersMessage onionMsg;
         for (const auto& peer : peers) {
+            if (peer.address.size() > 6 &&
+                peer.address.substr(peer.address.size() - 6) == ".onion") {
+                synapse::OnionPeerAddress oa;
+                oa.onionHost = peer.address;
+                oa.port = peer.port;
+                oa.services = peer.services;
+                oa.timestamp = peer.timestamp;
+                onionMsg.peers.push_back(oa);
+                continue;
+            }
             synapse::PeerAddress addr{};
             addr.timestamp = peer.timestamp;
             addr.services = peer.services;
@@ -543,6 +580,10 @@
         }
         auto reply = makeMessage("addr", peersMsg.serialize());
         network_->send(peerId, reply);
+        if (!onionMsg.peers.empty()) {
+            auto onionReply = makeMessage("onion_peers", onionMsg.serialize());
+            network_->send(peerId, onionReply);
+        }
     }
     
     void handleAddrMessage(const std::string& peerId, const network::Message& msg) {
@@ -683,6 +724,67 @@
         }
     }
     
+    void handleGetOnionPeersMessage(const std::string& peerId, const network::Message& msg) {
+        (void)msg;
+        if (!discovery_ || !network_) return;
+
+        static std::unordered_map<std::string, uint64_t> lastSent;
+        uint64_t now = std::time(nullptr);
+        auto it = lastSent.find(peerId);
+        if (it != lastSent.end() && now - it->second < 60) return;
+        lastSent[peerId] = now;
+
+        auto allPeers = discovery_->getRandomPeers(50);
+        synapse::OnionPeersMessage onionMsg;
+
+        for (const auto& peer : allPeers) {
+            if (peer.address.size() <= 6 ||
+                peer.address.substr(peer.address.size() - 6) != ".onion") continue;
+            if (discovery_->isBanned(peer.address)) continue;
+
+            synapse::OnionPeerAddress addr;
+            addr.onionHost = peer.address;
+            addr.port = peer.port;
+            addr.services = peer.services;
+            addr.timestamp = peer.timestamp;
+            onionMsg.peers.push_back(addr);
+            if (onionMsg.peers.size() >= 50) break;
+        }
+
+        if (!onionMsg.peers.empty()) {
+            auto reply = makeMessage("onion_peers", onionMsg.serialize());
+            network_->send(peerId, reply);
+        }
+    }
+
+    void handleOnionPeersMessage(const std::string& peerId, const network::Message& msg) {
+        (void)peerId;
+        if (msg.payload.empty() || !discovery_) return;
+
+        synapse::OnionPeersMessage onionMsg = synapse::OnionPeersMessage::deserialize(msg.payload);
+        std::vector<network::PeerInfo> incoming;
+
+        for (const auto& addr : onionMsg.peers) {
+            if (addr.onionHost.size() <= 6 ||
+                addr.onionHost.substr(addr.onionHost.size() - 6) != ".onion") continue;
+            if (discovery_->isBanned(addr.onionHost)) continue;
+
+            network::PeerInfo info;
+            info.address = addr.onionHost;
+            info.port = addr.port;
+            info.services = addr.services;
+            info.timestamp = addr.timestamp;
+            info.lastSeen = addr.timestamp;
+            info.state = network::DiscoveryPeerState::UNKNOWN;
+            info.attempts = 0;
+            incoming.push_back(info);
+        }
+
+        if (!incoming.empty()) {
+            discovery_->processIncoming(incoming);
+        }
+    }
+
 	    void handleInvMessage(const std::string& peerId, const network::Message& msg) {
 	        if (msg.payload.empty()) return;
 	        synapse::InvMessage inv = synapse::InvMessage::deserialize(msg.payload);
