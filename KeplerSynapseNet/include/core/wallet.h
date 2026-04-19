@@ -1,6 +1,7 @@
 #ifndef SYNAPSE_CORE_WALLET_H
 #define SYNAPSE_CORE_WALLET_H
 
+#include "quantum/quantum_security.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -16,32 +17,38 @@ class Wallet {
 public:
     Wallet();
     ~Wallet();
-    
+
     bool create();
     bool restore(const std::vector<std::string>& seedWords);
     bool load(const std::string& path, const std::string& password);
     bool save(const std::string& path, const std::string& password);
-    
+
     void lock();
     bool unlock(const std::string& password);
     bool isLocked() const;
-    
+
     std::vector<std::string> getSeedWords() const;
     std::string getAddress() const;
     std::vector<uint8_t> getPublicKey() const;
-    
+
+    bool hasHybridKeyPair() const;
+    quantum::HybridKeyPair getHybridKeyPair() const;
+    std::vector<uint8_t> getHybridClassicPublicKey() const;
+    std::vector<uint8_t> getHybridPqcPublicKey() const;
+    std::string getHybridIdentityId() const;
+
     AmountAtoms getBalance() const;
     AmountAtoms getPendingBalance() const;
     AmountAtoms getStakedBalance() const;
-    
+
     void setBalance(AmountAtoms balance);
     void setPendingBalance(AmountAtoms pending);
     void setStakedBalance(AmountAtoms staked);
-    
+
     std::vector<uint8_t> sign(const std::vector<uint8_t>& message) const;
     static bool verify(const std::vector<uint8_t>& message, const std::vector<uint8_t>& signature,
                        const std::vector<uint8_t>& publicKey);
-    
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

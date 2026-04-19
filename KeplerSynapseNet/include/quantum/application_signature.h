@@ -7,13 +7,13 @@
 
 namespace synapse::quantum {
 
-constexpr uint32_t APPLICATION_SIGNATURE_SUITE_ID = 0x53505132;
+constexpr uint32_t APPLICATION_SIGNATURE_SUITE_ID = 0x53505131;
 
 struct ApplicationSignatureEnvelope {
     uint32_t suiteId = APPLICATION_SIGNATURE_SUITE_ID;
     std::string domain;
-    std::vector<uint8_t> mlDsaPublicKey;
-    std::vector<uint8_t> slhDsaPublicKey;
+    std::vector<uint8_t> classicPublicKey;
+    std::vector<uint8_t> pqcPublicKey;
     std::vector<uint8_t> signature;
 
     std::vector<uint8_t> serialize() const;
@@ -30,27 +30,11 @@ std::vector<uint8_t> buildApplicationSignatureTranscript(
 std::vector<uint8_t> signApplicationPayload(
     const std::string& domain,
     const std::vector<uint8_t>& payload,
-    const std::vector<uint8_t>& binding
-);
-
-std::vector<uint8_t> signApplicationPayload(
-    const std::string& domain,
-    const std::vector<uint8_t>& payload,
     const std::vector<uint8_t>& binding,
     const HybridKeyPair& keyPair
 );
 
-bool isRevokedReleaseAuthorityPublicKey(const HybridKeyPair& publicKey);
-bool isTrustedReleaseAuthorityPublicKey(const HybridKeyPair& publicKey);
-
 bool verifyApplicationPayload(
-    const std::string& domain,
-    const std::vector<uint8_t>& payload,
-    const std::vector<uint8_t>& binding,
-    const std::vector<uint8_t>& envelopeBytes
-);
-
-bool verifyApplicationPayloadWithTrustedReleaseAuthorities(
     const std::string& domain,
     const std::vector<uint8_t>& payload,
     const std::vector<uint8_t>& binding,
@@ -61,8 +45,5 @@ bool applicationSignatureIdentityId(const std::vector<uint8_t>& envelopeBytes, s
 bool applicationSignatureIdentityIdFromPublicKey(const HybridKeyPair& publicKey, std::string& out);
 
 bool isApplicationSignatureEnvelope(const std::vector<uint8_t>& data);
-
-bool loadHybridKeyPairFromFile(const std::string& path, HybridKeyPair& out);
-bool loadReleaseAuthorityKeyPair(HybridKeyPair& out, std::string* resolvedPath = nullptr);
 
 }
