@@ -56,6 +56,8 @@ constexpr uint32_t MAX_EVENTS_PER_BLOCK = 1000;
 constexpr size_t MAX_EVENT_SIZE = 1 << 20; // 1MB
 static constexpr uint8_t EVENT_TRAILER_V1_QUANTUM_SIG = 0x01;
 static constexpr uint32_t EVENT_MAX_QUANTUM_SIGNATURE_SIZE = 65536;
+static constexpr uint32_t BLOCK_V2_MAGIC = 0xB10C0002u;
+static constexpr uint32_t BLOCK_MAX_QUANTUM_SIGNATURE_SIZE = 65536;
 
 static uint64_t maxEventIdFromBlocks(const std::vector<Block>& blocks) {
     uint64_t maxId = 0;
@@ -176,6 +178,11 @@ std::string Event::toJson() const {
 
 std::vector<uint8_t> Block::serialize() const {
     std::vector<uint8_t> out;
+    const bool versioned = (version >= BLOCK_VERSION_PQ);
+    if (versioned) {
+        writeU32(out, BLOCK_V2_MAGIC);
+        writeU32(out, version);
+    }
     writeU64(out, height);
     writeU64(out, timestamp);
     out.insert(out.end(), prevHash.begin(), prevHash.end());
@@ -189,14 +196,32 @@ std::vector<uint8_t> Block::serialize() const {
         writeU32(out, eData.size());
         out.insert(out.end(), eData.begin(), eData.end());
     }
+    if (versioned) {
+        out.insert(out.end(), producer.begin(), producer.end());
+        out.insert(out.end(), producerSignature.begin(), producerSignature.end());
+        writeU32(out, static_cast<uint32_t>(producerQuantumSignature.size()));
+        out.insert(out.end(), producerQuantumSignature.begin(), producerQuantumSignature.end());
+    }
     return out;
 }
 
 Block Block::deserialize(const std::vector<uint8_t>& buf) {
     Block b{};
-    if (buf.size() < 8 + 8 + 32 + 32 + 4 + 4 + 8 + 4) return b;
     const uint8_t* p = buf.data();
     const uint8_t* end = buf.data() + buf.size();
+
+    bool versioned = false;
+    if (static_cast<size_t>(end - p) >= 4 && readU32(p) == BLOCK_V2_MAGIC) {
+        p += 4;
+        if (static_cast<size_t>(end - p) < 4) return Block{};
+        b.version = readU32(p); p += 4;
+        if (b.version != BLOCK_VERSION_PQ) return Block{};
+        versioned = true;
+    } else {
+        b.version = BLOCK_VERSION_LEGACY;
+    }
+
+    if (static_cast<size_t>(end - p) < 8 + 8 + 32 + 32 + 4 + 4 + 8 + 4) return Block{};
     b.height = readU64(p); p += 8;
     b.timestamp = readU64(p); p += 8;
     std::memcpy(b.prevHash.data(), p, 32); p += 32;
@@ -204,21 +229,32 @@ Block Block::deserialize(const std::vector<uint8_t>& buf) {
     b.nonce = readU32(p); p += 4;
     b.difficulty = readU32(p); p += 4;
     b.totalWork = readU64(p); p += 8;
-    if (static_cast<size_t>(end - p) < sizeof(uint32_t)) return b;
+    if (static_cast<size_t>(end - p) < sizeof(uint32_t)) return Block{};
     uint32_t evtCount = readU32(p); p += 4;
-    if (evtCount > MAX_EVENTS_PER_BLOCK) return b;
+    if (evtCount > MAX_EVENTS_PER_BLOCK) return Block{};
     const size_t maxBlockEventBytes = static_cast<size_t>(evtCount) * (sizeof(uint32_t) + MAX_EVENT_SIZE);
-    if (static_cast<size_t>(end - p) > maxBlockEventBytes) {
-        return b; // reject oversized
+    if (static_cast<size_t>(end - p) > maxBlockEventBytes + (versioned ? (33 + 64 + 4 + BLOCK_MAX_QUANTUM_SIGNATURE_SIZE) : 0)) {
+        return Block{};
     }
     for (uint32_t i = 0; i < evtCount; i++) {
-        if (static_cast<size_t>(end - p) < sizeof(uint32_t)) return b;
+        if (static_cast<size_t>(end - p) < sizeof(uint32_t)) return Block{};
         uint32_t evtLen = readU32(p); p += sizeof(uint32_t);
-        if (evtLen > MAX_EVENT_SIZE || static_cast<size_t>(end - p) < evtLen) return b;
+        if (evtLen > MAX_EVENT_SIZE || static_cast<size_t>(end - p) < evtLen) return Block{};
         std::vector<uint8_t> evtData(p, p + evtLen); p += evtLen;
         b.events.push_back(Event::deserialize(evtData));
     }
-    if (p != end) return b;
+
+    if (versioned) {
+        if (static_cast<size_t>(end - p) < 33 + 64 + 4) return Block{};
+        std::memcpy(b.producer.data(), p, 33); p += 33;
+        std::memcpy(b.producerSignature.data(), p, 64); p += 64;
+        uint32_t qsLen = readU32(p); p += 4;
+        if (qsLen > BLOCK_MAX_QUANTUM_SIGNATURE_SIZE) return Block{};
+        if (static_cast<size_t>(end - p) < qsLen) return Block{};
+        b.producerQuantumSignature.assign(p, p + qsLen); p += qsLen;
+    }
+
+    if (p != end) return Block{};
     b.hash = b.computeHash();
     return b;
 }
@@ -971,11 +1007,31 @@ bool Ledger::verifyEvent(const Event& event) const {
 bool Ledger::verifyBlock(const Block& block) const {
     if (block.computeHash() != block.hash) return false;
     if (block.computeMerkleRoot() != block.merkleRoot) return false;
-    
+
     for (const auto& e : block.events) {
         if (!e.verify()) return false;
     }
-    
+
+    const bool pqRequired = block.height >= BLOCK_PQ_MANDATORY_HEIGHT;
+    if (pqRequired && block.version < BLOCK_VERSION_PQ) {
+        return false;
+    }
+
+    if (block.version >= BLOCK_VERSION_PQ) {
+        const bool hasProducer = block.producer != crypto::PublicKey{};
+        const bool hasProducerSig = block.producerSignature != crypto::Signature{};
+        if (pqRequired && (!hasProducer || !hasProducerSig)) return false;
+        if (hasProducer != hasProducerSig) return false;
+        if (hasProducer && !crypto::verify(block.hash, block.producerSignature, block.producer)) {
+            return false;
+        }
+        if (!block.producerQuantumSignature.empty()
+            && !quantum::isApplicationSignatureEnvelope(block.producerQuantumSignature)) {
+            return false;
+        }
+        if (pqRequired && block.producerQuantumSignature.empty()) return false;
+    }
+
     return true;
 }
 

@@ -40,7 +40,12 @@ struct Event {
     std::string toJson() const;
 };
 
+constexpr uint32_t BLOCK_VERSION_LEGACY = 1;
+constexpr uint32_t BLOCK_VERSION_PQ = 2;
+constexpr uint64_t BLOCK_PQ_MANDATORY_HEIGHT = 1'000'000ULL;
+
 struct Block {
+    uint32_t version = BLOCK_VERSION_LEGACY;
     uint64_t height;
     uint64_t timestamp;
     crypto::Hash256 prevHash;
@@ -50,7 +55,10 @@ struct Block {
     crypto::Hash256 hash;
     uint32_t difficulty = 1;
     uint64_t totalWork = 0;
-    
+    crypto::PublicKey producer{};
+    crypto::Signature producerSignature{};
+    std::vector<uint8_t> producerQuantumSignature;
+
     std::vector<uint8_t> serialize() const;
     static Block deserialize(const std::vector<uint8_t>& data);
     crypto::Hash256 computeHash() const;
