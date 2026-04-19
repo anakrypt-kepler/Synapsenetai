@@ -226,6 +226,14 @@ jobs:
       run: |
         ctest --test-dir build_pqc_real --output-on-failure -R "QuantumTests|QuantumRuntimeTests|PqcCiValidationTests"
 
+    - name: Synapsed binary smoke test (release PQ)
+      run: |
+        if [ ! -f build_pqc_real/synapsed ]; then
+          echo "synapsed binary not produced"
+          exit 1
+        fi
+        ./build_pqc_real/synapsed --version 2>&1 | head -n 5 || true
+
   code-quality:
     runs-on: ubuntu-latest
     name: Code Quality Checks
