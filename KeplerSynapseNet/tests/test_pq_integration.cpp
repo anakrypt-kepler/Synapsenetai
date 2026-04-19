@@ -1,5 +1,6 @@
 #include "core/consensus.h"
 #include "core/ledger.h"
+#include "core/poe_v1_objects.h"
 #include "core/transfer.h"
 #include "crypto/address.h"
 #include "crypto/crypto.h"
@@ -189,6 +190,74 @@ void testIdentityRegistryTofu() {
     std::cout << "[ok] identity registry TOFU accepts first, rejects rotated" << std::endl;
 }
 
+void testDeterministicHybridDerivation() {
+    quantum::HybridSig signer;
+    std::vector<uint8_t> seedA(64, 0x11);
+    std::vector<uint8_t> seedB(64, 0x22);
+
+    auto kpA1 = signer.generateKeyPairFromSeed(seedA);
+    auto kpA2 = signer.generateKeyPairFromSeed(seedA);
+    auto kpB  = signer.generateKeyPairFromSeed(seedB);
+
+    assert(!kpA1.classicPublicKey.empty());
+    assert(!kpA1.pqcPublicKey.empty());
+
+    assert(kpA1.classicPublicKey == kpA2.classicPublicKey);
+    assert(kpA1.classicSecretKey == kpA2.classicSecretKey);
+    assert(kpA1.pqcPublicKey == kpA2.pqcPublicKey);
+    assert(kpA1.pqcSecretKey == kpA2.pqcSecretKey);
+
+    assert(kpA1.classicPublicKey != kpB.classicPublicKey);
+    assert(kpA1.pqcPublicKey != kpB.pqcPublicKey);
+    std::cout << "[ok] hybrid keypair deterministic for fixed seed, distinct for different seeds" << std::endl;
+}
+
+void testValidationVoteV1PqRoundTrip() {
+    auto classical = crypto::generateKeyPair();
+    quantum::HybridSig signer;
+    std::vector<uint8_t> seed(classical.privateKey.begin(), classical.privateKey.end());
+    auto hybrid = signer.generateKeyPairFromSeed(seed);
+    assert(!hybrid.pqcSecretKey.empty());
+
+    core::poe_v1::ValidationVoteV1 vote;
+    vote.submitId.fill(0x42);
+    vote.prevBlockHash.fill(0x24);
+    vote.flags = 0x1;
+    vote.scores = {100, 80, 90};
+
+    assert(core::poe_v1::signValidationVoteV1(vote, classical.privateKey, hybrid));
+    assert(!vote.quantumSignature.empty());
+    assert(quantum::isApplicationSignatureEnvelope(vote.quantumSignature));
+
+    auto serialized = vote.serialize();
+    auto parsed = core::poe_v1::ValidationVoteV1::deserialize(serialized);
+    assert(parsed.has_value());
+    assert(parsed->quantumSignature == vote.quantumSignature);
+    assert(parsed->signature == vote.signature);
+    assert(parsed->verifySignature());
+
+    core::poe_v1::ValidationVoteV1 classicalOnly;
+    classicalOnly.submitId.fill(0x11);
+    classicalOnly.prevBlockHash.fill(0x22);
+    assert(core::poe_v1::signValidationVoteV1(classicalOnly, classical.privateKey));
+    assert(classicalOnly.quantumSignature.empty());
+    auto legacy = classicalOnly.serialize();
+    auto legacyParsed = core::poe_v1::ValidationVoteV1::deserialize(legacy);
+    assert(legacyParsed.has_value());
+    assert(legacyParsed->quantumSignature.empty());
+    assert(legacyParsed->verifySignature());
+
+    auto corrupt = serialized;
+    corrupt[corrupt.size() - 1] ^= 0x01;
+    auto corruptParsed = core::poe_v1::ValidationVoteV1::deserialize(corrupt);
+    if (corruptParsed.has_value()) {
+        std::string reason;
+        bool ok = corruptParsed->verifySignature(&reason);
+        assert(!ok);
+    }
+    std::cout << "[ok] ValidationVoteV1 hybrid sign/serialize/verify round-trip" << std::endl;
+}
+
 }
 
 int main() {
@@ -197,6 +266,8 @@ int main() {
     testBlockV2RoundTrip();
     testLegacyBlockStillParses();
     testIdentityRegistryTofu();
+    testDeterministicHybridDerivation();
+    testValidationVoteV1PqRoundTrip();
     std::cout << "all pq-integration tests passed" << std::endl;
     return 0;
 }

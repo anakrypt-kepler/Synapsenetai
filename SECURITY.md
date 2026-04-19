@@ -76,10 +76,10 @@ Once a binding is recorded, any subsequent tx/vote/event from that address whose
 
 ## Known PQ Gaps
 
-The following items are tracked publicly and are **not** yet in main:
+The following items are tracked publicly:
 
-- Deterministic derivation of the hybrid keypair from the BIP-39 mnemonic. Today a fresh hybrid pair is generated and persisted as a sidecar `<wallet>.pq` file; losing the sidecar requires re-issuing an `IDENTITY_BIND` event on-chain.
-- `ValidationVoteV1` (PoE pipeline) has no `quantumSignature` trailer. The core `Vote` struct does; the PoE-specific vote bump is scheduled for the next wire-format revision.
+- **Closed** — Deterministic derivation of the hybrid keypair. `HybridSig::generateKeyPairFromSeed` derives the ed25519 + ML-DSA-65 pair from a master seed via HKDF-SHA256 (classical half) plus a SHAKE256 stream fed into a thread-local deterministic `OQS_randombytes` hook (PQ half). `core::Wallet` seeds this from the PBKDF2 master seed derived off the BIP-39 mnemonic and `crypto::Keys` seeds it from the ed25519 private key bytes, so the full hybrid identity is reconstructable from the mnemonic alone; the previous `<wallet>.pq` sidecar file has been removed.
+- **Closed** — `ValidationVoteV1` (PoE pipeline) now supports an optional `quantumSignature` envelope. The wire layout stays single-byte-versioned: a trailing tag byte `0x01` followed by a `u32 LE` length and the envelope bytes is appended when hybrid signing is used. Legacy votes without the trailer continue to deserialize and verify. `signValidationVoteV1(vote, validatorKey, quantumKeyPair)` attaches an envelope bound to the validator pubkey under the `core.poe.validation_vote` domain.
 - External cryptographic audit of the HKDF combiner, envelope canonicalisation, and block signing domain separation.
 
 ## Threat Model Out of Scope
