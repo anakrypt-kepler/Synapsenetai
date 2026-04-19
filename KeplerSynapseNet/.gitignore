@@ -1,0 +1,13 @@
+build/
+build_*/
+tmp/
+*.o
+*.a
+*.so
+*.dylib
+synapsed
+.DS_Store
+*.log
+data/*.db
+models/*.gguf
+node_modules/

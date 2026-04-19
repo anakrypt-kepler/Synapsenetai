@@ -1,0 +1,284 @@
+════════════════════════════════════════════════════════════════════════════════
+                        DARKNET / TOR SEARCH MODULE
+════════════════════════════════════════════════════════════════════════════════
+
+--------------------------------------------------------------------------------
+CREATOR RULES (IMMUTABLE)
+--------------------------------------------------------------------------------
+- The creator's rules and the project's meaning/purpose are immutable. No one has the right to change them.
+- These interface documents define the core rules and logic of SynapseNet; the core rules/logic must not be altered.
+- You may improve implementation, fix bugs, add features, expand documentation, and optimize performance as long as you do not change core behavior or bypass prohibitions/safeguards.
+- Any fork or modification that changes core behavior, removes safeguards, or bypasses prohibitions is not an official SynapseNet project.
+- NGT earned by such a fork is not recognized or associated with SynapseNet.
+- Wallets tied to such violations are subject to automatic burn by community decision.
+
+Snapshot: February 2026
+Repo: KeplerSynapseNet/src/web/*
+Status: Implemented as a library module. Wired into:
+  • ncurses AI Chat (optional context injection; 5/6/7 or H+W/H+O/H+T)
+  • Node-attached background agents (NAAN) via ResearchConnectorService (always-on loop)
+First-run opt-in prompt is shown (TUI Screen::WEB_PROMPT) and persisted to synapsenet.conf.
+Managed Tor runtime is supported (optional) via TUI and RPC.
+
+This repo contains code for:
+  • Simple clearnet search routing
+  • Tor SOCKS5 HTTP fetch for .onion (external Tor daemon or managed Tor runtime)
+  • HTML extraction + query detection
+  • Optional AIWrapper that can inject search context into a prompt
+  • Connector policy hardening (rate limits, max payload, strict URL/object validation)
+  • Always-on connectors for NAAN with bounded audit artifacts
+
+Reality check:
+  • The ncurses AI chat runs a local GGUF model (llama.cpp backend).
+  • Optional: the chat can inject context from clearnet + .onion search results into the prompt.
+  • Onion requires Tor reachability (SOCKS5 default: 127.0.0.1:9050).
+  • Onion URLs change. Treat hardcoded endpoints as “best effort”.
+  • Use only lawful sources and follow applicable laws and terms. This module does not bypass access controls.
+
+Web 4.0 framing (project philosophy):
+  • In Web 2.0 we “search” and assemble meaning ourselves.
+  • In SynapseNet (Web 4.0) the interface is conversation with a local agent.
+  • The agent can optionally go to clearnet/onion, extract signal, and return a synthesis.
+  • This is an “external cortex” on your hardware: not an API you rent, but a tool you own.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                              ENGINES / SOURCES
+════════════════════════════════════════════════════════════════════════════════
+
+Hardcoded defaults (KeplerSynapseNet/src/web/darknet_engines.cpp):
+  • Ahmia (clearnet gateway): http://ahmia.fi/search/
+  • Torch (.onion)
+  • NotEvil (.onion)
+  • DarkSearch (.onion)
+  • DeepSearch (.onion)
+
+Forums / pages (KeplerSynapseNet/src/web/forum_crawler.cpp):
+  • Dread (.onion)
+  • NotEvil (.onion)
+
+Note:
+  • These are endpoints, not guarantees.
+  • They can disappear, move, or return unsafe content.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                          CODE MODULES (wc -l)
+════════════════════════════════════════════════════════════════════════════════
+
+KeplerSynapseNet/src/web:
+  ai_wrapper.cpp           353
+  curl_fetch.cpp           145
+  curl_fetch.h              28
+  darknet_engines.cpp       52
+  deep_search_wrapper.cpp  173
+  forum_crawler.cpp        128
+  html_extractor.cpp       468
+  onion_search_router.cpp   92
+  query_detector.cpp       284
+  research_connectors.cpp  721
+  rpc_server.cpp           531
+  search_config.cpp        276
+  tor_engine.cpp           336
+  tor_fetch.cpp            193
+  tor_runtime.cpp          719
+  web_search.cpp           478
+
+KeplerSynapseNet/include/web:
+  rpc_server.h             39
+  web.h                   535
+
+Subtotal (web module): 5,551 lines
+
+Darknet-relevant subset (historical grouping):
+  onion_search_router.cpp + darknet_engines.cpp + deep_search_wrapper.cpp
+  + forum_crawler.cpp + tor_fetch.cpp + tor_engine.cpp + tor_runtime.cpp
+
+
+════════════════════════════════════════════════════════════════════════════════
+                         PROJECT LINE COUNTS (wc -l)
+════════════════════════════════════════════════════════════════════════════════
+
+Line counts drift over time. For the current snapshot, refer to:
+  • interfaces txt/WHAT_IS_SYNAPSENET.txt
+
+
+════════════════════════════════════════════════════════════════════════════════
+                          CONFIG (CURRENT)
+════════════════════════════════════════════════════════════════════════════════
+
+search_config.cpp parses a simple key=value file (no INI sections). Example:
+
+clearnet_engines=duckduckgo,brave
+darknet_engines=ahmia,torch,darksearch,deepsearch
+timeout_seconds=10
+max_results_per_engine=10
+max_page_size=262144
+route_clearnet_through_tor=0
+tor_socks_host=127.0.0.1
+tor_socks_port=9050
+tor_control_host=127.0.0.1
+tor_control_port=9051
+tor_control_password=
+
+File locations (default data dir: ~/.synapsenet):
+  • ~/.synapsenet/web_search.conf        (search engines + Tor endpoints; auto-created if missing)
+  • ~/.synapsenet/synapsenet.conf        (operator toggles + Tor runtime policy)
+
+Always-on NAAN connector probes (web_search.conf):
+  • connector_probe_clearnet_urls=<comma-separated URLs>
+  • connector_probe_tor_urls=<comma-separated URLs>
+  • connector_probe_onion_urls=<comma-separated URLs>
+
+Connector route policy (web_search.conf):
+  • connector_allow_domains=<comma-separated domain tokens>
+  • connector_deny_domains=<comma-separated domain tokens>
+
+Notes:
+  • The probe lists drive the always-on connector health checks (ResearchConnectorService) and the Attached Agent status panel.
+  • If a probe list is empty, the service derives a probe from connector_allow_domains, then falls back to a stable URL.
+  • The NAAN background loop reloads ~/.synapsenet/web_search.conf on each scheduled RESEARCH tick; changes apply without a restart.
+
+Operator toggles (synapsenet.conf):
+  • web.inject.enabled=true|false
+  • web.inject.onion=true|false
+  • web.inject.tor_clearnet=true|false
+
+Managed Tor runtime (synapsenet.conf):
+  • web.tor.managed=true|false
+  • web.tor.auto_install=true|false
+  • web.tor.transport=direct|snowflake
+  • web.tor.bootstrap_timeout_seconds=120
+  • web.tor.bootstrap_stall_seconds=90
+  • web.tor.auto_fallback_snowflake=true|false
+
+Managed Tor Snowflake tuning (env vars, optional):
+  • SYNAPSENET_TOR_SNOWFLAKE_BROKER
+  • SYNAPSENET_TOR_SNOWFLAKE_AMPCACHE
+  • SYNAPSENET_TOR_SNOWFLAKE_ICE
+
+TUI controls (AI Chat screen):
+  • 5 / H+W / Ctrl+W: enable/disable web context injection
+  • 6 / H+O / Ctrl+O: include onion sources in searches
+  • 7 / H+T / Ctrl+T: route clearnet requests through Tor
+  • 8 / H+I: Tor install/managed runtime helpers (if available)
+First-run prompt:
+  • Screen::WEB_PROMPT asks opt-in for: web injection, onion sources, Tor for clearnet (stored in synapsenet.conf).
+
+RPC (Tor + connector observability):
+  • node.status
+  • node.discovery.stats
+  • naan.status
+
+
+════════════════════════════════════════════════════════════════════════════════
+                          INTEGRATION NOTES
+════════════════════════════════════════════════════════════════════════════════
+
+Wired (today):
+  • TUI chat → AIWrapper/WebSearch with runtime toggles (5/6/7 or H+W/H+O/H+T).
+  • NAAN background loop → ResearchConnectorService for bounded, policy-gated research artifacts.
+
+Now implemented:
+  • Node-attached autonomous agents (NAAN) use the same web/onion module for
+    research and citation gathering under strict policy gates.
+  • See: interfaces txt/NODE_ATTACHED_AGENT_NETWORK.txt
+
+Intended wiring (minimal):
+  1) Build WebSearch with defaultSearchConfig() (or loadSearchConfig()).
+  2) Ensure Tor is running (external daemon, or managed runtime via tor_runtime.cpp).
+  3) For “search/darknet/onion …” prompts, call WebSearch::search().
+  4) Inject results with AIWrapper::injectContext().
+  5) Feed the wrapped prompt into the local GGUF model.
+
+Synapse IDE:
+  • Prototype exists (VS Code extension → ide/synapsenet-vscode) and can call synapsed RPC for local completions.
+  • RPC supports optional web injection in ai.complete (webInject/webOnion/webTor) so IDE can opt-in to clearnet/onion citations.
+  • RPC JSON-RPC parsing is robust (IDE tool schemas and braces in prompts don’t break request parsing).
+  • VS Code “SynapseNet: Open Chat” uses the same RPC and can pass webQuery to drive search without sending full IDE context to the network.
+  • Terminal Synapse IDE exists too: `synapseide` (KeplerSynapseNet/crush-main) talks to synapsed RPC (local-only).
+      - DONE: expose Web4 toggles inside synapseide UI (webInject/webOnion/webTor; shows WEB/ONION/TOR status; passes webQuery to RPC).
+
+Limitations in current implementation:
+  • Fetching uses system curl (HTTP+HTTPS); Onion requires a Tor runtime (external daemon or managed Tor).
+  • Forum crawling is naive (fetches a page and extracts text; not a full crawler).
+  • Treat as experimental until it is integrated and audited.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                      MATHEMATICAL NOTES & CODE ANCHORS
+════════════════════════════════════════════════════════════════════════════════
+
+Relevance scoring (WebSearch):
+  • WebSearch assigns a relevance score to each SearchResult based on simple
+    term matches in the title, snippet, and domain.
+
+    Let:
+      title_matches   = number of query words found in the title
+      snippet_matches = number of query words found in the snippet
+      domain_matches  = number of query words found in the domain
+
+    Then the relevance score is:
+      relevance_score(query, result) =
+          2.0 * title_matches
+        + 1.0 * snippet_matches
+        + 1.5 * domain_matches
+
+    Implementation:
+      • Function: WebSearch::Impl::calculateRelevance
+      • File: KeplerSynapseNet/src/web/web_search.cpp
+
+HTTP fetch over clearnet vs Tor:
+  • Both WebSearch and TorFetch construct HTTP URLs of the form:
+      url = "http://" + host + optional_port + normalized_path
+
+  • Timeouts and page size limits are enforced by:
+      timeoutSeconds = config.timeoutSeconds
+      maxBytes       = config.maxPageSize
+
+    Implementation:
+      • Function: WebSearch::Impl::httpGet
+        File: KeplerSynapseNet/src/web/web_search.cpp
+      • Function: TorFetch::Impl::httpGet
+        File: KeplerSynapseNet/src/web/tor_fetch.cpp
+
+Search result cap per engine:
+  • Each engine is capped at:
+      max_results_per_engine = config.maxResultsPerEngine
+
+  • During HTML parsing, the loop stops when:
+      results.size() >= maxResultsPerEngine
+
+    Implementation:
+      • Function: WebSearch::Impl::parseResults
+        File: KeplerSynapseNet/src/web/web_search.cpp
+
+Statistics:
+  • WebSearch tracks simple counters:
+      successfulFetches, failedFetches, bytesDownloaded
+
+    These form the basis for higher-level diagnostics and can be summarized as:
+      totalFetches = successfulFetches + failedFetches
+      failureRate  = failedFetches / max(1, totalFetches)
+
+    Implementation:
+      • Struct: WebStats
+        File: KeplerSynapseNet/include/web/web.h
+      • Updates in: WebSearch::Impl::httpGet
+
+
+════════════════════════════════════════════════════════════════════════════════
+                                CHANGELOG
+════════════════════════════════════════════════════════════════════════════════
+
+Feb 2026:
+  • Added managed Tor runtime (TUI + RPC: status/install/start/stop) with optional Snowflake transport.
+  • Added ResearchConnectorService for NAAN (always-on loop) with strict validation and bounded audit artifacts.
+  • Hardened connector policy: route rejects are shown as POLICY and do not penalize agent score.
+  • TUI: numeric and H+<key> combos added for reliability (5/6/7 and H+W/H+O/H+T; function keys may not work on some terminals).
+
+Jan 2026:
+  • Wired AI chat web/onion injection and switched web fetch to curl (HTTPS + Tor proxy).
+  • Added first-run opt-in prompt (Screen::WEB_PROMPT) that persists web/onion/Tor choices.
+  • Model rentals: payment processing wired (NGT tx verification) + market RPC (listings/stats).
+  • Peer discovery bootstrap: hostname connect support + DNS seeds enabled by default + added diagnostics (RPC `node.seeds`, `node.discovery.stats`, and Genesis screen shows bootstrap/DNS/known peers counters).

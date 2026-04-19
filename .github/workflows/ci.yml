@@ -1,0 +1,317 @@
+name: CI Build & Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        compiler: [gcc, clang]
+        exclude:
+          # GCC not default on macOS
+          - os: macos-latest
+            compiler: gcc
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Verify interface mirrors
+      run: |
+        bash KeplerSynapseNet/tools/check_interface_mirrors.sh
+
+    - name: Install dependencies (Ubuntu)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libssl-dev \
+          libncurses-dev \
+          libsqlite3-dev \
+          libsodium-dev \
+          git
+
+    - name: Install dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install cmake ncurses sqlite3 libsodium
+
+    - name: Set up compiler (Ubuntu)
+      if: runner.os == 'Linux'
+      run: |
+        if [ "${{ matrix.compiler }}" = "gcc" ]; then
+          echo "CC=gcc" >> $GITHUB_ENV
+          echo "CXX=g++" >> $GITHUB_ENV
+        else
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
+        fi
+
+    - name: Set up compiler (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        echo "CC=clang" >> $GITHUB_ENV
+        echo "CXX=clang++" >> $GITHUB_ENV
+
+    - name: Create build directory
+      run: mkdir -p build
+
+    - name: Configure CMake (without llama.cpp for fast CI)
+      run: |
+        cmake -S KeplerSynapseNet -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DUSE_LLAMA_CPP=OFF \
+          -DBUILD_PRIVACY=OFF \
+          -DBUILD_TESTS=ON \
+          -DSYNAPSE_FETCH_LIBOQS=OFF
+
+    - name: Build
+      run: |
+        cmake --build build --config Release --parallel $(nproc || sysctl -n hw.logicalcpu)
+
+    - name: Run tests
+      run: |
+        ctest --test-dir build --output-on-failure --parallel $(nproc || sysctl -n hw.logicalcpu)
+
+    - name: Quantum gate checks
+      run: |
+        ctest --test-dir build --output-on-failure -R "QuantumTests|QuantumRuntimeTests"
+
+    - name: Security gate checks
+      run: |
+        ctest --test-dir build --output-on-failure -R \
+          "ImplantCompatibilityTests|WebExtractionRiskTests|WebConnectorAuditTests|AgentCoordinationTests|NaanAdversarialTests|NaanIntegrationTests|NaanRecoveryTests"
+
+    - name: Determinism replay diff gate
+      run: |
+        ./build/tests/test_determinism_replay > /tmp/update_payload_run_1.txt
+        ./build/tests/test_determinism_replay > /tmp/update_payload_run_2.txt
+        diff -u /tmp/update_payload_run_1.txt /tmp/update_payload_run_2.txt
+
+    - name: Reproducible runtime deps check
+      run: |
+        if [ "$(uname)" = "Darwin" ]; then
+          otool -L ./build/synapsed | tail -n +2 | awk '{print $1}' | LC_ALL=C sort > /tmp/runtime_deps_1.txt
+          otool -L ./build/synapsed | tail -n +2 | awk '{print $1}' | LC_ALL=C sort > /tmp/runtime_deps_2.txt
+        else
+          ldd ./build/synapsed | awk '{print $1}' | LC_ALL=C sort > /tmp/runtime_deps_1.txt
+          ldd ./build/synapsed | awk '{print $1}' | LC_ALL=C sort > /tmp/runtime_deps_2.txt
+        fi
+        diff -u /tmp/runtime_deps_1.txt /tmp/runtime_deps_2.txt
+
+    - name: Verify clean tree
+      run: |
+        if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+          git status --short
+          exit 1
+        fi
+
+    - name: Build with Privacy (Ubuntu only)
+      if: runner.os == 'Linux'
+      run: |
+        rm -rf build_privacy
+        cmake -S KeplerSynapseNet -B build_privacy \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DUSE_LLAMA_CPP=OFF \
+          -DBUILD_PRIVACY=ON \
+          -DBUILD_TESTS=ON \
+          -DSYNAPSE_FETCH_LIBOQS=OFF
+        cmake --build build_privacy --config Release --parallel $(nproc)
+
+    - name: Test Privacy Build (Ubuntu only)
+      if: runner.os == 'Linux'
+      run: |
+        ctest --test-dir build_privacy --output-on-failure --parallel $(nproc)
+
+  build-with-llama:
+    runs-on: ubuntu-latest
+    name: Build with llama.cpp (Linux)
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Verify interface mirrors
+      run: |
+        bash KeplerSynapseNet/tools/check_interface_mirrors.sh
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libssl-dev \
+          libncurses-dev \
+          libsqlite3-dev \
+          libsodium-dev \
+          git
+
+    - name: Create build directory
+      run: mkdir -p build
+
+    - name: Configure CMake (with llama.cpp)
+      run: |
+        cmake -S KeplerSynapseNet -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DUSE_LLAMA_CPP=ON \
+          -DBUILD_PRIVACY=OFF \
+          -DBUILD_TESTS=ON \
+          -DSYNAPSE_FETCH_LIBOQS=OFF
+
+    - name: Build with llama.cpp
+      run: |
+        # Set longer timeout for llama.cpp build
+        timeout 1800 cmake --build build --config Release --parallel 2
+
+    - name: Check if synapsed binary exists
+      run: |
+        if [ -f build/synapsed ]; then
+          echo "✓ synapsed binary built successfully"
+          ./build/synapsed --version 2>/dev/null || echo "Binary exists but version check not implemented"
+        else
+          echo "✗ Failed to build synapsed"
+          exit 1
+        fi
+
+  build-with-liboqs:
+    runs-on: ubuntu-latest
+    name: PQC Real Backend (liboqs)
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Verify interface mirrors
+      run: |
+        bash KeplerSynapseNet/tools/check_interface_mirrors.sh
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libssl-dev \
+          libncurses-dev \
+          libsqlite3-dev \
+          libsodium-dev \
+          git
+
+    - name: Configure CMake (real PQC path)
+      run: |
+        cmake -S KeplerSynapseNet -B build_pqc_real \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DUSE_LLAMA_CPP=OFF \
+          -DBUILD_PRIVACY=OFF \
+          -DBUILD_TESTS=ON \
+          -DSYNAPSE_FETCH_LIBOQS=ON \
+          -DSYNAPSE_REQUIRE_REAL_PQC=ON
+
+    - name: Build PQC targets
+      run: |
+        cmake --build build_pqc_real --target synapsed test_quantum test_quantum_runtime test_pqc_ci_validation --parallel $(nproc)
+
+    - name: Run real PQC quantum suite
+      run: |
+        ctest --test-dir build_pqc_real --output-on-failure -R "QuantumTests|QuantumRuntimeTests|PqcCiValidationTests"
+
+  code-quality:
+    runs-on: ubuntu-latest
+    name: Code Quality Checks
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check file permissions
+      run: |
+        # Ensure shell scripts are executable
+        find . -name "*.sh" -type f -exec chmod +x {} \;
+        git diff --exit-code || echo "Files need permission fix"
+
+    - name: Check for TODO comments
+      run: |
+        echo "=== TODO/FIXME items found ==="
+        grep -r "TODO\|FIXME" --include="*.cpp" --include="*.h" KeplerSynapseNet/src/ || echo "No TODOs found"
+
+  tauri-build:
+    runs-on: ubuntu-latest
+    name: Tauri App Build
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libwebkit2gtk-4.1-dev \
+          libappindicator3-dev \
+          librsvg2-dev \
+          patchelf
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install frontend dependencies
+      working-directory: KeplerSynapseNet/tauri-app
+      run: npm ci
+
+    - name: Build frontend
+      working-directory: KeplerSynapseNet/tauri-app
+      run: npm run build
+
+    - name: Build Tauri app
+      working-directory: KeplerSynapseNet/tauri-app/src-tauri
+      run: cargo build --release
+
+  tauri-build-windows:
+    runs-on: windows-latest
+    name: Tauri App Build (Windows)
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-pc-windows-msvc
+
+    - name: Install Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install frontend dependencies
+      working-directory: KeplerSynapseNet/tauri-app
+      run: npm ci
+
+    - name: Build frontend
+      working-directory: KeplerSynapseNet/tauri-app
+      run: npm run build
+
+    - name: Build Tauri app
+      working-directory: KeplerSynapseNet/tauri-app/src-tauri
+      run: cargo build --release
+
+  docker-build:
+    runs-on: ubuntu-latest
+    name: Docker build (KeplerSynapseNet)
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build Docker image (runs tests during build)
+      run: |
+        docker build -f KeplerSynapseNet/Dockerfile -t synapsenet:ci KeplerSynapseNet

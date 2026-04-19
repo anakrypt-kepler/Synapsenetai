@@ -1,0 +1,80 @@
+services:
+  tor:
+    profiles: ["tor"]
+    build:
+      context: ./KeplerSynapseNet
+      dockerfile: Dockerfile
+    image: keplersynapsenet:local
+    user: "debian-tor"
+    entrypoint: ["/usr/bin/tor"]
+    command:
+      - "--SocksPort"
+      - "0.0.0.0:9050"
+      - "--ControlPort"
+      - "127.0.0.1:9051"
+      - "--DataDirectory"
+      - "/tmp/tor-data"
+      - "--Log"
+      - "notice stdout"
+    restart: unless-stopped
+    volumes:
+      - tor_data:/tmp/tor-data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'exec 3<>/dev/tcp/127.0.0.1/9050'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  synapsenet:
+    build:
+      context: ./KeplerSynapseNet
+      dockerfile: Dockerfile
+    image: keplersynapsenet:local
+    entrypoint: ["/usr/local/bin/synapsenet-start.sh"]
+    restart: unless-stopped
+    ports:
+      - "8332:8332"
+      - "8333:8333"
+    volumes:
+      - ./KeplerSynapseNet/docker/synapsenet-start.sh:/usr/local/bin/synapsenet-start.sh:ro
+      - synapsenet_data:/data
+    environment:
+      TERM: xterm-256color
+      SYNAPSENET_PRIVACY: "false"
+      SYNAPSENET_TOR_MODE: "external"
+      SYNAPSENET_TOR_REQUIRED: "false"
+      SYNAPSENET_TOR_HOST: "127.0.0.1"
+      SYNAPSENET_ALLOW_CLEARNET_FALLBACK: "true"
+      SYNAPSENET_ALLOW_P2P_CLEARNET_FALLBACK: "true"
+      SYNAPSENET_FORCE_CLEARNET_NAAN: "true"
+      SYNAPSENET_NAAN_CLEARNET_ENGINES: "duckduckgo,brave"
+      SYNAPSENET_NAAN_AUTOMINING: "true"
+      SYNAPSENET_NAAN_AUTO_SEARCH_MODE: "clearnet"
+      SYNAPSENET_NAAN_AUTO_SEARCH_MAX_RESULTS: "4"
+      SYNAPSENET_NAAN_DISABLE_DUPLICATE_GATES: "false"
+      SYNAPSENET_POE_NOVELTY_BANDS: "4"
+      SYNAPSENET_POE_MIN_SUBMIT_INTERVAL_SECONDS: "1"
+      SYNAPSENET_POE_AUTO_EPOCH_ENABLED: "true"
+      SYNAPSENET_POE_AUTO_EPOCH_INTERVAL_SECONDS: "120"
+      SYNAPSENET_POE_AUTO_EPOCH_REQUIRE_NEW_FINALIZED: "false"
+      SYNAPSENET_POE_VALIDATORS_MAJORITY: "true"
+      SYNAPSENET_POE_VALIDATORS_ADAPTIVE: "true"
+      SYNAPSENET_POE_VALIDATORS_N: "0"
+      SYNAPSENET_POE_ALLOW_SELF_BOOTSTRAP: "false"
+      SYNAPSENET_POE_SELF_BOOTSTRAP_AUTO_DISABLE: "true"
+      SYNAPSENET_POE_SELF_BOOTSTRAP_STRICT_CONNECTED_PEERS: "4"
+      SYNAPSENET_POE_SELF_BOOTSTRAP_STRICT_KNOWN_PEERS: "8"
+      SYNAPSENET_POE_SELF_BOOTSTRAP_STRICT_VALIDATOR_COUNT: "3"
+      SYNAPSENET_POE_SELF_BOOTSTRAP_ACTIVATION_CHECKS: "5"
+      SYNAPSENET_ADDNODE: "host.docker.internal:18333"
+      SYNAPSENET_DAEMON: "false"
+      SYNAPSENET_FORCE_DAEMON_IF_NO_TTY: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stdin_open: false
+    tty: false
+
+volumes:
+  synapsenet_data:
+  tor_data:

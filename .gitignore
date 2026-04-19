@@ -1,0 +1,61 @@
+# Build artifacts
+build/
+build_*/
+tmp/
+*.o
+*.a
+*.so
+*.dylib
+
+# Binaries
+synapsed
+simple_tui_test
+test_ncurses
+
+# Local data (wallets, models, logs)
+*.db
+*.db-shm
+*.db-wal
+models/*.gguf
+models/*.part*
+*.log
+.synapseide/
+
+# OS
+.DS_Store
+
+# IDE
+node_modules/
+
+# Additional Runtime/Secret files
+.vscode/*
+!.vscode/settings.json
+!.vscode/c_cpp_properties.json
+.qodo/
+data-main/
+*.db
+*.db-wal
+*.db-shm
+*.log
+bridges.txt
+cookie_auth
+build-macos/
+build-macos-native/
+*.swp
+build-macos-native/
+
+# Build
+build/
+*.o
+*.a
+compile_commands.json
+
+# IDE
+.vscode/
+.qodo/
+.idea/
+
+# macOS
+.DS_Store
+._*
+__MACOSX/

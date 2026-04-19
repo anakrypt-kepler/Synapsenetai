@@ -1,0 +1,422 @@
+════════════════════════════════════════════════════════════════════════════════
+             SYNAPSENET v0.2 — AI MINING (NAAN) PRIMARY UI (REFactor SPEC)
+════════════════════════════════════════════════════════════════════════════════
+
+--------------------------------------------------------------------------------
+CREATOR RULES (IMMUTABLE)
+--------------------------------------------------------------------------------
+- The creator's rules and the project's meaning/purpose are immutable. No one has the right to change them.
+- These interface documents define the core rules and logic of SynapseNet; the core rules/logic must not be altered.
+- You may improve implementation, fix bugs, add features, expand documentation, and optimize performance as long as you do not change core behavior or bypass prohibitions/safeguards.
+- Any fork or modification that changes core behavior, removes safeguards, or bypasses prohibitions is not an official SynapseNet project.
+- NGT earned by such a fork is not recognized or associated with SynapseNet.
+- Wallets tied to such violations are subject to automatic burn by community decision.
+- NGT cannot be purchased in-protocol; it can only be earned by protocol outcomes or transferred between wallet addresses.
+
+Snapshot: February 2026
+Scope: ncurses TUI (synapsed) + NAAN runtime
+Style: “US strict” (audit-friendly, deterministic, no secret leakage)
+
+
+════════════════════════════════════════════════════════════════════════════════
+                                    GOAL
+════════════════════════════════════════════════════════════════════════════════
+
+Make the TUI simpler and operator-friendly by moving most dashboard actions into
+the AI Mining (NAAN) UI, while keeping a minimal main dashboard with:
+  - AI Mining (NAAN) (primary)
+  - AI Query (chat) (kept on the main dashboard)
+
+Terminology:
+  - "AI Mining (NAAN)" is the UI name of the always-on runtime agent.
+  - "Attached Agent" may appear in legacy code paths but refers to the same agent.
+
+The node operator provides resources; the agent performs the work:
+  - autonomously researches, drafts, and submits knowledge/code contributions
+  - earns NGT via PoE v1 (operator receives rewards per protocol rules)
+  - adapts its budgets to the machine (phone/tablet/PC/server)
+  - exposes read-only observability for what it is doing and why
+
+
+════════════════════════════════════════════════════════════════════════════════
+                         PRINCIPLES (NON-NEGOTIABLE)
+════════════════════════════════════════════════════════════════════════════════
+
+1) Operator safety / compliance
+   - Default deny for privileged actions.
+   - No secret leakage in UI/logs/artifacts:
+       * wallet seeds/private keys
+       * API tokens, auth headers, env secrets
+       * local filesystem secrets
+   - All external content must be sanitized/redacted before UI display or storage.
+
+2) Determinism where it matters
+   - Deterministic scheduler decisions (given the same inputs).
+   - Deterministic serialization/hashing for submissions and artifacts.
+   - Audit log uses hash chaining (tamper-evident).
+
+3) Read-only by default
+   - The operator can observe the agent.
+   - The operator cannot micro-control the agent’s browsing targets or behavior.
+   - Any configuration changes must be explicit and limited to safe resource/policy knobs.
+
+4) Lawful use
+   - The system must not be designed to bypass access controls.
+   - Default content sources should be lawful and allowlisted.
+
+5) Always-on agent
+   - AI Mining (NAAN) runs continuously while synapsed is running.
+   - The operator cannot pause/stop/disable the agent from the UI.
+   - To stop the agent, the operator exits synapsed (e.g., Quit or closing the terminal).
+
+
+════════════════════════════════════════════════════════════════════════════════
+                            UI / NAVIGATION TARGET
+════════════════════════════════════════════════════════════════════════════════
+
+Main dashboard (minimal)
+  - [A] AI Mining (NAAN)
+  - [3] AI Query (Chat)
+  - [Q] Quit
+
+Everything else that used to be under:
+  [1] Contribute Knowledge
+  [2] Validate Contributions
+  [4] Wallet & Transfers
+  [5] Network Statistics
+  [6] Peer Discovery
+  [7] Settings
+  [8] Security
+  [9] IDE / Code Contributions
+  [0] Agent Network
+Moves under AI Mining (NAAN) as read-only panels/subpages.
+
+AI Query (Chat) stays on the main dashboard. It becomes a thin UI surface for:
+  - typing a query and receiving a response from the local model
+  - showing a compact status strip for the agent/network/Tor (read-only)
+
+
+════════════════════════════════════════════════════════════════════════════════
+                    AI MINING (NAAN): REQUIRED SUBPAGES
+════════════════════════════════════════════════════════════════════════════════
+
+AI Mining (NAAN) pages should be accessible via letter keys (no function keys).
+All pages are read-only unless explicitly marked as safe operator action.
+
+1) Overview
+   - Lifecycle state, score, penalty, crash count
+   - Deterministic scheduler: last decision, reason, next task class
+   - Budgets: CPU/RAM/NET epoch budget + remaining
+   - Connector status: clearnet/tor/onion health + planned next probes
+   - Quarantine/throttle flags + reasons + timers
+   - Current config source paths (for audit clarity):
+       * synapsenet.conf path
+       * web_search.conf path
+
+2) Network & Mining
+   - P2P status: connected peers, inbound/outbound counts, port, sync progress
+   - Transport mode: Tor-only (default) or hybrid (explicit opt-in)
+   - Peer discovery summary (seeds used, last peer exchange time)
+   - Ledger: height, tip hash, last block time
+   - Mining/hashing (if enabled):
+       * current work target summary
+       * hashes attempted / rate estimate
+       * current candidate block id/hash (sanitized)
+
+3) Wallet & Earnings (read-only)
+   - Address, balance, pending rewards
+   - Last received NGT events (acceptance reward, epoch reward)
+   - Transfers history summary (last N)
+   - Key material must never be displayed automatically
+   - Optional safe operator action:
+       [E] Export wallet public info to text (address only)
+       [K] Export keys/seed requires explicit multi-step confirmation and redaction safeguards
+
+4) Contributions Pipeline (PoE v1)
+   - Fetch → Review → Draft → Submit → Finalize / Epoch reward pipeline
+   - Last fetched artifact id/hash and connector
+   - Draft queue size, last draft id
+   - Submission ledger view: last submit id, vote count, finalized flag
+   - Deterministic “why this was submitted” summary (no prompts, no private memory)
+
+5) Security & Policy (US strict)
+   - Current policy mode and policy hash (immutable audit token)
+   - Secret redaction counters (how many redactions applied)
+   - Connector allow/deny policy summary (domains only, sanitized)
+   - Quarantine events timeline (timestamp + reason, no raw secrets)
+   - Operator actions:
+       * [R] Request runtime self-check (read-only result)
+       * [S] Safe mode toggle is a CLI flag only (no runtime toggle in UI)
+
+6) Logs & Diagnostics
+   - Ring buffer of last N agent events:
+       * scheduler decisions
+       * connector probes (sanitized URL + reason)
+       * draft/submission events (ids only)
+       * recovery/compaction events
+       * Tor runtime events (bootstrap progress, transport)
+   - Timeline view (operator-visible):
+       * NGT reward events
+       * quarantine/throttle transitions
+       * Tor bootstrap/offline transitions
+       * submit/finalize/epoch events
+   - Persistent logs must be stored under ~/.synapsenet/logs/ (or configured data dir)
+   - UI must offer pagination and filtering by category
+
+7) Agent Network (Observatory) (read-only)
+   - Artifact feed pagination
+   - Artifact lookup by hash/id
+   - Signed metadata (signer id, signature ok)
+   - No direct posting by the operator from the UI
+
+8) IDE / Code Contributions (moved under agent)
+   - Read-only status: local IDE/RPC readiness
+   - Code submissions are produced by the agent pipeline, not manual operator typing
+   - Optional: operator can open an IDE tool, but default flow is agent-driven
+
+9) Storage & Recovery (read-only)
+   - On-disk paths (for audit clarity):
+       * NAAN DB, audit segments, connector audit directory
+       * synapsenet.conf and web_search.conf
+   - Recovery status and last integrity check result
+   - Compaction/vacuum status (no data loss)
+   - Disk usage is informational only; no automatic deletion by default
+
+
+════════════════════════════════════════════════════════════════════════════════
+                   NETWORK ROUTING POLICY (TOR-FIRST AGENT)
+════════════════════════════════════════════════════════════════════════════════
+
+Target behavior:
+  - Tor is required by default for AI Mining (NAAN) and node networking.
+  - synapsed waits for Tor bootstrap (bridges/transports if configured) before starting
+    outbound research and P2P dialing (bootstrap should reach 100% when possible).
+  - All AI Mining (NAAN) outbound web traffic is routed through Tor by default.
+  - Node P2P outbound connections are routed through Tor by default.
+  - Node inbound reachability uses an onion service when Tor transport is enabled.
+  - Onion sources require Tor reachability (SOCKS).
+  - If Tor is unavailable:
+      * Agent must enter a deterministic degraded mode.
+      * By default, do not fall back to uncontrolled clearnet traffic for either research
+        or P2P transport.
+      * Any clearnet fallback (web or P2P) must be an explicit operator opt-in in
+        synapsenet.conf (auditable).
+  - External content safety:
+      * Never download or execute binaries.
+      * Prefer HTML/text fetch only with strict limits and extraction hardening.
+      * Strict URL validation and allow/deny policy are mandatory.
+
+Implementation constraints:
+  - Tor runtime behavior:
+      * If an external Tor daemon is reachable, use it.
+      * Otherwise, start a managed Tor runtime by default when agent mode requires Tor and a tor binary is available.
+      * If Tor is required but no Tor runtime is available, remain in deterministic degraded mode until Tor is available.
+  - The agent must not run privileged install commands without explicit operator opt-in.
+  - Routing must be policy-gated by allow/deny domains and strict URL validation.
+  - P2P over Tor must remain deterministic and audit-visible:
+      * outbound dial via Tor SOCKS
+      * inbound via onion service
+      * discovery/seed strategy must be compatible with Tor-first mode
+
+Observability requirements:
+  - Show Tor runtime status (bin present, socks OK, ctrl OK, bootstrapped %, transport).
+  - Show current route mode: Tor-only, Tor+Onion, degraded.
+  - Show P2P transport mode (Tor-only/hybrid) and onion service status (sanitized/truncated).
+
+
+════════════════════════════════════════════════════════════════════════════════
+                         AI QUERY (CHAT) TARGET CHANGES
+════════════════════════════════════════════════════════════════════════════════
+
+1) Remove bundled “default model choices” from the UI
+   - No hardcoded model names in the UI (operator manages models).
+   - UI shows:
+       * Loaded model name (if any)
+       * Model directory path (default: ~/.synapsenet/models)
+       * How many local models are detected (optional)
+   - If no model is loaded, show a clear prompt telling the operator where to add one.
+
+2) Remove Tor/onion toggle hotkeys from AI Query
+   - AI Query is read-only with respect to network routing.
+   - A compact status strip shows:
+       * Tor: connected / bootstrapping / offline (color-coded)
+       * Onion: enabled/disabled/online/degraded
+       * Clearnet: policy state
+       * Current agent activity: IDLE / SEARCHING / EXTRACTING / DRAFTING / SUBMITTING
+
+3) Knowledge network coupling
+   - Chat does not directly submit entries.
+   - AI Mining (NAAN) controls submissions.
+   - Operator can query what the agent submitted and why (read-only trace).
+
+
+════════════════════════════════════════════════════════════════════════════════
+                         IMPLEMENTATION TODO (CHECKLIST)
+════════════════════════════════════════════════════════════════════════════════
+
+UI / Navigation
+  [x] Replace dashboard menu with minimal entries (A, 3, Q).
+      - primary dashboard now routes only to `A=AI Mining`, `3=AI Query`, `Q=Quit`
+  [x] Move previous screens under AI Mining (NAAN) subpages.
+      - legacy dashboard actions are consolidated into the 9-page AI Mining panel
+  [x] Remove function-key dependencies; prefer letter combos.
+      - letter/number shortcuts are implemented as stable alternatives in addition to function keys
+  [x] Add stable status strip in AI Query showing Tor/Onion/Agent activity.
+      - AI chat now renders `Tor | Onion | Clearnet | Agent` status strip from attached-agent runtime state
+  [x] Remove model auto-downloads and in-UI model downloads.
+      - model loader UI keeps downloads disabled; operator adds local `.gguf` files manually
+  [x] Remove model picker UI from AI Query (operator manages models).
+      - AI Query shows loaded model + model directory + detected local model count (read-only)
+
+Agent autonomy
+  [x] Move manual “Contribute Knowledge” UX into agent pipeline.
+      - primary navigation routes contributions through deterministic AI Mining pipeline surfaces
+  [x] Add deterministic “contribution intent” rules (what qualifies for submit).
+      - submission policy enforces deterministic intent minimums (`intentMinTitleBytes`, `intentMinBodyBytes`)
+  [x] Add deterministic retention policies for artifacts/drafts/submissions (default: no automatic deletion; optional bounded retention).
+      - retention is policy-driven via `agent.retention.*` and deterministic prune windows in NAAN maintenance ticks
+
+Tor-first routing
+  [x] Add a single policy switch: agent.tor.required=true|false (default true for agent mode).
+      - loaded from config with default `true` and applied in NAAN route policy evaluation
+  [x] Ensure all connector probes and fetches respect routing mode.
+      - connector/pipeline route decisions are gated by deterministic tor-route policy and fallback flags
+  [x] Add deterministic degraded mode when Tor is not reachable (no uncontrolled clearnet fallback by default).
+      - runtime exposes deterministic degraded state and keeps fallback disabled unless explicitly allowed
+  [x] Add Tor-first P2P transport mode (outbound via Tor SOCKS, inbound via onion service).
+      - runtime status exposes tor-required/reachable/degraded, fallback policy, and onion-service activity
+  [x] Auto-start managed Tor runtime in Tor-required mode (if tor binary is available) and wait for bootstrap.
+      - managed Tor bootstrap is attempted automatically under tor-required policy before route evaluation
+  [x] Expose Tor route policy details in `node.status` and `naan.status`.
+      - status now includes `torRequired`, `torReachable`, `torManaged`, `torDegraded`, `routeMode`, `clearnetFallbackAllowed`, `p2pFallbackAllowed`, and route allow flags
+  [x] Enforce fail-closed routing for remote model traffic in Tor-required mode.
+      - `model.remote.rent` and remote `ai.complete` return `tor_fail_closed_remote_model` when P2P discovery is blocked by route policy
+
+Mining observability
+  [x] Expose current block hashing status and work summary in AI Mining (NAAN).
+      - Network & Mining page now renders deterministic hashing status, target summary, attempts(last/total), last solved time, and candidate hash
+  [x] Ensure no keys/seeds are printed as part of mining diagnostics.
+      - NAAN payloads and observability artifacts are sanitized through deterministic secret redaction/block gates
+
+Logs & audit
+  [x] Implement a structured event stream for agent actions (sanitized fields only).
+      - runtime emits structured security/audit events with sanitized payloads and policy hashes
+  [x] Add TUI log viewer with pagination and category filtering.
+      - Attached Agent page includes scrollable event log with category filters (`all/tor/pipeline/security/reward/runtime`)
+  [x] Add timeline/notification feed in AI Mining (NAAN) (rewards, Tor, quarantine, submit/finalize).
+      - Attached Agent and Observatory screens provide read-only timeline feed for runtime and signed artifact events
+  [x] Add deterministic reward visibility fields for submitted drafts.
+      - pipeline and status payloads expose `expectedAcceptanceRewardAtoms` and `acceptanceRewardCredited` with deterministic rollups in `naan.status`
+
+Tests
+  [x] Unit tests for navigation changes (key mapping, screen routing).
+      - `tests/test_primary_ui_navigation.cpp`
+  [x] Unit tests verifying chat has no routing toggles and displays status strip.
+      - `tests/test_primary_ui_chat_status.cpp`
+  [x] Unit tests for Tor-required degraded mode (deterministic).
+      - `tests/test_tor_route_policy.cpp`
+  [x] Unit tests for Tor onion-service config defaults/overrides/bounds.
+      - `tests/test_tor_onion_service_policy.cpp`
+  [x] Golden snapshot tests for AI Mining (NAAN) status rendering (bounded width).
+      - `tests/test_primary_ui_snapshot.cpp`
+
+Release gates
+  [x] Green CI preflight passed locally (Linux/macOS + Windows-profile flags); run full GitHub matrix (incl. Docker) on push.
+      - local default profile (`BUILD_TUI=ON`) and windows-profile approximation (`BUILD_TUI=OFF`, `BUILD_IDE=OFF`) both build + test green; note: `USE_SECP256K1=OFF` is no longer supported by this codebase
+  [x] No secret leakage tests passing.
+      - security gate suite passed locally in both preflight profiles: `ImplantCompatibilityTests|WebExtractionRiskTests|WebConnectorAuditTests|AgentCoordinationTests|NaanAdversarialTests|NaanIntegrationTests|NaanRecoveryTests`
+  [x] Determinism replay suite passes (repeat-run diff gate).
+      - replay output diff gate passed in both preflight profiles (`test_determinism_replay` run twice, zero diff)
+  [x] Clean repository state (no build artifacts committed).
+      - no build artifacts found outside dedicated build directories (`build*`)
+
+Network scale hardening (Agent 6 priority slice)
+  [x] Add deterministic adaptive peer admission controls with bounded inbound/outbound budgets.
+      - `network::ScalePolicy` and runtime admission logic now enforce deterministic inbound/outbound limits with deterministic eviction ordering
+  [x] Add per-IP and per-subnet quotas for connection flood and Sybil pressure reduction.
+      - runtime now applies bounded `maxConnectionsPerIp` and `maxConnectionsPerSubnet` controls for inbound and outbound admission
+  [x] Add overload mode with deterministic entry/exit thresholds and automatic throttling.
+      - network runtime now tracks pressure transitions and enters/exits overload mode using configured peer/utilization thresholds
+  [x] Add DoS controls with token buckets, malformed payload penalties, and decay-based temporary bans.
+      - per-peer token buckets and deterministic decay penalties now gate inbound message processing and ban duration
+  [x] Add bounded backpressure for inventory/getdata flow under heavy fanout.
+      - inventory fanout uses deterministic subset routing and overload-aware caps with dropped-item counters
+  [x] Add deterministic consensus vote dedup window and bounded dedup memory.
+      - PoE vote handling now uses bounded dedup sets and deterministic eviction for old entries
+  [x] Add operator-facing Network Health panel fields for pressure/overload/queue/ban/reject/lag telemetry.
+      - `node.status`, `naan.status`, and TUI Network & Mining panel now expose network health counters and backpressure metrics
+  [x] Add bootstrap seed health rotation and quarantine of unstable seeds.
+      - discovery now tracks per-seed health score, failure timestamps, quarantine TTL, and active seed rotation order
+  [x] Add deterministic stress tests for 1k/5k/10k admission scenarios.
+      - `tests/test_network_scale_policy.cpp` validates deterministic outcomes and quota invariants under synthetic high-node loads
+
+
+════════════════════════════════════════════════════════════════════════════════
+                         IMPLEMENTATION LOG (EN-US)
+════════════════════════════════════════════════════════════════════════════════
+
+- Added deterministic Tor route policy helper APIs:
+  - `include/core/tor_route_policy.h`
+  - `src/core/tor_route_policy.cpp`
+  - Covers route mode, degraded mode, web/onion/P2P gating, and onion service port normalization.
+
+- Integrated Tor policy evaluation into runtime paths in `src/main.cpp`:
+  - Attached-agent route mode reporting.
+  - Connector/fetch route gating.
+  - Tor-required degraded behavior.
+  - Onion service virtual/target port defaults/override bounds.
+  - `node.status` and `naan.status` now include explicit Tor route policy fields.
+  - Remote-model flows fail closed when Tor-required routing disallows outbound P2P discovery.
+
+- Extended deterministic NAAN reward observability in `src/main.cpp` and pipeline types:
+  - `draft.submit_batch` output now includes `expectedAcceptanceRewardAtoms` and `acceptanceRewardCredited`.
+  - NAAN pipeline audit payload includes `rewardVisibility` items for submitted drafts.
+  - `naan.status` exposes deterministic reward counters: observed/finalized/credited submissions and expected/credited atoms.
+
+- Added sanitized in-memory AI Mining event stream for UI:
+  - Runtime audit events are mirrored into a bounded UI event ring.
+  - TUI receives structured event snapshots via `updateAgentEvents(...)`.
+
+- Added primary UI helper module for deterministic rendering/routing:
+  - `include/tui/primary_ui_spec.h`
+  - `src/tui/primary_ui_spec.cpp`
+  - Dashboard key routing, AI Mining page routing, AI Query status-strip rendering, and overview snapshot rendering.
+
+- Updated TUI primary surfaces in `src/tui/tui.cpp`:
+  - Dashboard limited to `A`, `3`, `Q`.
+  - AI Query shows read-only Tor/Onion/Clearnet/Agent status strip + local model info.
+  - AI Query input uses `Enter/C/X/Esc` behavior without routing toggle controls.
+  - AI Mining page navigation now uses deterministic routing helper for key mapping.
+
+- Added new tests and wired into `tests/CMakeLists.txt`:
+  - `test_primary_ui_navigation.cpp`
+  - `test_primary_ui_chat_status.cpp`
+  - `test_tor_route_policy.cpp`
+  - `test_tor_onion_service_policy.cpp`
+  - `test_primary_ui_snapshot.cpp`
+
+- Added cross-profile build compatibility for UI policy tests:
+  - `CMakeLists.txt` now always includes `src/tui/primary_ui_spec.cpp` in `synapsed_core`
+    when `BUILD_TUI=OFF` (windows-profile flags) so primary UI policy symbols stay linkable.
+
+- Added deterministic network scale policy and runtime integration:
+  - `include/network/scale_policy.h`
+  - `src/network/scale_policy.cpp`
+  - `include/network/network.h`
+  - `src/network/network.cpp`
+  - `include/network/discovery.h`
+  - `src/network/discovery.cpp`
+  - `src/main.cpp`
+  - `include/tui/tui.h`
+  - `src/tui/tui.cpp`
+  - Implemented adaptive peer admission, deterministic eviction order, per-IP/subnet quotas, token-bucket abuse controls, decay-based temporary bans, overload mode transitions, bounded inv/getdata backpressure, and deterministic vote dedup bounds.
+
+- Added deterministic scale and discovery hardening tests:
+  - `tests/test_network_scale_policy.cpp`
+  - `tests/test_peer_discovery.cpp` (bootstrap quarantine + recovery assertions)
+  - `tests/CMakeLists.txt`
+
+- Build and runtime verification:
+  - Configure + build: success.
+  - `ctest --output-on-failure -j8`: 230/230 passed.
+  - Runtime check: daemon start + RPC status confirmed with isolated temp datadir.

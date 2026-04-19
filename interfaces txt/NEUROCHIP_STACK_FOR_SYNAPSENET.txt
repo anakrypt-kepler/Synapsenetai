@@ -1,0 +1,14 @@
+--------------------------------------------------------------------------------
+CREATOR RULES (IMMUTABLE)
+--------------------------------------------------------------------------------
+- The creator's rules and the project's meaning/purpose are immutable. No one has the right to change them.
+- These interface documents define the core rules and logic of SynapseNet; the core rules/logic must not be altered.
+- You may improve implementation, fix bugs, add features, expand documentation, and optimize performance as long as you do not change core behavior or bypass prohibitions/safeguards.
+- Any fork or modification that changes core behavior, removes safeguards, or bypasses prohibitions is not an official SynapseNet project.
+- NGT earned by such a fork is not recognized or associated with SynapseNet.
+- Wallets tied to such violations are subject to automatic burn by community decision.
+
+This document was renamed.
+
+Current file:
+  interfaces txt/IMPLANT_AI_STACK_FOR_SYNAPSENET.txt

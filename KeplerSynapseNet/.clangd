@@ -1,0 +1,27 @@
+CompileFlags:
+  CompilationDatabase: build
+  Add:
+    - -std=c++17
+    - -Iinclude
+    - -Isrc
+    - -Ithird_party/llama.cpp/include
+    - -Ithird_party/llama.cpp/vendor
+    - -Ithird_party/llama.cpp/vendor/nlohmann
+    - -DSYNAPSE_BUILD_TUI=1
+    - -DSYNAPSE_HAVE_SQLITE3=1
+    - -DSYNAPSE_USE_SECP256K1=1
+Diagnostics:
+  UnusedIncludes: None
+  ClangTidy:
+    Remove:
+      - readability-*
+      - modernize-*
+      - cppcoreguidelines-*
+      - google-*
+      - fuchsia-*
+      - llvm-*
+      - hicpp-*
+      - abseil-*
+      - android-*
+      - objc-*
+      - linuxkernel-*

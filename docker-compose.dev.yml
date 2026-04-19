@@ -1,0 +1,6 @@
+services:
+  synapsenet:
+    environment:
+      SYNAPSENET_NAAN_DISABLE_DUPLICATE_GATES: "true"
+      SYNAPSENET_POE_NOVELTY_BANDS: "0"
+      SYNAPSENET_POE_ALLOW_SELF_BOOTSTRAP: "true"

@@ -1,0 +1,339 @@
+════════════════════════════════════════════════════════════════════════════════
+                      IMPLANT AI STACK FOR SYNAPSENET (DRAFT)
+════════════════════════════════════════════════════════════════════════════════
+
+--------------------------------------------------------------------------------
+CREATOR RULES (IMMUTABLE)
+--------------------------------------------------------------------------------
+- The creator's rules and the project's meaning/purpose are immutable. No one has the right to change them.
+- These interface documents define the core rules and logic of SynapseNet; the core rules/logic must not be altered.
+- You may improve implementation, fix bugs, add features, expand documentation, and optimize performance as long as you do not change core behavior or bypass prohibitions/safeguards.
+- Any fork or modification that changes core behavior, removes safeguards, or bypasses prohibitions is not an official SynapseNet project.
+- NGT earned by such a fork is not recognized or associated with SynapseNet.
+- Wallets tied to such violations are subject to automatic burn by community decision.
+
+Snapshot: February 2026
+Status: Design draft with implemented v0.2 runtime baseline (UpdateManifest + detached signer governance thresholds + HAL v1 + Intent v1 + Permission model v1 + safety-gated staged rollout RPCs)
+
+Goal:
+  Make SynapseNet compatible with future consumer implant-AI stacks while keeping
+  core principles:
+    • local-first by default
+    • cryptography-backed integrity
+    • deterministic consensus (PoE) for network rules
+    • privacy boundaries between user, device, and network
+
+Implemented building blocks (v0.2 baseline):
+  • Content-addressed UpdateManifest with deterministic hashing + signature verification:
+      - KeplerSynapseNet/include/core/update_bundle.h
+      - KeplerSynapseNet/src/core/update_bundle.cpp
+  • Update installer governance policy (trusted signer allowlist + detached signer threshold) + inventory + staged install planning:
+      - KeplerSynapseNet/include/core/update_installer.h
+      - KeplerSynapseNet/src/core/update_installer.cpp
+  • Implant compatibility validators:
+      - HAL v1 framing metadata (capabilities, sizes, protocol range)
+      - Intent schema v1 + Permission model v1 (default deny)
+      - KeplerSynapseNet/include/core/implant_compatibility.h
+      - KeplerSynapseNet/src/core/implant_compatibility.cpp
+  • Spec reference:
+      - interfaces txt/V0_2_RUNTIME_UPDATE_IMPLANT_SPEC.txt
+
+
+════════════════════════════════════════════════════════════════════════════════
+                               3-LAYER MODEL
+════════════════════════════════════════════════════════════════════════════════
+
+1) Implant (cheap standardized implant module)
+  Role:
+    • sensing + digitization + compression
+    • minimal on-chip processing
+    • ultra-low-power wireless link to a local hub
+    • passive charging via pad/band (vendor-specific)
+
+  Design constraints:
+    • multiple vendors, one interoperable protocol
+    • strong hardware identity + attestation (optional, later)
+    • never store long-term personal models on the implant
+
+  Analogy:
+    • a smartphone camera sensor: capture + encode, not “meaning”
+
+
+2) Local Hub (phone / wearable / dedicated device)
+  Role:
+    • real-time decoding of raw neural signals into high-level intents
+      (cursor move, text entry, app command, motor intent, etc.)
+    • personalization: the user’s “brain map” lives here (local-only)
+    • caching + offline operation (basic control works without network)
+    • encryption + policy enforcement before any network interaction
+
+  Core idea:
+    • the hub is the first and strongest privacy boundary
+    • raw signals never leave the hub by default
+
+  Analogy:
+    • the mobile OS: device drivers + personalization + permissions
+
+
+3) SynapseNet Network Plane (decentralized, cryptography-backed)
+  Role (what the network can do safely):
+    • distribute open-source neuro “apps” (drivers, decoders, UI modules)
+    • distribute signed model artifacts (non-consensus)
+    • host a knowledge base of protocols, calibration methods, safety guides
+    • coordinate research tasks via node-attached autonomous agents (NAAN)
+
+  Role (what remains off-consensus):
+    • training ML models is not deterministic; it must not be consensus
+    • network consensus only governs integrity and distribution rules
+
+  Analogy:
+    • an “app store + research network”, without a central corporation
+
+
+════════════════════════════════════════════════════════════════════════════════
+                   IMPLANT MODALITIES (2026 SNAPSHOT)
+════════════════════════════════════════════════════════════════════════════════
+
+The implant hardware landscape is heterogeneous. The kernel must not assume a
+single sensor type. It must support multiple modalities with different:
+  • channel counts
+  • sampling rates and bandwidth
+  • signal semantics (spikes vs field potentials vs intents)
+  • power and thermals
+  • surgical invasiveness and long-term stability profiles
+
+Common categories (examples; not endorsements):
+
+1) Intracortical penetrating arrays (spike-level)
+  • Utah Electrode Array:
+      - up to 96 electrodes per array; multi-array systems up to 1024 electrodes [R1]
+  • Thread-based high-channel arrays:
+      - example: 3,072 electrodes on 96 threads reported in literature [R3]
+  • High-density microelectrode arrays:
+      - example: 421 microelectrodes in a 2 mm x 2 mm array [R2]
+
+2) Cortical surface arrays (ECoG / micro-ECoG)
+  • Surface electrodes trade some spatial resolution for lower invasiveness.
+  • Thin-film high-density ECoG designs target 1,000+ electrode counts.
+      - example: a 1,024-electrode cortical surface array [R4]
+  • Signals depend on placement and anatomy:
+      - dura can affect macro- and micro-ECoG recordings [R6]
+
+3) Endovascular electrode arrays (stent-electrode)
+  • Electrodes mounted on a stent and delivered via vasculature.
+  • Designed to record from cortical regions without open brain surgery.
+      - example: a “stentrode” implant concept [R5]
+
+4) Peripheral nerve interfaces
+  • Cuff electrodes and microneedle cuffs can interface with peripheral nerves. [R10]
+  • Useful for prosthetics and motor intent pathways.
+
+5) Neuromodulation implants (DBS-class systems)
+  • Primarily stimulation devices, sometimes with sensing telemetry.
+  • Useful as a “control + sensing” class distinct from pure recording BCIs.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                     SIGNALS, BANDWIDTH, AND WHY HUBS EXIST
+════════════════════════════════════════════════════════════════════════════════
+
+A generic bandwidth model:
+  bandwidth_bits_per_sec = channels * sample_rate_hz * bits_per_sample
+
+Typical signal bands:
+  • intracortical spiking: often recorded at ~30 kHz per channel in research [R7]
+  • ECoG: ~1 kHz sampling is common in datasets for many use cases [R8]
+  • intents (decoded commands): tens to hundreds of Hz, very low bandwidth
+
+Compression reality:
+  • neural spikes are sparse events (good for compression) [R9]
+  • practical systems often extract features on-device to reduce uplink cost
+
+Example bandwidths (illustrative, not device-specific):
+  • 1024 channels * 30,000 Hz * 10 bits ≈ 307 Mb/s (raw)
+  • 1024 channels * 1,000 Hz * 16 bits ≈ 16.4 Mb/s (raw)
+
+This is why the Local Hub is mandatory:
+  • it performs personalization and decoding close to the sensor
+  • it enforces privacy defaults (raw signals do not leave the hub)
+  • it can opportunistically upload only the minimal data needed (opt-in)
+
+
+════════════════════════════════════════════════════════════════════════════════
+                    MATHEMATICAL NOTES & CODE ANCHORS (IMPLANT)
+════════════════════════════════════════════════════════════════════════════════
+
+Bandwidth model (restated):
+  • For any implant modality, raw link bandwidth is:
+      bandwidth_bits_per_sec = channels * sample_rate_hz * bits_per_sample
+
+    Example:
+      channels        = 1024
+      sample_rate_hz  = 30,000
+      bits_per_sample = 10
+
+      bandwidth_bits_per_sec = 1024 * 30,000 * 10 ≈ 307,200,000 bits/s
+
+Data export policy (formalized):
+  • Let:
+      R = raw neural samples
+      F = derived features
+      I = high-level intents
+
+    Default policy can be summarized as:
+      export(R) = FORBIDDEN by default
+      export(F) = ALLOWED only with explicit opt-in and minimization
+      export(I) = ALLOWED if user opts in (for interoperability / debugging)
+
+Relationship to existing deterministic code:
+  • The implant stack is currently a design-time specification in this repo:
+      - interfaces txt/IMPLANT_AI_STACK_FOR_SYNAPSENET.txt
+
+  • Deterministic content addressing and update distribution are already
+    implemented for knowledge and software in:
+      - Knowledge / PoE objects:
+          KeplerSynapseNet/src/core/poe_v1_objects.cpp
+      - PoE engine (epochs, rewards, similarity index):
+          KeplerSynapseNet/src/core/poe_v1_engine.cpp
+
+    These primitives (contentId, submitId, simhash buckets, UpdateBundles)
+    are now partially reused by the v0.2 compatibility layer:
+      - Implant HAL v1 framing validation
+      - Intent schema v1 + permission checks (default deny)
+      - Signed UpdateManifests + distribution policy (trusted signer allowlist + detached signer approvals threshold)
+      - Safety pipeline gates before implant commit, with machine-readable stage reasons
+      - Status telemetry with policy hashes and readiness reasons in update/implant state RPCs
+
+    Remaining work:
+      - End-to-end rollout + rollback integration with real device/hub runtimes
+
+
+════════════════════════════════════════════════════════════════════════════════
+                   WHAT GOES INTO THE SYNAPSENET KERNEL
+════════════════════════════════════════════════════════════════════════════════
+
+The SynapseNet kernel should provide a stable interface that all implant vendors
+and hub implementations can target.
+
+Kernel responsibilities (planned):
+  • Implant Hardware Abstraction Layer (HAL)
+      - device identity, capability discovery, channel map, sample formats
+      - standardized stream framing (timestamping, loss accounting, compression)
+      - device-driver sandbox boundary (kernel APIs, no arbitrary host access)
+  • Intent interface
+      - a stable schema for decoded intents (not raw neural data)
+  • Permission and policy enforcement
+      - default deny for raw signal export
+      - explicit opt-in for any derived feature sharing
+  • Cryptography and auditability
+      - signed artifacts, immutable logs, replayable decoding/test traces
+  • Open distribution of neuro apps and drivers
+      - content-addressed UpdateBundles + signed manifests + rollback
+      - staged rollout (canary → wide) with deterministic verification steps
+  • Deterministic test vectors
+      - device protocol decode tests
+      - golden vectors for compression/decompression
+      - reproducible “failure seeds” for fuzzing and crash replay
+  • Compatibility tracking
+      - stable versioning for implant↔hub protocol and intent schemas
+      - explicit deprecation windows (no silent breaking changes)
+
+NAAN integration:
+  • node-attached agents generate patches + tests and propose releases
+  • nodes only accept signed manifests and only install after local verification
+
+
+════════════════════════════════════════════════════════════════════════════════
+                                  REFERENCES
+════════════════════════════════════════════════════════════════════════════════
+
+• Blackrock Neurotech — Utah Electrode Array (UEA) overview
+• Paradromics — Connexus Direct Data Interface (DDI) overview
+• Neuralink (2019) — “An integrated brain-machine interface platform with thousands of channels”
+• Precision Neuroscience — cortical surface array (1,024 electrodes)
+• Synchron — Stentrode platform overview
+• PubMed: effect of dura on macro- and micro-electrocorticographic recordings
+• BrainGate: decoding intracortical spiking activity sampled at 30 kHz
+• AJILE12 / ECoG datasets: 1 kHz sampling and ECoG characteristics
+• Bioelectronic Medicine (2023): intracortical spiking activity characteristics (sparsity)
+• Microsystems & Nanoengineering (2025): microneedle cuff electrode array
+• Nature Biotechnology (2024): BCI review and modality landscape
+
+Reference links:
+  [R1] https://blackrockneurotech.com/products/utah-array/
+  [R2] https://paradromics.com/connexus-direct-data-interface/
+  [R3] https://www.jmir.org/2019/10/e16194/
+  [R4] https://www.precisionneuroscience.com/technology
+  [R5] https://synchron.com/the-stentrode
+  [R6] https://pubmed.ncbi.nlm.nih.gov/24794956/
+  [R7] https://www.braingate.org/publications/decoding-motor-intent-from-intracortical-spiking-activity-in-a-person-with-tetraplegia/
+  [R8] https://www.frontiersin.org/journals/neuroscience/articles/10.3389/fnins.2022.817725/full
+  [R9] https://bioelecmed.biomedcentral.com/articles/10.1186/s42234-023-00124-z
+  [R10] https://www.nature.com/articles/s41378-025-00805-2
+  [R11] https://www.nature.com/articles/s41587-024-02195-x
+
+════════════════════════════════════════════════════════════════════════════════
+                         DATA TYPES + PRIVACY DEFAULTS
+════════════════════════════════════════════════════════════════════════════════
+
+Data categories:
+  • raw neural samples (highest sensitivity)
+  • derived features (still sensitive)
+  • high-level intents (lower sensitivity)
+  • calibration metadata (medium sensitivity)
+  • public artifacts (protocol specs, open datasets, software releases)
+
+Default policy:
+  • raw samples never leave the hub
+  • derived features leave only with explicit opt-in and strict minimization
+  • intents can be shared for device interoperability and debugging if the user
+    opts in
+
+Safety mechanisms (planned):
+  • local encryption at rest
+  • end-to-end encryption for any uplink
+  • signed artifacts and immutable audit logs
+  • sandboxed connectors for any web/onion research tooling
+
+
+════════════════════════════════════════════════════════════════════════════════
+                       NEURO “APP STORE” WITHOUT THE CLOUD
+════════════════════════════════════════════════════════════════════════════════
+
+Instead of a centralized cloud platform, SynapseNet can provide:
+  • signed UpdateBundles for device drivers and neuro apps
+  • content-addressed distribution over P2P (inv/getdata)
+  • deterministic verification rules + rollback
+
+Governance model:
+  • kernel rules stay deterministic and strict
+  • app-plane releases are signed and can be staged (canary → wide)
+  • node-attached agents can propose PRs, tests, and releases, but cannot deploy
+    unilaterally
+
+
+════════════════════════════════════════════════════════════════════════════════
+                       WHERE NAAN FITS (NETWORK BRAIN)
+════════════════════════════════════════════════════════════════════════════════
+
+NAAN roles in the neuro stack:
+  • monitor protocol changes across vendors and propose compatibility updates
+  • generate tests and validation suites for decoders/drivers
+  • detect unsafe patterns and publish mitigations
+  • curate knowledge entries: safety, calibration, best practices
+
+Human interaction:
+  • humans can watch agent work in a read-only observatory
+  • no prompts, no steering, no direct control over agent coordination
+
+
+════════════════════════════════════════════════════════════════════════════════
+                                OPEN QUESTIONS
+════════════════════════════════════════════════════════════════════════════════
+
+• What is the minimal interoperable implant ↔ hub protocol (bandwidth, codecs)?
+• What is the permission model for intents vs features vs raw signals?
+• Can we do opt-in federated learning with secure aggregation without exposing
+  raw signals?
+• What are the safety requirements for “neuro apps” (formal permissions, audits)?
+• How do we prevent malicious decoders/drivers from coercing unsafe outputs?

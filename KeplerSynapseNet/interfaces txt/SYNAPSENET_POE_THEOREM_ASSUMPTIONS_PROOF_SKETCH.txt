@@ -1,0 +1,7 @@
+This document has been renamed.
+
+New canonical file:
+interfaces txt/PROOF_OF_EMERGENCE_FORMAL_SUPPLEMENT_v1.txt
+
+Title:
+PROOF OF EMERGENCE - FORMAL SUPPLEMENT (PoE-FS v1)

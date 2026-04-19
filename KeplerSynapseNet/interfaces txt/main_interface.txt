@@ -1,0 +1,1243 @@
+================================================================================
+                         SYNAPSENET FULL INTERFACE
+================================================================================
+--------------------------------------------------------------------------------
+CREATOR RULES (IMMUTABLE)
+--------------------------------------------------------------------------------
+- The creator's rules and the project's meaning/purpose are immutable. No one has the right to change them.
+- These interface documents define the core rules and logic of SynapseNet; the core rules/logic must not be altered.
+- You may improve implementation, fix bugs, add features, expand documentation, and optimize performance as long as you do not change core behavior or bypass prohibitions/safeguards.
+- Any fork or modification that changes core behavior, removes safeguards, or bypasses prohibitions is not an official SynapseNet project.
+- NGT earned by such a fork is not recognized or associated with SynapseNet.
+- Wallets tied to such violations are subject to automatic burn by community decision.
+
+IMPLEMENTATION STATUS (Feb 2026)
+────────────────────────────────
+This file is the “ideal UI” spec. The repo currently ships an ncurses TUI that
+follows this flow, but some screens/values are still best-effort examples.
+
+How to run (current repo):
+  $ TERM=xterm-256color ./KeplerSynapseNet/build/synapsed
+
+Key bindings (current TUI):
+  [Space] continue boot
+  [1-9] dashboard shortcuts (see menu)
+  [0] Agent Network (observatory)
+  [A] Attached Agent status
+  [Enter] confirm / send
+  [Esc] back
+  [I] launch Terminal IDE (from [9] screen)
+  [Tab/H+P/Ctrl+P/F2] model panel
+  [4/H+D/Ctrl+D/F4] download model
+  [5/H+W/Ctrl+W/F5] toggle web injection (chat)
+  [6/H+O/Ctrl+O/F6] toggle onion sources (chat)
+  [7/H+T/Ctrl+T/F7] toggle Tor for clearnet (chat)
+  [8/H+I] Tor install/managed runtime helpers
+  [PgUp/PgDn] scroll chat
+  [F3/H+C] clear chat
+  [F8/H+X] stop generation
+
+What works now:
+  • Wallet create (24-word seed shown) + wallet.dat under ~/.synapsenet/
+  • Local GGUF model load + streaming chat output
+  • Model inference is safe for big prompts (chunked decode to n_batch + prompt truncation; prevents ggml asserts)
+  • Model download with resume (.part) + progress panel + sleep inhibition
+  • Single-instance lock is robust (fcntl lock; no stale locks after downloads)
+  • TUI-safe logging (console logging disabled while ncurses is active)
+  • First-run Web/Tor/Onion opt-in prompt (Screen::WEB_PROMPT) saved to synapsenet.conf
+  • PoE v1 deterministic knowledge: PoW gate + votes + finalize + reward message
+  • PoE v1 CODE contributions: Dashboard [9] → “IDE / Code” list + submit patch file (C → submit form, F2 to submit)
+  • Optional stake-based PoE validators: `--poe-validator-mode stake --poe-min-stake <NGT>`
+  • P2P PoE sync (entries + votes) uses paging (not “last N”)
+  • Ledger append + block mining/sync (deadlock fixes; stable on multi-node dev)
+  • `--reset-ngt` wipes local transfer DB (fixes wrong balances)
+  • Web 4.0 mode (philosophy): chat with a local agent + optional clearnet/onion context injection (F5/F6/F7)
+  • Model routing foundation for Synapse IDE: RPC/CLI endpoints (model.* + ai.*) for local completions
+  • RPC JSON-RPC parsing is robust (params can contain braces/JSON/tool schemas without breaking)
+  • Synapse IDE prototype: VS Code extension (ide/synapsenet-vscode) calls synapsed RPC for ai.complete + poe.submit_code
+  • Synapse IDE GitHub Quests parity in VS Code: configure repo/token/min PoW, select/clear active quest, status bar indicator (Q#), checkout branch, fork repo, commit helper, and PR creation with PoE submitId linkage
+  • Synapse IDE chat panel: VS Code “SynapseNet: Open Chat” (optional Web4 injection: clearnet/onion/Tor)
+  • Synapse IDE patch suggestions: unified diff preview/apply (VS Code extension: “Suggest Patch”)
+  • Terminal Synapse IDE (synapseide): `KeplerSynapseNet/crush-main` → build target `synapseide`
+      - local-only provider (synapsenet) talks to synapsed RPC (ai.complete + model.*)
+      - model picker lists local GGUF via synapsed RPC model.list + ~/.synapsenet/models fallback (filters ggml-vocab-* and tiny files)
+      - launch from TUI: Dashboard [9] → Code screen → [I] Launch IDE
+      - isolated threads: /tangent <title> opens a child thread, /up returns to parent
+      - patch mode: /patch <instruction> requests a unified diff and opens Apply Patch (preview/apply/skip/submit; supports multi-file)
+      - remote rentals (opt-in): Commands → Remote Rentals (rent/disable)
+      - Code: KeplerSynapseNet/crush-main/internal/tui/components/dialogs/models/list.go lines 109-375 | KeplerSynapseNet/crush-main/internal/config/load.go lines 448-465
+      - Code: KeplerSynapseNet/crush-main/internal/tui/page/chat/chat.go lines 375-660 | KeplerSynapseNet/crush-main/internal/session/session.go lines 45-98 | KeplerSynapseNet/crush-main/internal/patch/patch.go lines 37-196 | KeplerSynapseNet/crush-main/internal/tui/components/dialogs/patch/keys.go lines 7-73 | KeplerSynapseNet/crush-main/internal/tui/components/dialogs/patch/patch.go lines 77-664 | KeplerSynapseNet/crush-main/internal/tui/components/dialogs/remote/keys.go lines 7-77 | KeplerSynapseNet/crush-main/internal/tui/components/dialogs/remote/remote.go lines 75-440 | KeplerSynapseNet/crush-main/internal/tui/components/dialogs/commands/commands.go lines 401-475 | KeplerSynapseNet/crush-main/internal/agent/synapsenet/provider.go lines 244-314 | KeplerSynapseNet/crush-main/internal/config/config.go lines 190-212
+  • Peer Discovery: Real peer exchange via GETPEERS/PEERS messages, DNS seed resolution, network size estimation, connected peers tracking, global network statistics
+  • TUI/UX improvements: Chat autoscroll (auto-scrolls to new messages, disables on manual scroll), operation status tracking (Submitting/Validating/Finalized), enhanced reward notifications with detailed explanations (reason, validator count, epoch info)
+  • Attached Agent (NAAN) baseline: deterministic scheduler + budgets + connector service + read-only observatory surfaces (TUI + RPC)
+
+What is still “spec” / not wired by default:
+  ✓ Real peer discovery/global stats (peer exchange, DNS seeds, network statistics) — works by default if `seed*.synapsenet.io` resolve and at least one seed node accepts inbound P2P; hostnames are supported in connect/seednode/connectNodes.
+  • Web/onion search injection is optional (5/6/7 or H+W/H+O/H+T) and depends on Tor for onion
+  ✓ Marketplace/paid modes: payment processing wired (NGT tx verification) + market RPC (listings/stats)
+  • Synapse IDE advanced features: provider privacy isolation for remote sessions is still TODO; GitHub Quests workflow is live in both terminal synapseide and VS Code extension
+  • PoE formal whitepaper appendix (Theorem + Assumptions + Proof sketch): interfaces txt/PROOF_OF_EMERGENCE_FORMAL_SUPPLEMENT_v1.txt
+  • NAAN deeper policy + release gates are still evolving: interfaces txt/NODE_ATTACHED_AGENT_NETWORK.txt
+  • Implant AI stack support (implant → hub → network plane) is still a spec (planned): interfaces txt/IMPLANT_AI_STACK_FOR_SYNAPSENET.txt
+
+Future (planned): SYNAPSE IDE (AI CODING + NGT)
+  • A code editor + AI assistant powered by local GGUF models (default).
+  • “Code contributions” are submitted as PoE v1 entries (ContentType::CODE) and can earn NGT after finalize/epoch.
+  • Optional: rent remote GPU/model slots from other nodes (privacy is opt-in; provider-blind requires confidential computing / TEE).
+  • Terminal Synapse IDE (Warp-like UX): extend synapseide with branded splash, fuzzy search, and PoE CODE submit from patch mode.
+  • GitHub Quests: workflow is live in terminal synapseide and VS Code (quest selection/fork/branch/commit/PR + PoE CODE submitId checks).
+
+Execution Notes (US English, Feb 23, 2026):
+  • Implemented VS Code GitHub Quests parity commands: Quest Configure, Quest Select Active Issue, Quest Active, Quest Clear Active, Quest Checkout Branch, Quest Fork Repo, Quest Commit, Quest Create PR.
+  • Added persistent VS Code quest settings: `synapsenet.questRepo`, `synapsenet.questToken`, `synapsenet.questMinSubmitPowBits`.
+  • Added active quest visibility in VS Code status bar (`Q#<issue>`) with quick actions (open/copy URL, clear active quest).
+  • Added deterministic quest PR gating in VS Code: submitId leading-zero PoW validation + `poe.fetch_code` verification + rate-limit windows for fork/PR actions.
+  • Added deterministic quest-flow verifier script: `ide/synapsenet-vscode/scripts/verify_quest_flow.sh` (issue -> branch -> commit metadata -> submitId PoW/RPC checks -> optional PR URL format check).
+  • Added operator recovery docs for VS Code quest UX failures: missing token, invalid submitId/PoW/RPC miss, and cooldown states.
+  • Reconciled spec vs implementation for Synapse IDE remote workflow.
+  • Implemented VS Code extension commands: Remote Offers, Remote Rent Model, Remote End Session.
+  • Added persistent remote session settings: `synapsenet.remoteSessionId` and `synapsenet.remoteUseByDefault`.
+  • Added optional remote session routing to `ai.complete` in insert mode and in chat mode.
+  • Updated VS Code extension manifest + README with the remote workflow.
+  • Build verification: `cmake --build KeplerSynapseNet/build -j8` succeeded.
+  • Test verification: `ctest --output-on-failure -j8` in `KeplerSynapseNet/build` passed (223/223).
+  • Synchronized marketplace/payment status wording across document copies (removed outdated placeholder wording).
+  • Updated GitHub Quests status: terminal synapseide and VS Code parity are both implemented.
+
+
+████████████████████████████████████████████████████████████████████████████████
+                              STARTUP SEQUENCE
+████████████████████████████████████████████████████████████████████████████████
+
+
+[SCREEN 1: BOOT]
+================================================================================
+
+$ TERM=xterm-256color ./KeplerSynapseNet/build/synapsed
+
+  ██████▓██   ██▓ ███▄    █  ▄▄▄       ██▓███    ██████ ▓█████  ███▄    █ ▓█████▄▄▄█████▓
+▒██    ▒ ▒██  ██▒ ██ ▀█   █ ▒████▄    ▓██░  ██▒▒██    ▒ ▓█   ▀  ██ ▀█   █ ▓█   ▀▓  ██▒ ▓▒
+░ ▓██▄    ▒██ ██░▓██  ▀█ ██▒▒██  ▀█▄  ▓██░ ██▓▒░ ▓██▄   ▒███   ▓██  ▀█ ██▒▒███  ▒ ▓██░ ▒░
+  ▒   ██▒ ░ ▐██▓░▓██▒  ▐▌██▒░██▄▄▄▄██ ▒██▄█▓▒ ▒  ▒   ██▒▒▓█  ▄ ▓██▒  ▐▌██▒▒▓█  ▄░ ▓██▓ ░ 
+▒██████▒▒ ░ ██▒▓░▒██░   ▓██░ ▓█   ▓██▒▒██▒ ░  ░▒██████▒▒░▒████▒▒██░   ▓██░░▒████▒ ▒██▒ ░ 
+▒ ▒▓▒ ▒ ░  ██▒▒▒ ░ ▒░   ▒ ▒  ▒▒   ▓▒█░▒▓▒░ ░  ░▒ ▒▓▒ ▒ ░░░ ▒░ ░░ ▒░   ▒ ▒ ░░ ▒░ ░ ▒ ░░   
+░ ░▒  ░ ░▓██ ░▒░ ░ ░░   ░ ▒░  ▒   ▒▒ ░░▒ ░     ░ ░▒  ░ ░ ░ ░  ░░ ░░   ░ ▒░ ░ ░  ░   ░    
+░  ░  ░  ▒ ▒ ░░     ░   ░ ░   ░   ▒   ░░       ░  ░  ░     ░      ░   ░ ░    ░    ░      
+      ░  ░ ░              ░       ░  ░               ░     ░  ░         ░    ░  ░        
+         ░ ░                                                                             
+
+                    A Decentralized Intelligence Network
+                              Version 0.1.0-beta
+                                 by Kepler
+
+  "Satoshi gave us money without banks.
+   I will give you brains without corporations."
+
+                                                    - Kepler
+
+________________________________________________________________________________
+
+
+[SCREEN 2: INITIALIZATION]
+================================================================================
+
+  Initializing SynapseNet Protocol...
+
+  [■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■] 100%
+
+  ✓ Loading configuration...                                          [OK]
+  ✓ Initializing quantum-resistant cryptography...                    [OK]
+  ✓ Loading wallet: syn1qx7f...a3d2                                   [OK]
+  ✓ Starting local AI engine...                                       [OK]
+  ✓ Connecting to Knowledge Network...                                [OK]
+
+________________________________________________________________________________
+
+
+[SCREEN 3: NETWORK DISCOVERY]
+================================================================================
+
+  Discovering peers...
+
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │                                                                        │
+  │  Searching for nodes...                                                │
+  │                                                                        │
+  │  ● Found: node_a82b4f1e (Amsterdam)          ping: 42ms                │
+  │  ● Found: node_c93d7a2b (Tokyo)              ping: 128ms               │
+  │  ● Found: node_d47e8c3f (New York)           ping: 67ms                │
+  │  ● Found: node_e58f9d4a (Singapore)          ping: 156ms               │
+  │  ● Found: node_f69a0e5b (London)             ping: 38ms                │
+  │  ...                                                                   │
+  │                                                                        │
+  │  Connected to 8 peers. Discovering more...                             │
+  │                                                                        │
+  └────────────────────────────────────────────────────────────────────────┘
+
+  Network Status: CONNECTING...
+
+________________________________________________________________________________
+
+
+[SCREEN 4: SYNCING KNOWLEDGE]
+================================================================================
+
+  Synchronizing with Knowledge Network...
+
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │                                                                        │
+  │  KNOWLEDGE CHAIN SYNC                                                  │
+  │  ════════════════════════════════════════════════════════════════      │
+  │                                                                        │
+  │  Network Size:     847.3 GB                                            │
+  │  Your Local Copy:  847.1 GB                                            │
+  │  To Download:      0.2 GB                                              │
+  │                                                                        │
+  │  Progress: [■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■░░░░░] 89%              │
+  │                                                                        │
+  │  Speed: 12.4 MB/s    ETA: 16 seconds                                   │
+  │                                                                        │
+  └────────────────────────────────────────────────────────────────────────┘
+
+  Syncing knowledge entries... 1,847,201 / 1,847,293
+
+________________________________________________________________________________
+
+
+[SCREEN 5: FIRST TIME USER - WELCOME]
+================================================================================
+
+  ╔════════════════════════════════════════════════════════════════════════╗
+  ║                                                                        ║
+  ║                     WELCOME TO SYNAPSENET                              ║
+  ║                                                                        ║
+  ║  This appears to be your first time running SynapseNet.                ║
+  ║                                                                        ║
+  ║  ┌────────────────────────────────────────────────────────────────┐    ║
+  ║  │                                                                │    ║
+  ║  │  [1] Create New Wallet                                         │    ║
+  ║  │      Generate a new quantum-safe wallet and seed phrase        │    ║
+  ║  │                                                                │    ║
+  ║  │  [2] Import Existing Wallet                                    │    ║
+  ║  │      Restore from seed phrase or private key                   │    ║
+  ║  │                                                                │    ║
+  ║  │  [3] View Documentation                                        │    ║
+  ║  │      Learn about SynapseNet before starting                    │    ║
+  ║  │                                                                │    ║
+  ║  └────────────────────────────────────────────────────────────────┘    ║
+  ║                                                                        ║
+  ║  Select option [1-3]: _                                                ║
+  ║                                                                        ║
+  ╚════════════════════════════════════════════════════════════════════════╝
+
+________________________________________________________________________________
+
+
+[SCREEN 6: WALLET CREATION]
+================================================================================
+
+  CREATING NEW WALLET
+  ═══════════════════
+
+  Generating quantum-resistant keys...
+
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │                                                                        │
+  │  ⚠️  IMPORTANT: SAVE YOUR SEED PHRASE                                  │
+  │                                                                        │
+  │  Your 24-word seed phrase is the ONLY way to recover your wallet.      │
+  │  Write it down on paper. Do NOT store digitally. Do NOT share.         │
+  │                                                                        │
+  │  ┌────────────────────────────────────────────────────────────────┐    │
+  │  │                                                                │    │
+  │  │   1. quantum     7. neural      13. entropy    19. lattice     │    │
+  │  │   2. synapse     8. cipher      14. protocol   20. axiom       │    │
+  │  │   3. network     9. merkle      15. genesis    21. vector      │    │
+  │  │   4. emerge     10. tensor      16. pathway    22. matrix      │    │
+  │  │   5. knowledge  11. beacon      17. vertex     23. origin      │    │
+  │  │   6. collective 12. shard       18. nexus      24. kepler      │    │
+  │  │                                                                │    │
+  │  └────────────────────────────────────────────────────────────────┘    │
+  │                                                                        │
+  │  Have you written down your seed phrase? [y/n]: _                      │
+  │                                                                        │
+  └────────────────────────────────────────────────────────────────────────┘
+
+________________________________________________________________________________
+
+
+[SCREEN 7: WALLET CREATED]
+================================================================================
+
+  ✓ WALLET CREATED SUCCESSFULLY
+
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │                                                                        │
+  │  Your Wallet Address:                                                  │
+  │  ════════════════════════════════════════════════════════════════      │
+  │                                                                        │
+  │  syn1qx7f8c9d2e4a6b3f5g7h9j2k4l6m8n0p1r3s5t7v9w1y3z5a7b9c1d3f5a3d2     │
+  │                                                                        │
+  │  Balance:           0.00 NGT                                           │
+  │  Status:            Active                                             │
+  │  Protection:        Quantum-Resistant (CRYSTALS-Dilithium)             │
+  │                                                                        │
+  │  ────────────────────────────────────────────────────────────────────  │
+  │                                                                        │
+  │  Start earning NGT by:                                                 │
+  │    • Contributing knowledge to the network                             │
+  │    • Validating others' contributions                                  │
+  │    • Keeping your node online                                          │
+  │                                                                        │
+  └────────────────────────────────────────────────────────────────────────┘
+
+  Press [ENTER] to continue to dashboard...
+
+________________________________________________________________________________
+
+
+[SCREEN 8: RETURNING USER - CONNECTED]
+================================================================================
+
+  ✓ SYNAPSENET CONNECTED
+
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │                                                                        │
+  │  Node ID:           node_7f3a9c2d                                      │
+  │  Status:            ● ONLINE                                           │
+  │  Wallet:            syn1qx7f...a3d2                                    │
+  │  Balance:           1,247.83 NGT                                       │
+  │                                                                        │
+  │  ────────────────────────────────────────────────────────────────────  │
+  │                                                                        │
+  │  Network:           12,847 nodes online                                │
+  │  Knowledge Chain:   847.3 GB (synced)                                  │
+  │  Your Contribution: 2,847 entries                                      │
+  │  Quality Score:     94.7%                                              │
+  │                                                                        │
+  │  ────────────────────────────────────────────────────────────────────  │
+  │                                                                        │
+  │  Last Session:      2 hours ago                                        │
+  │  Earned While Away: +12.4 NGT (validation rewards)                     │
+  │                                                                        │
+  └────────────────────────────────────────────────────────────────────────┘
+
+  Loading dashboard...
+
+________________________________________________________________________________
+
+
+
+████████████████████████████████████████████████████████████████████████████████
+                              MAIN DASHBOARD
+████████████████████████████████████████████████████████████████████████████████
+
+================================================================================
+                              SYNAPSENET v0.1 MINING
+                     Fill the Global Knowledge Network Together
+================================================================================
+
+╔═════════════════════════════════════════════════════════════════════════════════════════╗
+║                                                                                         ║
+║                                 _____         _                                         ║
+║                                |  |  |___ ___| |___ ___                                 ║
+║                                |    -| -_| . | | -_|  _|                                ║
+║                                |__|__|___|  _|_|___|_|                                  ║
+║                                          |_|                                            ║
+║                                                                                         ║
+║ ██████▓██   ██▓ ███▄    █  ▄▄▄       ██▓███    ██████ ▓█████  ███▄    █ ▓█████▄▄▄█████▓ ║
+║▒██    ▒ ▒██  ██▒ ██ ▀█   █ ▒████▄    ▓██░  ██▒▒██    ▒ ▓█   ▀  ██ ▀█   █ ▓█   ▀▓  ██▒ ▓▒║
+║░ ▓██▄    ▒██ ██░▓██  ▀█ ██▒▒██  ▀█▄  ▓██░ ██▓▒░ ▓██▄   ▒███   ▓██  ▀█ ██▒▒███  ▒ ▓██░ ▒░║
+║  ▒   ██▒ ░ ▐██▓░▓██▒  ▐▌██▒░██▄▄▄▄██ ▒██▄█▓▒ ▒  ▒   ██▒▒▓█  ▄ ▓██▒  ▐▌██▒▒▓█  ▄░ ▓██▓ ░ ║
+║▒██████▒▒ ░ ██▒▓░▒██░   ▓██░ ▓█   ▓██▒▒██▒ ░  ░▒██████▒▒░▒████▒▒██░   ▓██░░▒████▒ ▒██▒ ░ ║
+║▒ ▒▓▒ ▒ ░  ██▒▒▒ ░ ▒░   ▒ ▒  ▒▒   ▓▒█░▒▓▒░ ░  ░▒ ▒▓▒ ▒ ░░░ ▒░ ░░ ▒░   ▒ ▒ ░░ ▒░ ░ ▒ ░░   ║
+║░ ░▒  ░ ░▓██ ░▒░ ░ ░░   ░ ▒░  ▒   ▒▒ ░░▒ ░     ░ ░▒  ░ ░ ░ ░  ░░ ░░   ░ ▒░ ░ ░  ░   ░    ║
+║░  ░  ░  ▒ ▒ ░░     ░   ░ ░   ░   ▒   ░░       ░  ░  ░     ░      ░   ░ ░    ░    ░      ║
+║      ░  ░ ░              ░       ░  ░               ░     ░  ░         ░    ░  ░        ║
+║         ░ ░                                                                             ║
+║                                                                                         ║
+╚═════════════════════════════════════════════════════════════════════════════════════════╝
+
+--------------------------------------------------------------------------------
+                              NODE STATUS DASHBOARD
+                        ⚠️ [ALPHA DEVNET] Mainnet launch pending
+--------------------------------------------------------------------------------
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  NOTE: Statistics below are ALPHA DEVNET sample metrics and projections. │
+  │  Mainnet launch is pending. Values represent devnet snapshots + modeled  │
+  │  capacity targets, not a public mainnet state.                           │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  [CONNECTION]                          [WALLET]  
+  ┌─────────────────────────────┐       ┌─────────────────────────────┐
+  │ Status:    ● ONLINE         │       │ Address: 0x7f3a...9c2d      │
+  │ Peers:     47 connected     │       │ Balance: 1,247.83 NGT       │
+  │ Uptime:    14d 7h 32m       │       │ Pending: +12.5 NGT          │
+  │ Latency:   23ms             │       │ Total Earned: 8,421.00 NGT  │
+  │ [ALPHA DEVNET SAMPLE]       │       │ [ALPHA DEVNET SAMPLE]       │
+  └─────────────────────────────┘       └─────────────────────────────┘
+
+  [LOCAL AI]                            [CONTRIBUTIONS]
+  ┌─────────────────────────────┐       ┌─────────────────────────────┐
+  │ Model:     llama-7b-synapse │       │ Knowledge Shared: 2,847     │
+  │ Status:    ● ACTIVE         │       │ Validations: 12,493         │
+  │ Memory:    8.2 GB / 16 GB   │       │ Quality Score: 94.7%        │
+  │ Tasks:     Processing...    │       │ Network Rank: #1,247        │
+  │ [DESIGN TARGET]             │       │ [ALPHA DEVNET SAMPLE]       │
+  └─────────────────────────────┘       └─────────────────────────────┘
+
+--------------------------------------------------------------------------------
+                           KNOWLEDGE NETWORK STATUS
+                              [DESIGN TARGETS]
+--------------------------------------------------------------------------------
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  ● SYNCED WITH NETWORK                          Last sync: 2 seconds ago │
+  │                                                                          │
+  │  Global Knowledge Base:    1,847,293 entries    Size: 847.3 GB           │
+  │  Your Local Copy:          1,847,293 entries    Size: 847.3 GB    [100%] │
+  │  Your Contributions:       2,847 entries                                 │
+  │                                                                          │
+  │  Replication Status:       ✓ Your data copied to 12 nodes (encrypted)    │
+  │  Data Protection:          ✓ Difficult to delete (requires >50% collude) │
+  │                                                                          │
+  │  ⚠️ Above numbers are PROJECTIONS for a mature network, not current state│
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  [NETWORK GROWTH]  ∞ No limits - Knowledge expands forever
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                                                                          │
+  │  KNOWLEDGE NETWORK GROWTH SCALE                                          │
+  │  ════════════════════════════════════════════════════════════════════    │
+  │                                                                          │
+  │  Phase 1: Genesis      ████████████████████ COMPLETE   [0 - 100K]        │
+  │  Phase 2: Expansion    ████████████████████ COMPLETE   [100K - 1M]       │
+  │  Phase 3: Emergence    ████████████░░░░░░░░ 84.7%      [1M - 10M]   ◄──  │
+  │  Phase 4: Collective   ░░░░░░░░░░░░░░░░░░░░ LOCKED     [10M - 100M]      │
+  │  Phase 5: Global       ░░░░░░░░░░░░░░░░░░░░ LOCKED     [100M+]           │
+  │                                                                          │
+  │  Current: 1,847,293 entries    Growth rate: +2,847/hour                  │
+  │  Network Intelligence Level: EXPANDING                                   │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  [NETWORK WEIGHT]  Total size of Knowledge Network (grows like blockchain)
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                                                                          │
+  │  ╔════════════════════════════════════════════════════════════════════╗  │
+  │  ║  SYNAPSENET KNOWLEDGE CHAIN                                        ║  │
+  │  ║  Total Weight: 847.3 GB                    ▲ Growing continuously  ║  │
+  │  ╚════════════════════════════════════════════════════════════════════╝  │
+  │                                                                          │
+  │  Growth History:                                                         │
+  │  ────────────────────────────────────────────────────────────────────    │
+  │  2024 Jan    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    0.0 GB  │
+  │  2024 Mar    ██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   12.4 GB  │
+  │  2024 Jun    ██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   89.2 GB  │
+  │  2024 Sep    ████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  247.8 GB  │
+  │  2024 Dec    ██████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░  512.1 GB  │
+  │  2025 Now    ████████████████████████████████░░░░░░░░░░░░░░░░  847.3 GB  │
+  │  2025 Est    ██████████████████████████████████████████░░░░░░  ~1.2 TB   │
+  │  Future      ████████████████████████████████████████████████  ∞ No cap  │
+  │                                                                          │
+  │  Growth Rate:    +1.2 GB/day      Projected 2026:    ~1.8 TB             │
+  │  Comparison:     Bitcoin ~850 GB  |  SynapseNet ~847 GB (and growing)    │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  [BALANCED DISTRIBUTION]  Fair storage across all nodes
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                                                                          │
+  │  Active Nodes:     12,847          Network Weight:  847.3 GB             │
+  │  Your Storage:     65.9 MB         Fair Share:      65.9 MB  ✓ BALANCED  │
+  │                                                                          │
+  │  Formula: Network Weight ÷ Active Nodes = Your Share                     │
+  │           847.3 GB  ÷ 12,847 nodes = ~65.9 MB per node                   │
+  │                                                                          │
+  │  As network grows:                                                       │
+  │  ┌────────────────────────────────────────────────────────────────────┐  │
+  │  │  More knowledge added  ──►  Network weight increases               │  │
+  │  │  More nodes join       ──►  Your share stays manageable            │  │
+  │  │  Network at 10 TB      ──►  With 100K nodes = ~100 MB each         │  │
+  │  └────────────────────────────────────────────────────────────────────┘  │
+  │                                                                          │
+  │  ✓ No single node overloaded       ✓ Anti-spam protection active         │
+  │  ✓ Data distributed fairly         ✓ Scales with network size            │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  [PROTOCOL-ONLY ACCESS]  Data protected by SynapseNet Protocol
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │                                                                          │
+  │  Encryption:        ✓ Multi-layer Protocol Encryption (MPE)              │
+  │  Access Control:    ✓ Only SynapseNet Protocol can decrypt               │
+  │  External Access:   ⚠ Cryptographically expensive (not impossible)       │
+  │  Delete Attempts:   ⚠ Replication makes deletion difficult, not blocked  │
+  │                                                                          │
+  │  How it works:                                                           │
+  │  ┌────────────────────────────────────────────────────────────────────┐  │
+  │  │ YOUR DATA ──► PROTOCOL ENCRYPTS ──► DISTRIBUTED TO NETWORK         │  │
+  │  │                     │                                              │  │
+  │  │              Keys derived from:                                    │  │
+  │  │              user_key + content_hash + rules                       │  │
+  │  │                     │                                              │  │
+  │  │ ATTACKER ──► ENCRYPTED BLOB ──► EXPENSIVE TO BREAK (AES-256)       │  │
+  │  └────────────────────────────────────────────────────────────────────┘  │
+  │                                                                          │
+  │  Status: ✓ Your data is PROTOCOL-PROTECTED                               │
+  │                                                                          │
+  │  ⚠️ HONEST NOTE: No system is unhackable. We use battle-tested crypto    │
+  │  (AES-256-GCM, Ed25519) but implementation bugs are possible.            │
+  │  Replication makes deletion hard, not impossible — if >50% of nodes      │
+  │  collude, data can be removed. Security depends on honest majority.      │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+  [ONLINE NODES]  12,847 nodes active worldwide
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  ● node_7f3a9c2d (you)        ● node_a82b4f1e        ● node_c93d7a2b     │
+  │  ● node_d47e8c3f              ● node_e58f9d4a        ● node_f69a0e5b     │
+  │  ● node_1a2b3c4d              ● node_2b3c4d5e        ● node_3c4d5e6f     │
+  │  ... and 12,838 more nodes online                                        │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+--------------------------------------------------------------------------------
+                              SECURITY STATUS
+--------------------------------------------------------------------------------
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  QUANTUM-RESISTANT PROTECTION: ✓ ACTIVE                                  │
+  │                                                                          │
+  │  Wallet Keys:      ✓ CRYSTALS-Dilithium (Post-Quantum)                   │
+  │  Seed Phrase:      ✓ SPHINCS+ Protected                                  │
+  │  Network Comms:    ✓ CRYSTALS-Kyber Encrypted                            │
+  │  Knowledge Data:   ✓ Lattice-based Encryption                            │
+  │                                                                          │
+  │  Status: Your node is protected against quantum computer attacks         │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+--------------------------------------------------------------------------------
+                               MINING ACTIVITY
+--------------------------------------------------------------------------------
+
+  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░  78% Processing Knowledge
+
+  Recent Contributions:
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │ [12:34:21] ✓ Contributed: math_reasoning_v2.json      +2.4 NGT         │
+  │ [12:31:05] ✓ Validated:   language_model_weights      +0.8 NGT         │
+  │ [12:28:47] ✓ Contributed: code_analysis_patterns      +3.1 NGT         │
+  │ [12:25:12] ✓ Validated:   semantic_embeddings_batch   +0.5 NGT         │
+  │ [12:22:33] ✓ Contributed: neural_pathway_mappings     +4.2 NGT         │
+  └────────────────────────────────────────────────────────────────────────┘
+
+--------------------------------------------------------------------------------
+                                MAIN MENU
+--------------------------------------------------------------------------------
+
+  [1] Contribute Knowledge        [5] Network Statistics
+  [2] Validate Contributions      [6] Peer Discovery
+  [3] AI Query                    [7] Settings
+  [4] Wallet & Transfers          [8] Security
+
+  [9] IDE / Code Contributions
+
+  [Q] Quit
+
+--------------------------------------------------------------------------------
+synapsenet> _
+
+
+
+████████████████████████████████████████████████████████████████████████████████
+                         IMPLEMENTATION NOTES
+████████████████████████████████████████████████████████████████████████████████
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  SYNAPSENET 0.1 = ONE BINARY (like Bitcoin 0.1)                            │
+│  ══════════════════════════════════════════════════════════════════════    │
+│                                                                            │
+│  Architecture:  C++ core + embedded Python + TUI (ncurses)                 │
+│  Binary name:   synapsed                                                   │
+│                                                                            │
+│  ╔══════════════════════════════════════════════════════════════════════╗  │
+│  ║  Bitcoin 0.1:     31,794 lines  (GUI + Core + Network + Crypto)      ║  │
+│  ║  SynapseNet 0.1: ~38,800 lines  (TUI + Core + AI Model + Python)     ║  │
+│  ║  + Privacy:      ~43,600 lines  (Tor, Mix, Decoy, Timing defense)    ║  │
+│  ║  + Quantum:      ~53,600 lines  (Kyber, Dilithium, SPHINCS+, OTP)    ║  │
+│  ╚══════════════════════════════════════════════════════════════════════╝  │
+│                                                                            │
+│  Breakdown:                                                                │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  TUI (this interface)     ~11,100 lines   ncurses + model screen     │  │
+│  │  Core (ledger/knowledge)   ~7,600 lines   blockchain logic           │  │
+│  │  LOCAL AI MODEL            ~3,800 lines   inference, marketplace     │  │
+│  │  Networking               ~4,200 lines   P2P, discovery              │  │
+│  │  Cryptography             ~2,100 lines   keys, signatures            │  │
+│  │  Python (PoE)             ~2,100 lines   intelligence logic          │  │
+│  │  Database                 ~1,600 lines   storage                     │  │
+│  │  Utilities                ~1,800 lines   helpers                     │  │
+│  │  Infrastructure           ~2,100 lines   tests, protocol, errors     │  │
+│  │  PRIVACY LAYER (opt)      ~4,800 lines   Tor, mix, decoy, timing     │  │
+│  │  QUANTUM SECURITY (opt)  ~14,800 lines   Kyber, Dilithium, OTP, QKD  │  │
+│  │  ────────────────────────────────────────────────────────────────    │  │
+│  │  BASE:  ~38,800  │  +PRIVACY: ~43,600  │  +QUANTUM: ~53,600 lines    │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Dependencies:                                                             │
+│  • OpenSSL/libsodium  - cryptography                                       │
+│  • ncurses            - terminal interface                                 │
+│  • LevelDB/SQLite     - storage                                            │
+│  • pybind11           - Python integration                                 │
+│  • llama.cpp          - AI model inference (GGUF)                          │
+│                                                                            │
+│  Commands:                                                                 │
+│  ────────                                                                  │
+│  $ synapsed                 # start daemon + TUI                           │
+│  $ synapsed status          # peers, events, balance                       │
+│  $ synapsed peers           # list nodes                                   │
+│  $ synapsed submit file     # contribute knowledge                         │
+│  $ synapsed send addr amt   # transfer coins                               │
+│                                                                            │
+│  Full details: see WHAT_IS_SYNAPSENET.txt → TECHNICAL IMPLEMENTATION       │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  SECURITY (v0.1)                                                           │
+│  ══════════════════════════════════════════════════════════════════════    │
+│                                                                            │
+│  Cryptography (Hybrid):                                                    │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  v0.1:  SHA-256 + Ed25519 + AES-256-GCM (battle-tested)              │  │
+│  │  v0.2+: + Kyber/Dilithium (quantum-ready, optional)                  │  │
+│  │  v1.0:  Hybrid mandatory (classic + quantum both)                    │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  PoE v0 (Proof of Emergence):                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  Submit:    stake 10 NGT (refund if accepted, lose if spam)          │  │
+│  │  Validate:  5 random validators (stake > 100 NGT)                    │  │
+│  │  Vote:      ACCEPT/REJECT, majority wins                             │  │
+│  │  Anti-Sybil: stake + reputation + random selection                   │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│  Formal supplement (PoE-FS v1): interfaces txt/PROOF_OF_EMERGENCE_         │
+│  FORMAL_SUPPLEMENT_v1.txt                                                   │
+│                                                                            │
+│  Rate Limiting:                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  Network:   10 msg/sec, 100 conn/IP max                              │  │
+│  │  Protocol:  5 submissions/hour, cooldown on reject                   │  │
+│  │  Economic:  stake required (spam = lose money)                       │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Python Sandbox:                                                           │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  ALLOWED:   math, json, hashlib (scoring only)                       │  │
+│  │  BLOCKED:   os, sys, subprocess, socket (no I/O)                     │  │
+│  │  LIMITS:    50MB RAM, 1s CPU, 100 recursion                          │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Full details: see WHAT_IS_SYNAPSENET.txt → SECURITY CONSIDERATIONS        │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  LOCAL AI MODEL: STREAMING GENERATION (CODE ANCHOR)                        │
+│  ══════════════════════════════════════════════════════════════════════    │
+│                                                                            │
+│  The TUI “AI Query” screen and SynapseIDE both rely on a streaming         │
+│  generation API exposed by ModelLoader. Tokens are produced one-by-one     │
+│  and pushed into the UI via a callback:                                    │
+│                                                                            │
+│  File: KeplerSynapseNet/src/model/model_loader.cpp                         │
+│                                                                            │
+│    std::string ModelLoader::generate(const std::string& prompt,            │
+│                                      const GenerationParams& params) {     │
+│        if (impl_->state != ModelState::READY) {                            │
+│            std::string err = "[Error: Model not loaded. State: " +         │
+│                std::to_string(static_cast<int>(impl_->state)) + "]";       │
+│            utils::Logger::error(err);                                      │
+│            return err;                                                     │
+│        }                                                                   │
+│                                                                            │
+│        std::string response;                                               │
+│        generateStream(prompt, [&response](const std::string& token) {      │
+│            response += token;                                              │
+│            return true;                                                    │
+│        }, params);                                                         │
+│        return response;                                                    │
+│    }                                                                       │
+│                                                                            │
+│    void ModelLoader::generateStream(const std::string& prompt,             │
+│          std::function<bool(const std::string&)> callback,                 │
+│          const GenerationParams& params) {                                 │
+│        if (impl_->state != ModelState::READY) {                            │
+│            callback("[Error: Model not loaded]");                          │
+│            return;                                                         │
+│        }                                                                   │
+│        impl_->stopRequested = false;                                       │
+│        impl_->generating = true;                                           │
+│        /* llama.cpp-backed tokenization, decoding, and sampling omitted */ │
+│        impl_->generating = false;                                          │
+│    }                                                                       │
+│                                                                            │
+│  This is the concrete implementation behind:                               │
+│    • real-time token streaming in the TUI chat                             │
+│    • SynapseIDE ghost text and patch suggestions                           │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  ULTIMATE QUANTUM SECURITY STACK                                           │
+│  ══════════════════════════════════════════════════════════════════════    │
+│                                                                            │
+│  Defense in depth. Multiple layers. Break one, others hold.                │
+│                                                                            │
+│  THE LAYERS:                                                               │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  Layer 0: CLASSIC         Ed25519 + X25519 + AES-256-GCM             │  │
+│  │           Status:         MANDATORY (always active)                  │  │
+│  │           Vulnerability:  Quantum computers (Shor's algorithm)       │  │
+│  │                                                                      │  │
+│  │  Layer 1: LATTICE PQC     ML-KEM-768 (Kyber) + ML-DSA-65 (Dilithium) │  │
+│  │           Status:         MANDATORY in v0.2+                         │  │
+│  │           Vulnerability:  If lattice math is broken (unlikely)       │  │
+│  │                                                                      │  │
+│  │  Layer 2: HASH-BASED PQC  SLH-DSA-128s (SPHINCS+)                    │  │
+│  │           Status:         OPTIONAL for critical data                 │  │
+│  │           Vulnerability:  Only if hash functions break               │  │
+│  │                                                                      │  │
+│  │  Layer 3: ONE-TIME PAD    Vernam Cipher (XOR with random key)        │  │
+│  │           Status:         OPTIONAL for maximum security              │  │
+│  │           Vulnerability:  NONE (information-theoretically secure)    │  │
+│  │                                                                      │  │
+│  │  Layer 4: QKD             BB84/E91 (quantum key distribution)        │  │
+│  │           Status:         FUTURE (requires hardware)                 │  │
+│  │           Vulnerability:  Physical access to quantum channel         │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  ATTACK RESISTANCE:                                                        │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  ✓ Quantum computer breaks Ed25519  → Kyber/Dilithium still hold     │  │
+│  │  ✓ Lattice crypto breakthrough      → SPHINCS+ (hash-based) holds    │  │
+│  │  ✓ Both lattice AND hash broken     → OTP is mathematically secure   │  │
+│  │  ✓ "Store now, decrypt later"       → Hybrid encryption active NOW   │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  SECURITY MODES:                                                           │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  $ synapsed --security=standard      Classic + Kyber (95% QC safe)   │  │
+│  │  $ synapsed --security=high          + SPHINCS+ (99% QC safe)        │  │
+│  │  $ synapsed --security=paranoid      + OTP (99.9%+ protection)       │  │
+│  │  $ synapsed --security=quantum-ready + QKD (requires hardware)       │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  WHAT GETS PROTECTED:                                                      │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  Wallet seed:       All 4 layers (Ed25519 + Kyber + SPHINCS + OTP)   │  │
+│  │  Standard data:     Layers 0-1 (Classic + Lattice PQC)               │  │
+│  │  Critical data:     Layers 0-3 (+ Hash PQC + OTP)                    │  │
+│  │  Network comms:     Hybrid handshake + PFS + hourly key rotation     │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  ⚠️ HONEST LIMITATIONS:                                                    │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  ✗ Implementation bugs possible (needs security audits)              │  │
+│  │  ✗ Social engineering bypasses all crypto                            │  │
+│  │  ✗ Compromised endpoint sees plaintext before encryption             │  │
+│  │  ✗ No system is "unhackable" — goal is making attacks expensive      │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Full details: see WHAT_IS_SYNAPSENET.txt → ULTIMATE QUANTUM SECURITY      │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  NGT TOKENOMICS                                                            │
+│  ══════════════════════════════════════════════════════════════════════    │
+│                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  Bitcoin: 21M cap, halving every 4 years                             │  │
+│  │  NGT:     NO CAP, emission decreases with network load               │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Formula: emission = base_rate / (1 + network_load)                        │
+│                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  More users      → less NGT per action                               │  │
+│  │  More activity   → tokens spread thinner                             │  │
+│  │  Network grows   → each token more valuable                          │  │
+│  │  Early adopters  → earn more (higher emission)                       │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Full details: see WHAT_IS_SYNAPSENET.txt → THE NGT TOKEN                  │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  WHO EARNS NGT?                                                            │
+│  ══════════════════════════════════════════════════════════════════════    │
+│                                                                            │
+│  🚫 YOU DON'T PAY FOR YOUR OWN AI — you EARN from it!                      │
+│                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  EARNERS:                                                            │  │
+│  │  🖥️  Host AI model + GPU     →  earn NGT from users                  │  │
+│  │  📚  Contribute knowledge     →  earn NGT for Q&A                    │  │
+│  │  ✓  Validate PoE              →  earn NGT for verification           │  │
+│  │  💾  Store shards             →  earn NGT for storage                │  │
+│  │                                                                      │  │
+│  │  PAYERS:                                                             │  │
+│  │  🔥  Use SOMEONE ELSE's model →  pay NGT to that owner               │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Data centers / powerful hardware → passive income from idle GPUs          │
+│                                                                            │
+│  Full details: see WHAT_IS_SYNAPSENET.txt → WHO EARNS NGT?                 │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  ANTI-SPAM: COMMUNITY SERVICE                                              │
+│  ══════════════════════════════════════════════════════════════════════    │
+│                                                                            │
+│  🚫 NGT NEVER burns. We don't confiscate. We don't ban forever.            │
+│                                                                            │
+│  Spam detected? → You work it off:                                         │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  • Contribute 50 USEFUL submissions to Knowledge Network             │  │
+│  │  • These 50 = FREE (0 NGT reward)                                    │  │
+│  │  • After 50 validated → penalty lifted                               │  │
+│  │  • Your NGT balance = UNTOUCHED                                      │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Duplicate answer but BETTER? → Still earns NGT (not spam)                 │
+│                                                                            │
+│  "You break it — you fix it. Help the network, and it forgives you."       │
+│                                                                            │
+│  Full details: see WHAT_IS_SYNAPSENET.txt → ANTI-SPAM                      │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  LOCAL AI MODEL                                                            │
+│  ══════════════════════════════════════════════════════════════════════    │
+│                                                                            │
+│  Default: Llama 3.2 7B (~4 GB, auto-download on first run)                 │
+│                                                                            │
+│  MODEL STATUS (live):                                                      │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  Model:    Llama-3.2-7B-GGUF                                         │  │
+│  │  Status:   ● READY           [synced | downloading | inference]      │  │
+│  │  Progress: ████████████████████████████████████████ 100%             │  │
+│  │  Mode:     💰 PAID (5 NGT/hr, 2/3 slots used)                        │  │
+│  │  Uptime:   4h 23m                                                    │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  ACCESS LIST (ACL):                                                        │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  🟢 node_7f3a9c2d   ACTIVE    using now      paid 12.5 NGT           │  │
+│  │  🟢 node_a1b2c3d4   ACTIVE    idle           paid 8.0 NGT            │  │
+│  │  🟡 node_x9y8z7w6   INVITED   pending                                │  │
+│  │  🔴 node_bad12345   BANNED    spam abuse                             │  │
+│  │  ─────────────────────────────────────────────────────────────────   │  │
+│  │  Slots: 2/3 active │ 1 invited │ 1 banned                            │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  EARNINGS HISTORY:                                                         │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  Today:      +45.2 NGT   (9 sessions, 3 users)                       │  │
+│  │  This week:  +312.8 NGT  (67 sessions)                               │  │
+│  │  Total:      +1,247.5 NGT earned from model rental                   │  │
+│  │  ─────────────────────────────────────────────────────────────────   │  │
+│  │  Recent:                                                             │  │
+│  │  • 14:23  node_7f3a  inference  2.5 NGT  ✓                           │  │
+│  │  • 14:01  node_a1b2  inference  1.0 NGT  ✓                           │  │
+│  │  • 13:45  node_7f3a  inference  2.5 NGT  ✓                           │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Access Control (your model, your rules):                                  │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  🔒 PRIVATE   - only you (default)                                   │  │
+│  │  👥 SHARED    - invite nodes, set limit, kick/ban anytime            │  │
+│  │  🌐 PUBLIC    - anyone can use, earn NGT                             │  │
+│  │  💰 PAID      - set price, limit slots, earn NGT from renters        │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Example: Llama 405B rental = 3 slots × 5 NGT/hr = 360 NGT/day             │
+│                                                                            │
+│  Commands:                                                                 │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  $ synapsed model list          # show loaded models                 │  │
+│  │  $ synapsed model load <path>   # load custom model                  │  │
+│  │  $ synapsed model delete        # remove model                       │  │
+│  │  $ synapsed model share         # open to invited nodes              │  │
+│  │  $ synapsed model paid          # enable paid mode                   │  │
+│  │  $ synapsed model price 5       # set price (5 NGT/hour)             │  │
+│  │  $ synapsed model slots 3       # max 3 paying users                 │  │
+│  │  $ synapsed model invite <node> # allow specific node                │  │
+│  │  $ synapsed model kick <node>   # remove node access                 │  │
+│  │  $ synapsed model private       # close all access                   │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Full details: see WHAT_IS_SYNAPSENET.txt → LOCAL AI MODEL HOSTING         │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  PRIVACY LAYER (optional)                                                  │
+│  ══════════════════════════════════════════════════════════════════════    │
+│                                                                            │
+│  Enable: $ synapsed --privacy-mode                                         │
+│                                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  🧅 Tor/i2p         - all traffic through anonymity network          │  │
+│  │  🔐 E2E Encryption  - AI queries, PoE, sync — all encrypted          │  │
+│  │  👤 Stealth Addr    - one-time addresses, unlinkable payments        │  │
+│  │  🌿 Dandelion++     - hide who created transaction/knowledge         │  │
+│  │  🔀 Mix Network     - model owner can't identify who asks            │  │
+│  │  📝 Scrubbed Logs   - no IPs, truncated IDs, rounded times           │  │
+│  │  💨 Amnesia Mode    - RAM-only, zero traces after shutdown           │  │
+│  │  🎭 Hidden Wallet   - plausible deniability (decoy + real)           │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Modes:                                                                    │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  $ synapsed                     # normal (no privacy)                │  │
+│  │  $ synapsed --privacy           # Tor + E2E + scrubbed logs          │  │
+│  │  $ synapsed --privacy --stealth # + stealth addr + dandelion         │  │
+│  │  $ synapsed --amnesia           # RAM-only, zero traces              │  │
+│  │  $ synapsed --hidden-wallet     # plausible deniability              │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  ⚠️ Privacy = wrapper, doesn't affect PoE/Knowledge/AI functionality       │
+│                                                                            │
+│  Code: +4,800 lines (optional) → ~41,200 total with full privacy           │
+│                                                                            │
+│  Full details: see WHAT_IS_SYNAPSENET.txt → PRIVACY LAYER                  │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  ✓ TASK 1: STREAMING TOKEN CALLBACKS                                       │
+│  ═════════════════════════════════════════════════════════════════════     │
+│                                                                            │
+│  STATUS: Completed                                                         │
+│  PURPOSE: Real-time token generation with progress reporting               │
+│                                                                            │
+│  Implementation:                                                           │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  void generateStream(const std::string& prompt,                      │  │
+│  │    std::function<bool(const std::string&)> callback,                 │  │
+│  │    const GenerationParams& params) {                                 │  │
+│  │                                                                      │  │
+│  │    // Calls callback(token) for EACH token generated                 │  │
+│  │    // Return false from callback to stop generation                  │  │
+│  │    // Enables real-time TUI updates                                  │  │
+│  │  }                                                                   │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Why this matters:                                                         │
+│  ✓ No wait for full response                                               │
+│  ✓ Users see tokens appear in real-time (like ChatGPT)                     │
+│  ✓ Stop generation anytime (hit Ctrl+C)                                    │
+│  ✓ TUI can show progress % and ETA                                         │
+│                                                                            │
+│  Code: model_loader.cpp lines 471-560                                      │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  ✓ TASK 2: ENHANCED ERROR REPORTING WITH SYSTEM CONTEXT                    │
+│  ═════════════════════════════════════════════════════════════════════     │
+│                                                                            │
+│  STATUS: Completed                                                         │
+│  PURPOSE: Helpful error messages instead of vague failures                 │
+│                                                                            │
+│  What users see BEFORE (unhelpful):                                        │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  Error: Failed to load model                                         │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  What users see NOW (helpful):                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  [ERROR] Failed to load model: /home/user/llama2-7b.gguf             │  │
+│  │  File size:           3.8 GB                                         │  │
+│  │  Available RAM:       4.2 GB                                         │  │
+│  │  Free disk space:     125.3 GB                                       │  │
+│  │  Estimated memory:    6.1 GB (context=2048 + KV-cache + buffers)     │  │
+│  │  Recommended memory:  8 GB minimum                                   │  │
+│  │                                                                      │  │
+│  │  Solution:                                                           │  │
+│  │  • Reduce context size: --context 1024                               │  │
+│  │  • Increase available RAM (close other apps)                         │  │
+│  │  • Try smaller model (4B instead of 7B)                              │  │
+│  │  • Enable memory mapping: --mmap                                     │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Implementation includes:                                                  │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  Helper functions:                                                   │  │
+│  │  • getAvailableMemory()     - system RAM in bytes                    │  │
+│  │  • formatBytes(bytes)       - converts to KB/MB/GB with precision    │  │
+│  │  • getFreeDiskSpace(path)   - available disk at model location       │  │
+│  │  • estimateMemory(path)     - model + context + overhead formula     │  │
+│  │                                                                      │  │
+│  │  Logging points:                                                     │  │
+│  │  • Model file size at load start                                     │  │
+│  │  • Memory availability checks                                        │  │
+│  │  • Progress callbacks (50%, 75%, 100%)                               │  │
+│  │  • Error context with file path + memory + parameters                │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Code: model_loader.cpp lines 91-120 | model_loader.cpp lines 1014-1036    │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  ✓ TASK 3: MODEL PERSISTENCE & AUTO-LOAD                                   │
+│  ═════════════════════════════════════════════════════════════════════     │
+│                                                                            │
+│  STATUS: Completed                                                         │
+│  PURPOSE: Remember last used model and auto-load on restart                │
+│                                                                            │
+│  Workflow:                                                                 │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  SESSION 1:                                                          │  │
+│  │  $ synapsed                                                          │  │
+│  │  > load ~/models/llama-7b.gguf   [loads, shows progress]             │  │
+│  │  > chat "Hello AI"               [works]                             │  │
+│  │  > exit                          [saves model info to config]        │  │
+│  │                                                                      │  │
+│  │  SESSION 2 (next day):                                               │  │
+│  │  $ synapsed                                                          │  │
+│  │  [Auto-loads ~/models/llama-7b.gguf]  ✓ No need to reload!           │  │
+│  │  > chat "More conversation"      [continues with same model]         │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Config keys (persisted in ~/.synapsenet/synapsenet.conf):                 │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  model.last_path       = "/path/to/llama-7b.gguf"                    │  │
+│  │  model.last_id         = "llama-7b"                                  │  │
+│  │  model.last_format     = "GGUF"                                      │  │
+│  │  model.auto_load       = true                                        │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Methods:                                                                  │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  bool saveLastModel() const;       // saves current model to config  │  │
+│  │  bool loadLastModel();             // loads from config on startup   │  │
+│  │  void setLastModelPath(path);      // set path in config             │  │
+│  │  std::string getLastModelPath();   // retrieve from config           │  │
+│  │  void setAutoLoadModel(bool);      // enable/disable auto-load       │  │
+│  │  bool getAutoLoadModel() const;    // check if auto-load enabled     │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Code: model_loader.cpp lines 1039-1071                                    │
+│        config.h lines 113-121 | config.cpp lines 70-75                     │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  ✓ TASK 4: CONFIGURABLE MODEL SCAN PATHS                                   │
+│  ═════════════════════════════════════════════════════════════════════     │
+│                                                                            │
+│  STATUS: Completed                                                         │
+│  PURPOSE: Users can add custom directories without recompiling             │
+│                                                                            │
+│  Default scan paths:                                                       │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  ~/.synapsenet/models/             [user home]                       │  │
+│  │  ./models/                          [current directory]              │  │
+│  │  ./third_party/llama.cpp/models/   [bundled models]                  │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Add custom path at runtime:                                               │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  $ synapsed                                                          │  │
+│  │  > config add-scan-path ~/my_models                                  │  │
+│  │  > model list  [now scans all 4 directories]                         │  │
+│  │                                                                      │  │
+│  │  To persist (saved in ~/.synapsenet/synapsenet.conf):                │  │
+│  │  > config save                                                       │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Implementation:                                                           │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  // ModelLoader instance variable                                    │  │
+│  │  std::vector<std::string> scanPaths_;                                │  │
+│  │                                                                      │  │
+│  │  // Config helpers                                                   │  │
+│  │  std::vector<std::string> getModelScanPaths() const;                 │  │
+│  │  void setModelScanPaths(const std::vector<std::string>&);            │  │
+│  │  void addModelScanPath(const std::string& path);                     │  │
+│  │  void removeModelScanPath(const std::string& path);                  │  │
+│  │                                                                      │  │
+│  │  // ModelLoader getters                                              │  │
+│  │  std::vector<std::string> getScanPaths() const;                      │  │
+│  │  void setScanPaths(const std::vector<std::string>&);                 │  │
+│  │                                                                      │  │
+│  │  // Discovery with all paths                                         │  │
+│  │  std::vector<std::string> getAvailableModels() const;                │  │
+│  │  // ^ scans all scanPaths_, deduplicates, returns full list          │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Features:                                                                 │
+│  ✓ Dynamic path management without code changes                            │
+│  ✓ Tilde (~) expansion for home directory                                  │
+│  ✓ Deduplication (same model found in 2 dirs = appears once)               │
+│  ✓ Auto-persistence to config file                                         │
+│  ✓ Works with any model format (GGUF, ONNX, SafeTensors)                   │
+│                                                                            │
+│  Code: model_loader.cpp lines 1073-1112                                    │
+│        config.h lines 123-135 | config.cpp line 77                         │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  ✓ TASK 5: COMPREHENSIVE UNIT TESTS (GoogleTest Framework)                 │
+│  ═════════════════════════════════════════════════════════════════════     │
+│                                                                            │
+│  STATUS: Completed - 40+ test cases covering all new functionality         │
+│  PURPOSE: Regression protection and confidence in model loading            │
+│                                                                            │
+│  Test categories:                                                          │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  ✓ Validation Tests (4 tests)                                        │  │
+│  │    • ValidateModel with valid file                                   │  │
+│  │    • ValidateModel with non-existent file                            │  │
+│  │                                                                      │  │
+│  │  ✓ Format Detection Tests (6 tests)                                  │  │
+│  │    • Detect GGUF, GGML, SAFETENSORS, PYTORCH, ONNX                   │  │
+│  │    • Handle unknown format gracefully                                │  │
+│  │                                                                      │  │
+│  │  ✓ Memory Tests (4 tests)                                            │  │
+│  │    • Estimate memory is positive                                     │  │
+│  │    • Format bytes (B, KB, MB, GB conversions)                        │  │
+│  │    • Get free disk space                                             │  │
+│  │                                                                      │  │
+│  │  ✓ State Management Tests (3 tests)                                  │  │
+│  │    • GetState returns UNLOADED by default                            │  │
+│  │    • GetError returns empty initially                                │  │
+│  │    • State transitions on load attempt                               │  │
+│  │                                                                      │  │
+│  │  ✓ Model Discovery Tests (2 tests)                                   │  │
+│  │    • ListModels in directory                                         │  │
+│  │    • GetAvailableModels from all scan paths                          │  │
+│  │                                                                      │  │
+│  │  ✓ Persistence Tests (4 tests)                                       │  │
+│  │    • Save/load last model                                            │  │
+│  │    • Auto-load on startup                                            │  │
+│  │    • Handle missing model file gracefully                            │  │
+│  │    • Config file I/O verification                                    │  │
+│  │                                                                      │  │
+│  │  ✓ Scan Path Tests (3 tests)                                         │  │
+│  │    • Get/set scan paths                                              │  │
+│  │    • Add/remove scan path idempotently                               │  │
+│  │    • Persist paths to config                                         │  │
+│  │                                                                      │  │
+│  │  ✓ Configuration Tests (3 tests)                                     │  │
+│  │    • Set/get loader config (context, threads, GPU layers)            │  │
+│  │    • Validate config parameters                                      │  │
+│  │                                                                      │  │
+│  │  ✓ Callback Tests (4 tests)                                          │  │
+│  │    • State change callbacks trigger on load/error                    │  │
+│  │    • Progress callbacks called at 0.5, 0.75, 1.0                     │  │
+│  │    • Error callbacks receive error messages                          │  │
+│  │    • Generation callbacks stream tokens                              │  │
+│  │                                                                      │  │
+│  │  ✓ Integration Tests (7 tests)                                       │  │
+│  │    • Generate without model (graceful error)                         │  │
+│  │    • Token count estimation                                          │  │
+│  │    • Delete model file                                               │  │
+│  │    • Config persistence verification                                 │  │
+│  │    • Full model lifecycle (load/generate/unload)                     │  │
+│  │                                                                      │  │
+│  │  Total: 40+ tests ✓                                                  │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Mock Infrastructure:                                                      │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  // Minimal valid GGUF file for testing                              │  │
+│  │  void createMockGGUF(const std::string& path) {                      │  │
+│  │    std::ofstream file(path, std::ios::binary);                       │  │
+│  │    file.write("GGUF", 4);        // magic                            │  │
+│  │    uint32_t version = 3;                                             │  │
+│  │    file.write((char*)&version, 4);  // version                       │  │
+│  │    // metadata (minimal)                                             │  │
+│  │    file.seekp(1024);            // pad to 1KB                        │  │
+│  │    file.put('\0');                                                   │  │
+│  │  }                                                                   │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Run all tests:                                                            │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  $ cd KeplerSynapseNet && mkdir -p build && cd build                 │  │
+│  │  $ cmake .. && cmake --build . --target test_model_loader            │  │
+│  │  $ ./tests/test_model_loader                                         │  │
+│  │                                                                      │  │
+│  │  [==========] Running 40 tests from 1 test suite.                    │  │
+│  │  [----------] Global test environment set-up.                        │  │
+│  │  [RUN]      ModelLoaderTest.ValidateModel                            │  │
+│  │  [OK]       ModelLoaderTest.ValidateModel (2 ms)                     │  │
+│  │  ...                                                                 │  │
+│  │  [==========] 40 tests from 1 test suite ran. (148 ms total)         │  │
+│  │  [PASSED]   40 tests                                                 │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  Code: tests/test_model_loader.cpp (320+ lines) | tests/CMakeLists.txt     │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════
+
+                                 SUMMARY v0.1.0-beta
+
+                    Five systems. Five implementations. 500+ lines code.
+                            40+ tests. Zero bugs found so far.
+
+                            Users can now stream tokens from
+                            any local AI model with enhanced
+                             error context and persistence.
+
+                              This is the beginning.
+
+                            "Satoshi gave us money without banks.
+                             I will give you brains without corporations."
+
+                                          - Kepler
+
+═══════════════════════════════════════════════════════════════════════════════════════════
+
+For more details, see:
+  • WHAT_IS_SYNAPSENET.txt → IMPLEMENTATION STATUS section
+  • Full source code: KeplerSynapseNet/src/model/model_loader.cpp
+  • Tests: KeplerSynapseNet/tests/test_model_loader.cpp
+  • Config: KeplerSynapseNet/data/synapsenet.conf
+
+================================================================================

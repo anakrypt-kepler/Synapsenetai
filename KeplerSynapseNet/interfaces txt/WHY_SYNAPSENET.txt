@@ -1,0 +1,108 @@
+WHY SYNAPSENET EXISTS
+A Note from Kepler
+
+
+I didn't set out to build something this big. It started with something
+simple — I liked talking to AI. I'd just sit there and have conversations
+with a local model, and it felt right. It was fun.
+
+At some point I asked myself: what if people could get rewarded for sharing
+what they know through conversations like this? What if there was a token —
+some kind of coin — that you'd earn just by contributing knowledge to a
+network? That was the seed.
+
+I thought: I need to build a knowledge network. I had no idea what I was
+walking into.
+
+
+// THE FIRST PROTOTYPE (RUST)
+
+The first version was written in Rust. Around 200,000 lines of code and
+documentation. It was a chat interface with a local AI — you'd write
+something, the model would evaluate it, and you'd get NGT as a reward.
+
+It worked. Kind of.
+
+The fatal mistake was trusting the local AI to decide how much you'd earn.
+That was the biggest lesson I learned early on: you cannot let a language
+model be the judge. Different models give different outputs. Different
+hardware gives different results. Floating point differences, quantization
+differences, tokenization differences — none of it is deterministic. Giving
+an LLM the power to decide consensus is fundamentally broken. It's not
+trustworthy information.
+
+That prototype failed. But the failure taught me the most important design
+principle in SynapseNet: consensus must be deterministic. That's when I
+designed Proof of Emergence — a consensus mechanism that uses verifiable,
+reproducible metrics instead of AI opinions.
+
+
+// THE SECOND PROTOTYPE (C++)
+
+I rewrote everything in C++. Second prototype. Also failed — not what I
+expected. Different problems, same pattern: the architecture wasn't right.
+
+I went through a mountain of mistakes. Rewrote components over and over.
+Debugged things that made no sense at 3 AM. Hit walls that felt permanent.
+But I didn't quit.
+
+I stepped back and rethought the entire architecture from scratch. Started
+writing the design documents that now live in this repository. The project
+is complex at first glance, but it's simpler than it looks once you
+understand the core ideas. You don't need to read my digital scribbles —
+they're written for me, so I don't lose my mind and don't lose track of
+where I am in the maze.
+
+
+// WHY THERE ARE FORKS
+
+You'll notice some third-party code in the project. You can judge that,
+and that's fine. I asked myself: why carve a computer out of stone when
+a computer already exists? I've already spent years on this. I chose to
+spend my time on the parts that matter — the protocol, the consensus, the
+network logic — instead of reimplementing what others have already solved.
+
+
+// THE SCALE OF IT
+
+When I started the Rust prototype, I estimated I'd need about 200,000 lines
+for a working first version. A bit more in C++. But the deeper I went, the
+more I realized it needed to be bigger. And then bigger again. The project
+is now around 1 million lines of code and documentation. I wrote it for
+myself. I know nobody in their right mind is going to read my drafts —
+they're written for me, to keep me sane and on track.
+
+I started in 2023. Wrote everything locally for three years. No GitHub, no
+public repo, no audience. I tried to publish it a few times — set up a
+website, opened ports, tested the network solo. It works, but only in the
+terminal. I don't think it deserves a public launch in that state. I want
+to build a real interface: easy to build, easy to run, easy to use, easy
+to configure, easy to mine. Anyone should be able to mine — even from a
+phone.
+
+
+// WHAT I'M NOT PROMISING
+
+I'm not promising the network will be incredible. I'm not promising it
+can't be hacked. I'm not promising the token will be worth billions. I'm
+doing this for myself first — this is my first serious project at this
+scale.
+
+
+// WHY I'M TELLING YOU THIS
+
+I went through hell to get here. Not for sympathy — I'm telling you because
+I want you to understand something: don't abandon your project after the
+first failed prototype. There are paths forward that you can't see yet.
+
+I did this because I enjoy it. I didn't care what anyone thought. I just
+built. I didn't publish the code for three years. I just kept writing,
+kept debugging, kept redesigning.
+
+If you're working on something that feels too big, too broken, too far from
+done — keep going. The first prototype will fail. The second one might fail
+too. But every failure teaches you what the next version needs to be.
+
+I'm still here. The project is still here. And now it's in your hands too.
+
+                                                                    — Kepler

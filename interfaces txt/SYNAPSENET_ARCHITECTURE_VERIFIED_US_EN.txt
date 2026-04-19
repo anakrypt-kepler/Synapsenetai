@@ -1,0 +1,408 @@
+SYNAPSENET ARCHITECTURE (US ENGLISH, VERIFIED)
+Version: 1.0
+Date: 2026-03-01
+Repository Root: Synapsenet-main/
+
+Purpose
+- This document is a verified architecture snapshot of the current repository.
+- It also validates the user-provided architecture checklist against the real tree.
+- Language policy: US English only.
+
+==============================================================================
+1. TOP-LEVEL REPOSITORY LAYOUT (VERIFIED)
+==============================================================================
+
+Synapsenet-main/
+- README.md
+- CONTRIBUTING.md
+- LICENSE
+- .gitignore
+- .clangd
+- test_ncurses.cpp
+- simple_tui_test.cpp
+- test_tui.sh
+- .github/
+- .qodo/
+- .vscode/
+- ide/
+- interfaces txt/
+- pictures/
+- KeplerSynapseNet/
+
+Validation note:
+- RELEASES/ is currently NOT present in the current repository state.
+
+==============================================================================
+2. ARCHITECTURE DOCS FOLDER (VERIFIED)
+==============================================================================
+
+interfaces txt/
+- WHAT_IS_SYNAPSENET.txt
+- PROJECT_ARCHITECTURE_SCHEMA.txt
+- POE_V1_DETERMINISTIC_DESIGN.txt
+- DARKNET_INTEGRATION_SUMMARY.txt
+- NODE_ATTACHED_AGENT_NETWORK.txt
+- NEUROCHIP_STACK_FOR_SYNAPSENET.txt
+- IMPLANT_AI_STACK_FOR_SYNAPSENET.txt
+- NAAN_TOR_BRIDGE_AUTOMATION_CROSS_PLATFORM_TODO.txt
+- NAAN_TOR_BRIDGE_SETUP_STATUS_AND_SUPPORTED_MODES.txt
+- V0_2_IMPLEMENTATION_STATUS.txt
+- V0_2_RUNTIME_UPDATE_IMPLANT_SPEC.txt
+- V0_2_ATTACHED_AGENT_PRIMARY_UI_SPEC.txt
+- SYNAPSENET_POE_THEOREM_ASSUMPTIONS_PROOF_SKETCH.txt
+- PROOF_OF_EMERGENCE_FORMAL_SUPPLEMENT_v1.txt
+- main_interface.txt
+- AI.txt
+
+Additional architecture file:
+- SYNAPSENET_ARCHITECTURE_VERIFIED_US_EN.txt (this file)
+
+==============================================================================
+3. IDE INTEGRATION LAYER (VERIFIED)
+==============================================================================
+
+ide/
+- synapsenet-vscode/
+  - extension.js
+  - package.json
+  - README.md
+  - scripts/
+    - verify_quest_flow.sh
+
+==============================================================================
+4. CORE PROJECT: KeplerSynapseNet/ (VERIFIED)
+==============================================================================
+
+KeplerSynapseNet/
+- CMakeLists.txt
+- Dockerfile
+- DOCKER.md
+- README.md
+- LICENSE
+- WHAT_IS_SYNAPSENET.txt
+- POE_V1_DETERMINISTIC_DESIGN.txt
+- DARKNET_INTEGRATION_SUMMARY.txt
+- main_interface.txt
+- .gitmodules
+
+4.1 Public headers: include/
+- core/
+  - consensus.h
+  - poe_v1.h
+  - poe_v1_engine.h
+  - poe_v1_objects.h
+  - ledger.h
+  - wallet.h
+  - transfer.h
+  - knowledge.h
+  - agent_runtime.h
+  - agent_scheduler.h
+  - agent_coordination.h
+  - agent_score.h
+  - agent_storage.h
+  - agent_draft_queue.h
+  - agent_submission_pipeline.h
+  - implant_compatibility.h
+  - implant_safety_pipeline.h
+  - state_manager.h
+  - update_bundle.h
+  - update_installer.h
+  - tor_bridge_provider.h
+  - tor_bridge_utils.h
+  - tor_process_guard.h
+  - tor_route_policy.h
+- crypto/
+  - crypto.h
+  - keys.h
+  - address.h
+- quantum/
+  - quantum_security.h
+  - pqc_manager.h
+  - model_inference_crypto.h
+  - network_security.h
+  - knowledge_crypto.h
+  - wallet_security.h
+- network/
+  - network.h
+  - discovery.h
+  - scale_policy.h
+- privacy/
+  - privacy.h
+- model/
+  - model_inference.h
+  - model_loader.h
+  - model_access.h
+- database/
+  - database.h
+- tui/
+  - tui.h
+  - primary_ui_spec.h
+  - bip39_wordlist.h
+- utils/
+  - utils.h
+  - config.h
+  - logger.h
+  - sleep_inhibitor.h
+  - single_instance.h
+- web/
+  - web.h
+  - rpc_server.h
+  - connector_audit.h
+- python/
+  - sandbox.h
+
+4.2 Source code: src/
+- main.cpp
+- core/
+  - poe_v1.cpp
+  - poe_v1_engine.cpp
+  - poe_v1_objects.cpp
+  - consensus.cpp
+  - ledger.cpp
+  - wallet.cpp
+  - transfer.cpp
+  - knowledge.cpp
+  - agent_runtime.cpp
+  - agent_scheduler.cpp
+  - agent_coordination.cpp
+  - agent_score.cpp
+  - agent_storage.cpp
+  - agent_draft_queue.cpp
+  - agent_submission_pipeline.cpp
+  - implant_compatibility.cpp
+  - implant_safety_pipeline.cpp
+  - state_manager.cpp
+  - update_bundle.cpp
+  - update_installer.cpp
+  - event_system.cpp
+  - tor_bridge_provider.cpp
+  - tor_bridge_utils.cpp
+  - tor_process_guard.cpp
+  - tor_route_policy.cpp
+- crypto/
+  - crypto.cpp
+  - keys.cpp
+  - address.cpp
+- quantum/
+  - kyber.cpp
+  - dilithium.cpp
+  - sphincs.cpp
+  - hybrid_kem.cpp
+  - hybrid_sig.cpp
+  - otp.cpp
+  - otp_manager.cpp
+  - deterministic_otp.cpp
+  - qkd_bb84.cpp
+  - qkd_integration.cpp
+  - qkd_relay.cpp
+  - key_derivation.cpp
+  - hwrng.cpp
+  - timing_defense.cpp
+  - crypto_selector.cpp
+  - pqc_manager.cpp
+  - quantum_manager.cpp
+  - model_inference_crypto.cpp
+  - network_security.cpp
+  - knowledge_crypto.cpp
+  - wallet_security.cpp
+- network/
+  - network.cpp
+  - discovery.cpp
+  - handshake.cpp
+  - peer_manager.cpp
+  - protocol.cpp
+  - sync.cpp
+  - scale_policy.cpp
+- privacy/
+  - privacy.cpp
+  - privacy_manager.cpp
+  - onion_service.cpp
+  - socks5_proxy.cpp
+  - stealth_address.cpp
+  - session_crypto.cpp
+  - dandelion.cpp
+  - mix_inference.cpp
+  - decoy_traffic.cpp
+  - traffic_analysis.cpp
+  - hidden_volume.cpp
+  - amnesia.cpp
+- model/
+  - model_inference.cpp
+  - model_loader.cpp
+  - model_access.cpp
+  - model_training.cpp
+  - model_download.cpp
+  - model_marketplace.cpp
+- database/
+  - database.cpp
+  - wallet_db.cpp
+- tui/
+  - tui.cpp
+  - tui_dashboard.cpp
+  - tui_wallet.cpp
+  - tui_model.cpp
+  - tui_network.cpp
+  - tui_mining.cpp
+  - tui_knowledge.cpp
+  - tui_settings.cpp
+  - tui_help.cpp
+  - tui_startup.cpp
+  - primary_ui_spec.cpp
+  - screens.cpp
+  - screens.h
+- web/
+  - web_search.cpp
+  - tor_engine.cpp
+  - darknet_engines.cpp
+  - onion_search_router.cpp
+  - forum_crawler.cpp
+  - deep_search_wrapper.cpp
+  - ai_wrapper.cpp
+  - query_detector.cpp
+  - html_extractor.cpp
+  - search_config.cpp
+  - connector_audit.cpp
+  - rpc_server.cpp
+  - curl_fetch.cpp
+  - tor_fetch.cpp
+- python/
+  - sandbox.cpp
+  - python_bridge.cpp
+  - knowledge_types.py
+  - rules.py
+  - poe.py
+  - scoring.py
+- utils/
+  - config.cpp
+  - logger.cpp
+  - memory.cpp
+  - format.cpp
+  - serialize.cpp
+  - threading.cpp
+  - sleep_inhibitor.cpp
+  - single_instance.cpp
+- infrastructure/
+  - messages.cpp
+  - messages.h
+  - protocol.h
+  - error_handling.cpp
+  - error_handling.h
+
+4.3 Tests: tests/
+- 50+ test files are present, including:
+  - test_poe.cpp
+  - test_poe_e2e.cpp
+  - test_consensus.cpp
+  - test_ledger.cpp
+  - test_wallet.cpp
+  - test_crypto.cpp
+  - test_crypto_secp.cpp
+  - test_quantum.cpp
+  - test_quantum_runtime.cpp
+  - test_network.cpp
+  - test_privacy.cpp
+  - test_agent_runtime.cpp
+  - test_agent_scheduler.cpp
+  - test_agent_score.cpp
+  - test_agent_storage.cpp
+  - test_agent_coordination.cpp
+  - test_agent_draft_queue.cpp
+  - test_agent_submission_pipeline.cpp
+  - test_model.cpp
+  - test_model_loader.cpp
+  - test_marketplace.cpp
+  - test_tor_bridge_provider.cpp
+  - test_tor_route_policy.cpp
+  - test_tor_process_guard.cpp
+  - test_tor_bridge_utils.cpp
+  - test_naan_integration.cpp
+  - test_naan_adversarial.cpp
+  - test_naan_recovery.cpp
+  - test_primary_ui_snapshot.cpp
+  - test_primary_ui_navigation.cpp
+  - test_primary_ui_chat_status.cpp
+  - plus additional tests (network scale, tor managed startup, socks5 timeout, etc.)
+
+4.4 Runtime configuration and data
+- data/
+  - synapsenet.conf
+  - naan_agent_web.conf.example
+
+4.5 Runbooks: docs/
+- tor_shared_external_9150_runbook.md
+- tor_9050_9150_conflict_runbook.md
+- naan_tor_validation_runbook.md
+- linux_tor_obfs4_automation_runbook.md
+- macos_tor_obfs4_automation_runbook.md
+- windows_tor_obfs4_automation_runbook.md
+- tor_managed_cleanup_safety_runbook.md
+- tor_bridge_troubleshooting_runbook.md
+
+4.6 Tooling scripts: tools/
+- download_model.py
+- golden_path_e2e.sh
+- verify_tor_naan_e2e.sh
+- linux_tor_validate.sh
+- macos_tor_validate.sh
+- windows_tor_validate.ps1
+- plus Tor e2e/smoke scripts for Linux/macOS/Windows
+
+4.7 Third-party dependency
+- third_party/
+  - llama.cpp/
+
+4.8 Terminal IDE (Go): crush-main/
+- main.go
+- go.mod
+- schema.json
+- internal/
+  - agent/
+  - tui/
+    - tui.go
+    - components/
+      - chat/
+      - dialogs/
+      - files/
+  - lsp/
+  - config/
+  - session/
+  - shell/
+  - oauth/
+  - db/
+
+==============================================================================
+5. VALIDATION OF THE USER-PROVIDED ARCHITECTURE CHECKLIST
+==============================================================================
+
+Result summary
+- The provided architecture is largely accurate and matches the current repository.
+- Core include/src/tests/docs/tools/crush-main structure is present.
+- One confirmed mismatch in current state:
+  - RELEASES/ is missing at repository root.
+  - Therefore RELEASES/SYNAPSENET_0_1.md is also missing.
+
+Spot checks performed (all present unless noted)
+- .github/, .qodo/, .vscode/ -> present
+- KeplerSynapseNet/CMakeLists.txt, Dockerfile, DOCKER.md, .gitmodules -> present
+- KeplerSynapseNet/data/synapsenet.conf, naan_agent_web.conf.example -> present
+- include/core and src/core PoE/consensus/tor files -> present
+- src/network/handshake.cpp, src/privacy/onion_service.cpp, src/privacy/socks5_proxy.cpp -> present
+- src/web/onion_search_router.cpp, tor_engine.cpp, tor_fetch.cpp -> present
+- tests/test_model_loader.cpp, tests/test_tor_managed_startup_path.cpp -> present
+- crush-main internal folders (agent, tui, lsp, config, session, shell, oauth, db) -> present
+
+==============================================================================
+6. MIRROR POLICY (TWO interfaces txt FOLDERS)
+==============================================================================
+
+Canonical docs path:
+- Synapsenet-main/interfaces txt/
+
+Mirror path:
+- Synapsenet-main/KeplerSynapseNet/interfaces txt/
+
+Sync rule:
+- Keep both folders identical for architecture/spec files.
+- Verify with:
+  - bash KeplerSynapseNet/tools/check_interface_mirrors.sh
+

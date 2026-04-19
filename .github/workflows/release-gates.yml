@@ -1,0 +1,73 @@
+name: Release Gates
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+    tags:
+      - "v*"
+
+jobs:
+  release-gates:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libssl-dev \
+          libncurses-dev \
+          libsqlite3-dev \
+          libsodium-dev \
+          git
+
+    - name: Configure
+      run: |
+        cmake -S KeplerSynapseNet -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DUSE_LLAMA_CPP=OFF \
+          -DBUILD_PRIVACY=OFF \
+          -DBUILD_TESTS=ON \
+          -DSYNAPSE_FETCH_LIBOQS=ON \
+          -DSYNAPSE_REQUIRE_REAL_PQC=ON
+
+    - name: Build
+      run: |
+        cmake --build build --config Release --parallel $(nproc)
+
+    - name: Security gate suite
+      run: |
+        ctest --test-dir build --output-on-failure -R \
+          "ImplantCompatibilityTests|WebExtractionRiskTests|WebConnectorAuditTests|AgentCoordinationTests|NaanAdversarialTests|NaanIntegrationTests|NaanRecoveryTests"
+
+    - name: Quantum gate suite
+      run: |
+        ctest --test-dir build --output-on-failure -R "QuantumTests|QuantumRuntimeTests"
+
+    - name: Determinism replay diff gate
+      run: |
+        ./build/tests/test_determinism_replay > /tmp/update_payload_run_1.txt
+        ./build/tests/test_determinism_replay > /tmp/update_payload_run_2.txt
+        diff -u /tmp/update_payload_run_1.txt /tmp/update_payload_run_2.txt
+
+    - name: Reproducible runtime deps check
+      run: |
+        ldd ./build/synapsed | awk '{print $1}' | LC_ALL=C sort > /tmp/runtime_deps_1.txt
+        ldd ./build/synapsed | awk '{print $1}' | LC_ALL=C sort > /tmp/runtime_deps_2.txt
+        diff -u /tmp/runtime_deps_1.txt /tmp/runtime_deps_2.txt
+
+    - name: Verify clean tree
+      run: |
+        if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+          git status --short
+          exit 1
+        fi

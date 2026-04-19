@@ -1,0 +1,267 @@
+name: Tor External 9150 Live E2E
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bridge-secret-check:
+    runs-on: ubuntu-latest
+    outputs:
+      has_bridges: ${{ steps.check.outputs.has_bridges }}
+    steps:
+      - id: check
+        shell: bash
+        env:
+          TOR_OBFS4_BRIDGES: ${{ secrets.TOR_OBFS4_BRIDGES }}
+        run: |
+          if [ -n "${TOR_OBFS4_BRIDGES:-}" ]; then
+            echo "has_bridges=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "has_bridges=false" >>"$GITHUB_OUTPUT"
+          fi
+
+  linux-external-9150:
+    runs-on: ubuntu-latest
+    needs: bridge-secret-check
+    if: needs.bridge-secret-check.outputs.has_bridges == 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libncurses-dev \
+            libsqlite3-dev \
+            git \
+            tor \
+            obfs4proxy \
+            jq
+
+      - name: Configure + build
+        run: |
+          cmake -S KeplerSynapseNet -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LLAMA_CPP=OFF \
+            -DBUILD_PRIVACY=OFF \
+            -DBUILD_TESTS=ON
+          cmake --build build --config Release --parallel 2
+
+      - name: Run external-9150 Tor e2e + synapsed smoke
+        env:
+          TOR_OBFS4_BRIDGES: ${{ secrets.TOR_OBFS4_BRIDGES }}
+        run: |
+          set -euo pipefail
+          BRIDGES_FILE="$RUNNER_TEMP/tor_obfs4_bridges.txt"
+          printf '%s\n' "$TOR_OBFS4_BRIDGES" >"$BRIDGES_FILE"
+
+          TOR_DATA_DIR="$RUNNER_TEMP/synapsenet_tor_obfs4_9150"
+          rm -rf "$TOR_DATA_DIR"
+
+          bash KeplerSynapseNet/tools/linux_tor_external_9150_e2e.sh \
+            --bridges-file "$BRIDGES_FILE" \
+            --socks-port 9150 \
+            --control-port 9151 \
+            --data-dir "$TOR_DATA_DIR" \
+            --bootstrap-timeout-sec 420 \
+            --probe-max-time 30 \
+            --status-wait-sec 120 \
+            --keep-external-running
+
+          RUN_DIR="$(ls -td KeplerSynapseNet/build/evidence/linux_tor_external_9150_e2e_* | head -n 1)"
+          SNIPPET="$RUN_DIR/synapsenet_external.conf"
+          test -f "$SNIPPET"
+
+          NODE_DIR="$RUNNER_TEMP/synapsed_node"
+          rm -rf "$NODE_DIR"
+
+          TERM=xterm-256color ./build/synapsed -d \
+            -D "$NODE_DIR" \
+            --dev \
+            -p 18444 \
+            -r 18332 \
+            -c "$SNIPPET" &
+          NODE_PID=$!
+
+          for _ in $(seq 1 40); do
+            if curl -sS -H 'content-type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"node.status","params":[]}' \
+              http://127.0.0.1:18332 >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.5
+          done
+
+          curl -sS -H 'content-type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"node.status","params":[]}' \
+            http://127.0.0.1:18332 >"$RUNNER_TEMP/node_status.json"
+
+          python3 - "$RUNNER_TEMP/node_status.json" <<'PY'
+          import json
+          import sys
+          p = sys.argv[1]
+          with open(p, "r", encoding="utf-8") as f:
+              obj = json.load(f)
+          r = obj.get("result", {})
+          assert r.get("torRuntimeMode") == "external", r.get("torRuntimeMode")
+          assert int(r.get("torSocksPort", 0)) == 9150, r.get("torSocksPort")
+          assert bool(r.get("torSocksReachable")) is True, r.get("torSocksReachable")
+          PY
+
+          kill -TERM "$NODE_PID" >/dev/null 2>&1 || true
+          wait "$NODE_PID" >/dev/null 2>&1 || true
+
+          if [ -f "$TOR_DATA_DIR/tor.pid" ]; then
+            TOR_PID="$(tr -d '[:space:]' <"$TOR_DATA_DIR/tor.pid" || true)"
+            if [ -n "$TOR_PID" ]; then
+              kill -TERM "$TOR_PID" >/dev/null 2>&1 || true
+            fi
+          fi
+
+  macos-external-9150:
+    runs-on: macos-latest
+    needs: bridge-secret-check
+    if: needs.bridge-secret-check.outputs.has_bridges == 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install cmake ncurses sqlite3 tor obfs4proxy jq
+
+      - name: Configure + build
+        run: |
+          cmake -S KeplerSynapseNet -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LLAMA_CPP=OFF \
+            -DBUILD_PRIVACY=OFF \
+            -DBUILD_TESTS=ON
+          cmake --build build --config Release --parallel 2
+
+      - name: Run external-9150 Tor e2e + synapsed smoke
+        env:
+          TOR_OBFS4_BRIDGES: ${{ secrets.TOR_OBFS4_BRIDGES }}
+        run: |
+          set -euo pipefail
+          BRIDGES_FILE="$RUNNER_TEMP/tor_obfs4_bridges.txt"
+          printf '%s\n' "$TOR_OBFS4_BRIDGES" >"$BRIDGES_FILE"
+
+          TOR_DATA_DIR="$RUNNER_TEMP/synapsenet_tor_obfs4_9150"
+          rm -rf "$TOR_DATA_DIR"
+
+          bash KeplerSynapseNet/tools/macos_tor_external_9150_e2e.sh \
+            --bridges-file "$BRIDGES_FILE" \
+            --socks-port 9150 \
+            --control-port 9151 \
+            --data-dir "$TOR_DATA_DIR" \
+            --bootstrap-timeout-sec 420 \
+            --probe-max-time 30 \
+            --status-wait-sec 120 \
+            --disable-takeover \
+            --keep-external-running
+
+          RUN_DIR="$(ls -td KeplerSynapseNet/build/evidence/macos_tor_external_9150_e2e_* | head -n 1)"
+          SNIPPET="$RUN_DIR/synapsenet_external.conf"
+          test -f "$SNIPPET"
+
+          NODE_DIR="$RUNNER_TEMP/synapsed_node"
+          rm -rf "$NODE_DIR"
+
+          TERM=xterm-256color ./build/synapsed -d \
+            -D "$NODE_DIR" \
+            --dev \
+            -p 18444 \
+            -r 18332 \
+            -c "$SNIPPET" &
+          NODE_PID=$!
+
+          for _ in $(seq 1 40); do
+            if curl -sS -H 'content-type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"node.status","params":[]}' \
+              http://127.0.0.1:18332 >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.5
+          done
+
+          curl -sS -H 'content-type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"node.status","params":[]}' \
+            http://127.0.0.1:18332 >"$RUNNER_TEMP/node_status.json"
+
+          python3 - "$RUNNER_TEMP/node_status.json" <<'PY'
+          import json
+          import sys
+          p = sys.argv[1]
+          with open(p, "r", encoding="utf-8") as f:
+              obj = json.load(f)
+          r = obj.get("result", {})
+          assert r.get("torRuntimeMode") == "external", r.get("torRuntimeMode")
+          assert int(r.get("torSocksPort", 0)) == 9150, r.get("torSocksPort")
+          assert bool(r.get("torSocksReachable")) is True, r.get("torSocksReachable")
+          PY
+
+          kill -TERM "$NODE_PID" >/dev/null 2>&1 || true
+          wait "$NODE_PID" >/dev/null 2>&1 || true
+
+          if [ -f "$TOR_DATA_DIR/tor.pid" ]; then
+            TOR_PID="$(tr -d '[:space:]' <"$TOR_DATA_DIR/tor.pid" || true)"
+            if [ -n "$TOR_PID" ]; then
+              kill -TERM "$TOR_PID" >/dev/null 2>&1 || true
+            fi
+          fi
+
+  windows-external-9150:
+    runs-on: windows-latest
+    needs: bridge-secret-check
+    if: needs.bridge-secret-check.outputs.has_bridges == 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Tor (Chocolatey)
+        shell: pwsh
+        run: |
+          choco install tor -y
+
+      - name: Run Windows external-9150 Tor e2e
+        shell: pwsh
+        env:
+          TOR_OBFS4_BRIDGES: ${{ secrets.TOR_OBFS4_BRIDGES }}
+        run: |
+          $bridgesPath = Join-Path $env:TEMP "synapsenet_ci_bridges.txt"
+          Set-Content -Path $bridgesPath -Value $env:TOR_OBFS4_BRIDGES -Encoding ascii
+
+          $torCmd = Get-Command tor.exe -ErrorAction Stop
+          $torExe = $torCmd.Source
+          $torRoot = Split-Path -Parent $torExe
+
+          $plugin = Get-ChildItem -Path $torRoot -Recurse -Include "lyrebird.exe","obfs4proxy.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $plugin) {
+            throw "obfs4 transport binary not found under tor root: $torRoot"
+          }
+
+          $dataDir = Join-Path $env:TEMP "synapsenet_tor_obfs4_9150_ci"
+          if (Test-Path -LiteralPath $dataDir) {
+            Remove-Item -LiteralPath $dataDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          pwsh -File KeplerSynapseNet/tools/windows_tor_external_9150_e2e.ps1 `
+            -BridgesFile $bridgesPath `
+            -SocksHost 127.0.0.1 `
+            -SocksPort 9150 `
+            -ControlPort 9151 `
+            -DataDir $dataDir `
+            -BootstrapTimeoutSec 420 `
+            -ProbeMaxTime 30 `
+            -BootstrapCheckTimeoutSec 180 `
+            -KeepExternalRunning `
+            -TorBin $torExe `
+            -Obfs4ProxyBin $plugin.FullName

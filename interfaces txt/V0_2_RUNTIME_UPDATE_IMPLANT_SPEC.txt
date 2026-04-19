@@ -1,0 +1,143 @@
+V0.2 Runtime/Update/Implant Minimal Spec (Implemented Baseline)
+
+Snapshot: February 23, 2026
+Status: Implemented baseline in KeplerSynapseNet core. This document reflects
+only the RPC and test surfaces that exist in this repository.
+
+1) UpdateManifest / UpdateBundle
+- Manifest version: `1` only.
+- Required fields: `bundle_id`, `content_hash`, `chunks[] (hash,size)`, `target`, `protocol_min`, `protocol_max`, `signer`, `signature`.
+- Deterministic rules:
+  - Chunks are canonicalized by `(hash,size)` ascending.
+  - `content_hash = sha256(canonical_chunks_encoding)`.
+  - `bundle_id = sha256(version + content_hash + target + protocol_range + signer + domain_tag)`.
+  - Signature is verified over deterministic payload bytes.
+- Strict reject conditions:
+  - unsupported version
+  - invalid protocol range
+  - invalid target format
+  - chunk count/size/hash violations
+  - non-canonical chunk order
+  - content hash mismatch
+  - bundle id mismatch
+  - invalid signature
+
+2) AgentRuntime Sandbox + AgentScore (Implemented primitives)
+- Sandbox policy is deny-by-default.
+- Capability execution is allowed only when capability and tool schema gates pass.
+- Side effects require policy + explicit side-effect signaling.
+- AgentScore is deterministic and timestamp-driven:
+  - penalties increase violation pressure
+  - decay applies by fixed interval rule
+  - score bands drive runtime policy (full/throttled/review-only/local-draft-only)
+
+3) Implant Compatibility
+- HAL v1 checks:
+  - expected HAL version
+  - protocol version in allowed range
+  - valid payload size and capabilities set
+- Intent v1 checks:
+  - expected schema version
+  - non-unknown intent type
+  - valid source id
+  - payload hash present
+  - permission checks with default-deny model
+- Install safety/governance gate:
+  - manifest must pass strict validation
+  - protocol overlap required
+  - target must be implant scope (`implant/...`)
+  - trusted signer threshold enforced with allowlist + detached signer approvals
+  - policy safety gate blocks rollout when required evidence is missing
+  - machine-readable compatibility/governance reasons include:
+    - `unsupported_hal_version`
+    - `unsupported_intent_schema`
+    - `protocol_incompatible`
+    - `signer_not_trusted`
+    - `trusted_signer_allowlist_empty`
+    - `insufficient_signer_approvals`
+    - `invalid_detached_approval_signature`
+    - `safety_gate_required`
+
+4) RPC surface (v0.2 actual)
+- Update manifest and detached approvals:
+  - `update.manifest.submit`
+  - `update.manifest.fetch`
+  - `update.manifest.list`
+  - `update.manifest.approve`
+  - `update.manifest.approvals`
+- Update installer rollout:
+  - `update.install.state`
+  - `update.install.prepare`
+  - `update.install.advance`
+  - `update.install.commit`
+  - `update.install.rollback`
+- Implant rollout (safety + governance gates):
+  - `implant.update.state`
+  - `implant.update.prepare`
+  - `implant.update.advance`
+  - `implant.update.commit`
+  - `implant.update.rollback`
+- Runtime/NAAN status surfaces used for security/audit visibility:
+  - `naan.status`
+  - `naan.observatory.artifacts`
+  - `naan.observatory.artifact.get`
+  - `naan.observatory.drafts`
+  - `naan.observatory.draft.get`
+  - `naan.pipeline.dryrun`
+  - `naan.pipeline.drain`
+- State payload specifics:
+  - `update.install.state` includes:
+    - installer state snapshot
+    - `policy`
+    - `policyHashNaan`
+    - `policyHashImplant`
+    - `pendingSignerThresholdReady`
+    - `pendingSignerThresholdReason`
+    - `pendingApprovals` and `pendingManifest` when pending bundle metadata is available
+  - `implant.update.state` includes:
+    - installer state snapshot
+    - `policy`
+    - `policyHashNaan`
+    - `policyHashImplant`
+    - pending signer threshold fields (`pendingSignerThresholdReady`, `pendingSignerThresholdReason`)
+    - `safetyRecord` when present
+    - `safetyCommitReady`
+    - `safetyCommitReason`
+- Rejection error prefixes are machine-readable:
+  - `update_signer_threshold_failed:<reason>`
+  - `implant_policy_rejected:<reason>`
+  - `safety_pipeline_rejected:<reason>`
+
+5) Implementation anchors (code)
+- UpdateManifest / deterministic hashing / signature:
+  - KeplerSynapseNet/include/core/update_bundle.h
+  - KeplerSynapseNet/src/core/update_bundle.cpp
+- Update install state machine (A/B, staged rollout, rollback):
+  - KeplerSynapseNet/include/core/update_installer.h
+  - KeplerSynapseNet/src/core/update_installer.cpp
+- Agent runtime sandbox policy:
+  - KeplerSynapseNet/include/core/agent_runtime.h
+  - KeplerSynapseNet/src/core/agent_runtime.cpp
+- Agent score bands + decay:
+  - KeplerSynapseNet/include/core/agent_score.h
+  - KeplerSynapseNet/src/core/agent_score.cpp
+- Implant compatibility and detached signer governance:
+  - KeplerSynapseNet/include/core/implant_compatibility.h
+  - KeplerSynapseNet/src/core/implant_compatibility.cpp
+- Runtime/RPC wiring, security events, policy hash telemetry:
+  - KeplerSynapseNet/src/main.cpp
+
+6) Tests (unit/integration)
+- KeplerSynapseNet/tests/test_update_manifest.cpp
+- KeplerSynapseNet/tests/test_update_installer.cpp
+- KeplerSynapseNet/tests/test_implant_compatibility.cpp
+- KeplerSynapseNet/tests/test_implant_safety_pipeline.cpp
+- KeplerSynapseNet/tests/test_agent_runtime.cpp
+- KeplerSynapseNet/tests/test_agent_score.cpp
+- KeplerSynapseNet/tests/test_determinism_replay.cpp
+
+7) Known limitations (current)
+- Secret redaction guardrails are implemented, but operators should still treat
+  logs/artifacts as sensitive and avoid placing secrets in prompts/payloads.
+- Reproducibility and security gates are enforced in CI workflow, but release
+  gate completion is branch/workflow-state dependent.
