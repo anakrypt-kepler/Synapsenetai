@@ -359,6 +359,7 @@ set(WEB_SOURCES
 )
 
 set(QUANTUM_SOURCES
+    src/quantum/application_signature.cpp
     src/quantum/crypto_selector.cpp
     src/quantum/deterministic_otp.cpp
     src/quantum/dilithium.cpp
