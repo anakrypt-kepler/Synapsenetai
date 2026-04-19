@@ -220,11 +220,11 @@ jobs:
 
     - name: Build PQC targets
       run: |
-        cmake --build build_pqc_real --target synapsed test_quantum test_quantum_runtime test_pqc_ci_validation --parallel $(nproc)
+        cmake --build build_pqc_real --target synapsed test_quantum test_quantum_runtime test_pqc_ci_validation test_pq_integration --parallel $(nproc)
 
     - name: Run real PQC quantum suite
       run: |
-        ctest --test-dir build_pqc_real --output-on-failure -R "QuantumTests|QuantumRuntimeTests|PqcCiValidationTests"
+        ctest --test-dir build_pqc_real --output-on-failure -R "QuantumTests|QuantumRuntimeTests|PqcCiValidationTests|PqIntegrationTests"
 
     - name: Synapsed binary smoke test (release PQ)
       run: |

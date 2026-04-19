@@ -48,6 +48,10 @@ add_executable(test_quantum_runtime test_quantum_runtime.cpp)
 target_link_libraries(test_quantum_runtime synapsed_core)
 add_test(NAME QuantumRuntimeTests COMMAND test_quantum_runtime)
 
+add_executable(test_pq_integration test_pq_integration.cpp)
+target_link_libraries(test_pq_integration synapsed_core Threads::Threads)
+add_test(NAME PqIntegrationTests COMMAND test_pq_integration)
+
 add_executable(test_model test_model.cpp)
 target_link_libraries(test_model synapsed_core Threads::Threads)
 add_test(NAME ModelTests COMMAND test_model)
