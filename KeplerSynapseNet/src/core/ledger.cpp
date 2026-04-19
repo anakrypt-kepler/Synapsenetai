@@ -1,6 +1,8 @@
 #include "core/ledger.h"
+#include "crypto/address.h"
 #include "database/database.h"
 #include "quantum/application_signature.h"
+#include "quantum/identity_registry.h"
 #include <mutex>
 #include <cstring>
 #include <ctime>
@@ -840,12 +842,24 @@ bool Ledger::appendBlock(const Block& block) {
 
 bool Ledger::appendBlockWithValidation(const Block& block) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-    
+
     if (!impl_->validateBlock(block)) {
         return false;
     }
 
-    return impl_->appendBlockUnlocked(block);
+    bool appended = impl_->appendBlockUnlocked(block);
+    if (!appended) return false;
+
+    auto& registry = quantum::IdentityRegistry::instance();
+    for (const auto& ev : block.events) {
+        if (ev.type != EventType::IDENTITY_BIND) continue;
+        if (ev.data.empty()) continue;
+        if (!quantum::isApplicationSignatureEnvelope(ev.data)) continue;
+        const std::string address = crypto::canonicalWalletAddressFromPublicKey(ev.author);
+        if (address.empty()) continue;
+        registry.verifyBinding(address, ev.data);
+    }
+    return true;
 }
 
 Event Ledger::getEvent(uint64_t id) const {

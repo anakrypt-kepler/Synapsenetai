@@ -19,7 +19,8 @@ enum class EventType : uint8_t {
     MODEL_ACCESS = 5,
     PENALTY = 6,
     POE_ENTRY = 7,
-    POE_VOTE = 8
+    POE_VOTE = 8,
+    IDENTITY_BIND = 9
 };
 
 struct Event {
