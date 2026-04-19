@@ -240,17 +240,18 @@ class HybridSig {
 public:
     HybridSig();
     ~HybridSig();
-    
+
     HybridKeyPair generateKeyPair();
+    HybridKeyPair generateKeyPairFromSeed(const std::vector<uint8_t>& masterSeed);
     SignatureResult sign(const std::vector<uint8_t>& message,
                          const HybridKeyPair& secretKey);
     bool verify(const std::vector<uint8_t>& message,
                 const std::vector<uint8_t>& signature,
                 const HybridKeyPair& publicKey);
-    
+
     void setClassicAlgorithm(CryptoAlgorithm algo);
     void setPQCAlgorithm(CryptoAlgorithm algo);
-    
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

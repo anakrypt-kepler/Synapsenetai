@@ -403,6 +403,13 @@ void Wallet::Impl::ensureHybridKeyPair() {
     if (haveFullPair) return;
 
     quantum::HybridSig signer;
+    if (!masterSeed.empty()) {
+        hybridKeyPair = signer.generateKeyPairFromSeed(masterSeed);
+        if (hybridKeyPair.classicPublicKey.size() == WALLET_CLASSIC_PK_SIZE
+            && hybridKeyPair.pqcPublicKey.size() == quantum::DILITHIUM_PUBLIC_KEY_SIZE) {
+            return;
+        }
+    }
     hybridKeyPair = signer.generateKeyPair();
 }
 
