@@ -299,6 +299,32 @@ uint64_t Consensus::submitForValidation(uint64_t eventId, const crypto::PublicKe
     return eventId;
 }
 
+bool Consensus::signVote(Vote& v, const crypto::PrivateKey& key) {
+    v.quantumSignature.clear();
+    v.validator = crypto::derivePublicKey(key);
+    crypto::Hash256 hash = v.computeHash();
+    v.signature = crypto::sign(hash, key);
+    return true;
+}
+
+bool Consensus::signVote(Vote& v, const crypto::PrivateKey& key,
+                          const quantum::HybridKeyPair& quantumKeyPair) {
+    if (!signVote(v, key)) return false;
+    if (quantumKeyPair.classicSecretKey.empty() || quantumKeyPair.pqcSecretKey.empty()) {
+        return false;
+    }
+    std::vector<uint8_t> binding(v.validator.begin(), v.validator.end());
+    std::vector<uint8_t> payload = v.serialize();
+    auto envelope = quantum::signApplicationPayload(
+        "core.consensus.vote",
+        payload,
+        binding,
+        quantumKeyPair);
+    if (envelope.empty()) return false;
+    v.quantumSignature = std::move(envelope);
+    return true;
+}
+
 bool Consensus::vote(const Vote& vote) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     

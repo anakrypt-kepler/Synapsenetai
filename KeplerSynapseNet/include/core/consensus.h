@@ -2,6 +2,7 @@
 
 #include "crypto/crypto.h"
 #include "ledger.h"
+#include "quantum/quantum_security.h"
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -155,6 +156,10 @@ public:
     void setOnVoteCallback(std::function<void(const std::string&, bool)> callback);
     bool proposeBlock(const Block& block, const std::string& proposer);
     bool voteOnProposal(const std::string& proposalId, const std::string& validator, bool approve);
+
+    static bool signVote(Vote& v, const crypto::PrivateKey& key);
+    static bool signVote(Vote& v, const crypto::PrivateKey& key,
+                         const quantum::HybridKeyPair& quantumKeyPair);
     void setOnValidatorJoined(std::function<void(const std::string&)> callback);
     void setOnValidatorLeft(std::function<void(const std::string&)> callback);
     void setLedger(Ledger* ledger);
