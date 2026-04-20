@@ -177,6 +177,7 @@ struct TransferMessage {
     
     std::vector<uint8_t> serialize() const;
     static TransferMessage deserialize(const std::vector<uint8_t>& data);
+    static TransferMessage deserialize(const uint8_t* data, size_t total, size_t& offset);
     std::array<uint8_t, 32> hash() const;
     std::array<uint8_t, 32> txid() const;
 };

@@ -478,7 +478,10 @@
     void handleVersionMessage(const std::string& peerId, const network::Message& msg) {
         if (msg.payload.size() < 40) return;
         synapse::VersionMessage v = synapse::VersionMessage::deserialize(msg.payload);
-        peerHeights_[peerId] = v.startHeight;
+        {
+            std::lock_guard<std::mutex> lock(peerHeightsMtx_);
+            peerHeights_[peerId] = v.startHeight;
+        }
         if (v.startHeight > networkHeight_) {
             networkHeight_ = v.startHeight;
         }
@@ -617,13 +620,20 @@
         (void)msg;
         if (!discovery_ || !network_) return;
         
+        static std::mutex lastSentMtx;
         static std::unordered_map<std::string, uint64_t> lastSent;
         uint64_t now = std::time(nullptr);
-        auto it = lastSent.find(peerId);
-        if (it != lastSent.end() && now - it->second < 60) {
-            return;
+        {
+            std::lock_guard<std::mutex> lock(lastSentMtx);
+            auto it = lastSent.find(peerId);
+            if (it != lastSent.end() && now - it->second < 60) return;
+            lastSent[peerId] = now;
+            if (lastSent.size() > 1000) {
+                for (auto si = lastSent.begin(); si != lastSent.end(); ) {
+                    if (now - si->second > 120) si = lastSent.erase(si); else ++si;
+                }
+            }
         }
-        lastSent[peerId] = now;
         
         auto allPeers = discovery_->getRandomPeers(50);
         synapse::PeersMessage peersMsg;
@@ -728,11 +738,20 @@
         (void)msg;
         if (!discovery_ || !network_) return;
 
+        static std::mutex lastSentMtx;
         static std::unordered_map<std::string, uint64_t> lastSent;
         uint64_t now = std::time(nullptr);
-        auto it = lastSent.find(peerId);
-        if (it != lastSent.end() && now - it->second < 60) return;
-        lastSent[peerId] = now;
+        {
+            std::lock_guard<std::mutex> lock(lastSentMtx);
+            auto it = lastSent.find(peerId);
+            if (it != lastSent.end() && now - it->second < 60) return;
+            lastSent[peerId] = now;
+            if (lastSent.size() > 1000) {
+                for (auto si = lastSent.begin(); si != lastSent.end(); ) {
+                    if (now - si->second > 120) si = lastSent.erase(si); else ++si;
+                }
+            }
+        }
 
         auto allPeers = discovery_->getRandomPeers(50);
         synapse::OnionPeersMessage onionMsg;

@@ -184,49 +184,49 @@ Hash512 sha512(const uint8_t* data, size_t len) {
     return out;
 }
 
+static std::mutex& secpMtx() { static std::mutex m; return m; }
+static secp256k1_context* secpCtx() {
+    static secp256k1_context* ctx = secp256k1_context_create(
+        SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+    return ctx;
+}
+
 KeyPair generateKeyPair() {
     KeyPair kp;
-    static std::mutex mtx;
-    std::lock_guard<std::mutex> lock(mtx);
-    static secp256k1_context* ctx = [] {
-        return secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
-    }();
-
-    // Use OpenSSL RAND_bytes for cryptographically secure private key material
-    for (;;) {
-        if (1 != RAND_bytes(kp.privateKey.data(), PRIVATE_KEY_SIZE)) {
-            kp.privateKey.fill(0);
-            break;
+    {
+        std::lock_guard<std::mutex> lock(secpMtx());
+        auto* ctx = secpCtx();
+        for (;;) {
+            if (1 != RAND_bytes(kp.privateKey.data(), PRIVATE_KEY_SIZE)) {
+                kp.privateKey.fill(0);
+                break;
+            }
+            if (secp256k1_ec_seckey_verify(ctx, kp.privateKey.data())) break;
         }
-        if (secp256k1_ec_seckey_verify(ctx, kp.privateKey.data())) break;
     }
-
     kp.publicKey = derivePublicKey(kp.privateKey);
     return kp;
 }
 
 KeyPair keyPairFromSeed(const Hash256& seed) {
     KeyPair kp;
-    static std::mutex mtx;
-    std::lock_guard<std::mutex> lock(mtx);
-    static secp256k1_context* ctx = [] {
-        return secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
-    }();
-
-    Hash256 cur = seed;
-    for (int i = 0; i < 1000; ++i) {
-        std::memcpy(kp.privateKey.data(), cur.data(), PRIVATE_KEY_SIZE);
-        if (secp256k1_ec_seckey_verify(ctx, kp.privateKey.data())) break;
-        cur = sha256(cur.data(), cur.size());
+    {
+        std::lock_guard<std::mutex> lock(secpMtx());
+        auto* ctx = secpCtx();
+        Hash256 cur = seed;
+        for (int i = 0; i < 1000; ++i) {
+            std::memcpy(kp.privateKey.data(), cur.data(), PRIVATE_KEY_SIZE);
+            if (secp256k1_ec_seckey_verify(ctx, kp.privateKey.data())) break;
+            cur = sha256(cur.data(), cur.size());
+        }
     }
     kp.publicKey = derivePublicKey(kp.privateKey);
     return kp;
 }
 
 PublicKey derivePublicKey(const PrivateKey& privateKey) {
-    static secp256k1_context* ctx = [] {
-        return secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
-    }();
+    std::lock_guard<std::mutex> lock(secpMtx());
+    auto* ctx = secpCtx();
     PublicKey out{};
     secp256k1_pubkey pub{};
     if (!secp256k1_ec_pubkey_create(ctx, &pub, privateKey.data())) {
@@ -242,9 +242,8 @@ PublicKey derivePublicKey(const PrivateKey& privateKey) {
 }
 
 Signature sign(const Hash256& hash, const PrivateKey& privateKey) {
-    static secp256k1_context* ctx = [] {
-        return secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
-    }();
+    std::lock_guard<std::mutex> lock(secpMtx());
+    auto* ctx = secpCtx();
     Signature out{};
     if (!secp256k1_ec_seckey_verify(ctx, privateKey.data())) {
         out.fill(0);
@@ -264,9 +263,8 @@ Signature sign(const Hash256& hash, const PrivateKey& privateKey) {
 }
 
 bool verify(const Hash256& hash, const Signature& signature, const PublicKey& publicKey) {
-    static secp256k1_context* ctx = [] {
-        return secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
-    }();
+    std::lock_guard<std::mutex> lock(secpMtx());
+    auto* ctx = secpCtx();
     secp256k1_pubkey pub{};
     if (!secp256k1_ec_pubkey_parse(ctx, &pub, publicKey.data(), publicKey.size())) return false;
     secp256k1_ecdsa_signature sig{};

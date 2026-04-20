@@ -127,6 +127,7 @@ private:
     };
 
     std::vector<Block> blocks;
+    std::unordered_map<void*, size_t> externalAllocs;
     size_t blockSize;
     size_t maxBlocks;
     size_t totalAllocated;
@@ -172,6 +173,7 @@ public:
 
         void* ptr = std::malloc(size);
         if (ptr) {
+            externalAllocs[ptr] = size;
             totalAllocated += size;
             totalUsed += size;
         }
@@ -189,6 +191,12 @@ public:
             }
         }
 
+        auto ei = externalAllocs.find(ptr);
+        if (ei != externalAllocs.end()) {
+            totalUsed -= ei->second;
+            totalAllocated -= ei->second;
+            externalAllocs.erase(ei);
+        }
         std::free(ptr);
     }
 

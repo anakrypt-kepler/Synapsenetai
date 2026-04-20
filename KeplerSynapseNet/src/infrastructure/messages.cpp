@@ -59,10 +59,35 @@ static uint64_t readVarInt(const uint8_t* p, size_t& offset) {
     uint64_t v = readU64(p + offset); offset += 8; return v;
 }
 
+static uint64_t safeReadVarInt(const uint8_t* p, size_t total, size_t& offset, bool& ok) {
+    if (offset >= total) { ok = false; return 0; }
+    uint8_t first = p[offset++];
+    if (first < 0xfd) return first;
+    if (first == 0xfd) {
+        if (offset + 2 > total) { ok = false; return 0; }
+        uint16_t v = readU16(p + offset); offset += 2; return v;
+    }
+    if (first == 0xfe) {
+        if (offset + 4 > total) { ok = false; return 0; }
+        uint32_t v = readU32(p + offset); offset += 4; return v;
+    }
+    if (offset + 8 > total) { ok = false; return 0; }
+    uint64_t v = readU64(p + offset); offset += 8; return v;
+}
+
 static std::string readString(const uint8_t* p, size_t& offset) {
     uint64_t len = readVarInt(p, offset);
     std::string s(reinterpret_cast<const char*>(p + offset), len);
     offset += len;
+    return s;
+}
+
+static std::string safeReadString(const uint8_t* p, size_t total, size_t& offset, bool& ok) {
+    uint64_t len = safeReadVarInt(p, total, offset, ok);
+    if (!ok) return {};
+    if (len > 4 * 1024 * 1024 || offset + len > total) { ok = false; return {}; }
+    std::string s(reinterpret_cast<const char*>(p + offset), static_cast<size_t>(len));
+    offset += static_cast<size_t>(len);
     return s;
 }
 
@@ -115,6 +140,8 @@ std::vector<uint8_t> VersionMessage::serialize() const {
 
 VersionMessage VersionMessage::deserialize(const std::vector<uint8_t>& data) {
     VersionMessage m;
+    const size_t sz = data.size();
+    if (sz < 66) return m;
     size_t offset = 0;
     const uint8_t* p = data.data();
     m.version = readU32(p + offset); offset += 4;
@@ -122,10 +149,13 @@ VersionMessage VersionMessage::deserialize(const std::vector<uint8_t>& data) {
     m.timestamp = readU64(p + offset); offset += 8;
     std::memcpy(m.addrRecv.data(), p + offset, 16); offset += 16;
     m.portRecv = readU16(p + offset); offset += 2;
+    if (offset + 16 + 2 + 8 > sz) return m;
     std::memcpy(m.addrFrom.data(), p + offset, 16); offset += 16;
     m.portFrom = readU16(p + offset); offset += 2;
     m.nonce = readU64(p + offset); offset += 8;
-    m.userAgent = readString(p, offset);
+    bool ok = true;
+    m.userAgent = safeReadString(p, sz, offset, ok);
+    if (!ok || offset + 9 > sz) return m;
     m.startHeight = readU64(p + offset); offset += 8;
     m.relay = p[offset] != 0;
     return m;
@@ -161,9 +191,13 @@ std::vector<uint8_t> PeersMessage::serialize() const {
 
 PeersMessage PeersMessage::deserialize(const std::vector<uint8_t>& data) {
     PeersMessage m;
+    if (data.empty()) return m;
     size_t offset = 0;
-    uint64_t count = readVarInt(data.data(), offset);
+    bool ok = true;
+    uint64_t count = safeReadVarInt(data.data(), data.size(), offset, ok);
+    if (!ok || count > 1000) return m;
     for (uint64_t i = 0; i < count; i++) {
+        if (offset + 34 > data.size()) break;
         m.peers.push_back(PeerAddress::deserialize(data.data() + offset));
         offset += 34;
     }
@@ -296,16 +330,25 @@ std::vector<uint8_t> KnowledgeMessage::serialize() const {
 
 KnowledgeMessage KnowledgeMessage::deserialize(const std::vector<uint8_t>& data) {
     KnowledgeMessage m;
+    const size_t sz = data.size();
+    if (sz < 8) return m;
     size_t offset = 0;
     const uint8_t* p = data.data();
+    bool ok = true;
     m.id = readU64(p + offset); offset += 8;
-    m.question = readString(p, offset);
-    m.answer = readString(p, offset);
-    m.source = readString(p, offset);
-    uint64_t tagCount = readVarInt(p, offset);
+    m.question = safeReadString(p, sz, offset, ok);
+    if (!ok) return m;
+    m.answer = safeReadString(p, sz, offset, ok);
+    if (!ok) return m;
+    m.source = safeReadString(p, sz, offset, ok);
+    if (!ok) return m;
+    uint64_t tagCount = safeReadVarInt(p, sz, offset, ok);
+    if (!ok || tagCount > 10000) return m;
     for (uint64_t i = 0; i < tagCount; i++) {
-        m.tags.push_back(readString(p, offset));
+        m.tags.push_back(safeReadString(p, sz, offset, ok));
+        if (!ok) return m;
     }
+    if (offset + 33 + 8 + 64 > sz) return m;
     std::memcpy(m.author.data(), p + offset, 33); offset += 33;
     m.timestamp = readU64(p + offset); offset += 8;
     std::memcpy(m.signature.data(), p + offset, 64);
@@ -373,18 +416,29 @@ std::vector<uint8_t> TransferMessage::serialize() const {
 }
 
 TransferMessage TransferMessage::deserialize(const std::vector<uint8_t>& data) {
-    TransferMessage m;
     size_t offset = 0;
-    m.version = readU32(data.data() + offset); offset += 4;
-    uint64_t inputCount = readVarInt(data.data(), offset);
+    return deserialize(data.data(), data.size(), offset);
+}
+
+TransferMessage TransferMessage::deserialize(const uint8_t* data, size_t total, size_t& offset) {
+    TransferMessage m;
+    if (offset + 4 > total) return m;
+    m.version = readU32(data + offset); offset += 4;
+    bool ok = true;
+    uint64_t inputCount = safeReadVarInt(data, total, offset, ok);
+    if (!ok || inputCount > 10000) return m;
     for (uint64_t i = 0; i < inputCount; i++) {
-        m.inputs.push_back(TxInput::deserialize(data.data(), offset));
+        if (offset + 40 > total) return m;
+        m.inputs.push_back(TxInput::deserialize(data, offset));
     }
-    uint64_t outputCount = readVarInt(data.data(), offset);
+    uint64_t outputCount = safeReadVarInt(data, total, offset, ok);
+    if (!ok || outputCount > 10000) return m;
     for (uint64_t i = 0; i < outputCount; i++) {
-        m.outputs.push_back(TxOutput::deserialize(data.data(), offset));
+        if (offset + 9 > total) return m;
+        m.outputs.push_back(TxOutput::deserialize(data, offset));
     }
-    m.lockTime = readU64(data.data() + offset);
+    if (offset + 8 > total) return m;
+    m.lockTime = readU64(data + offset); offset += 8;
     return m;
 }
 
@@ -448,13 +502,15 @@ std::vector<uint8_t> BlockMessage::serialize() const {
 
 BlockMessage BlockMessage::deserialize(const std::vector<uint8_t>& data) {
     BlockMessage m;
-    size_t offset = 0;
+    if (data.size() < 81) return m;
     m.header = BlockHeader::deserialize(data.data());
-    offset = 80;
-    uint64_t txCount = readVarInt(data.data(), offset);
+    size_t offset = 80;
+    bool ok = true;
+    uint64_t txCount = safeReadVarInt(data.data(), data.size(), offset, ok);
+    if (!ok || txCount > 50000) return m;
     for (uint64_t i = 0; i < txCount; i++) {
-        m.transactions.push_back(TransferMessage::deserialize(
-            std::vector<uint8_t>(data.begin() + offset, data.end())));
+        if (offset >= data.size()) break;
+        m.transactions.push_back(TransferMessage::deserialize(data.data(), data.size(), offset));
     }
     return m;
 }
@@ -472,14 +528,20 @@ std::vector<uint8_t> GetBlocksMessage::serialize() const {
 
 GetBlocksMessage GetBlocksMessage::deserialize(const std::vector<uint8_t>& data) {
     GetBlocksMessage m;
+    const size_t sz = data.size();
+    if (sz < 4) return m;
     size_t offset = 0;
+    bool ok = true;
     m.version = readU32(data.data() + offset); offset += 4;
-    uint64_t count = readVarInt(data.data(), offset);
+    uint64_t count = safeReadVarInt(data.data(), sz, offset, ok);
+    if (!ok || count > 10000) return m;
     for (uint64_t i = 0; i < count; i++) {
+        if (offset + 32 > sz) return m;
         std::array<uint8_t, 32> h;
         std::memcpy(h.data(), data.data() + offset, 32); offset += 32;
         m.locatorHashes.push_back(h);
     }
+    if (offset + 32 > sz) return m;
     std::memcpy(m.stopHash.data(), data.data() + offset, 32);
     return m;
 }
@@ -492,6 +554,7 @@ std::vector<uint8_t> PingMessage::serialize() const {
 
 PingMessage PingMessage::deserialize(const std::vector<uint8_t>& data) {
     PingMessage m;
+    if (data.size() < 8) return m;
     m.nonce = readU64(data.data());
     return m;
 }
@@ -504,6 +567,7 @@ std::vector<uint8_t> PongMessage::serialize() const {
 
 PongMessage PongMessage::deserialize(const std::vector<uint8_t>& data) {
     PongMessage m;
+    if (data.size() < 8) return m;
     m.nonce = readU64(data.data());
     return m;
 }
@@ -519,10 +583,14 @@ std::vector<uint8_t> RejectMessage::serialize() const {
 
 RejectMessage RejectMessage::deserialize(const std::vector<uint8_t>& d) {
     RejectMessage m;
+    if (d.size() < 3) return m;
     size_t offset = 0;
-    m.message = readString(d.data(), offset);
+    bool ok = true;
+    m.message = safeReadString(d.data(), d.size(), offset, ok);
+    if (!ok || offset >= d.size()) return m;
     m.code = static_cast<RejectCode>(d[offset++]);
-    m.reason = readString(d.data(), offset);
+    m.reason = safeReadString(d.data(), d.size(), offset, ok);
+    if (!ok || offset + 32 > d.size()) return m;
     std::memcpy(m.data.data(), d.data() + offset, 32);
     return m;
 }
@@ -542,6 +610,7 @@ std::vector<uint8_t> VoteMessage::serialize() const {
 
 VoteMessage VoteMessage::deserialize(const std::vector<uint8_t>& data) {
     VoteMessage m;
+    if (data.size() < 8 + 33 + 1 + 8 + 8 + 64) return m;
     size_t offset = 0;
     const uint8_t* p = data.data();
     m.eventId = readU64(p + offset); offset += 8;
@@ -570,10 +639,15 @@ std::vector<uint8_t> ModelRequestMessage::serialize() const {
 
 ModelRequestMessage ModelRequestMessage::deserialize(const std::vector<uint8_t>& data) {
     ModelRequestMessage m;
+    const size_t sz = data.size();
+    if (sz < 4) return m;
     size_t offset = 0;
     const uint8_t* p = data.data();
-    m.modelId = readString(p, offset);
-    m.prompt = readString(p, offset);
+    bool ok = true;
+    m.modelId = safeReadString(p, sz, offset, ok);
+    if (!ok) return m;
+    m.prompt = safeReadString(p, sz, offset, ok);
+    if (!ok || offset + 4 + 4 + 33 + 8 + 64 > sz) return m;
     m.maxTokens = readU32(p + offset); offset += 4;
     uint32_t tempBits = readU32(p + offset); offset += 4;
     std::memcpy(&m.temperature, &tempBits, sizeof(float));
@@ -596,10 +670,15 @@ std::vector<uint8_t> ModelResponseMessage::serialize() const {
 
 ModelResponseMessage ModelResponseMessage::deserialize(const std::vector<uint8_t>& data) {
     ModelResponseMessage m;
+    const size_t sz = data.size();
+    if (sz < 4) return m;
     size_t offset = 0;
     const uint8_t* p = data.data();
-    m.requestId = readString(p, offset);
-    m.response = readString(p, offset);
+    bool ok = true;
+    m.requestId = safeReadString(p, sz, offset, ok);
+    if (!ok) return m;
+    m.response = safeReadString(p, sz, offset, ok);
+    if (!ok || offset + 4 + 8 + 33 + 64 > sz) return m;
     m.tokensUsed = readU32(p + offset); offset += 4;
     m.latencyMs = readU64(p + offset); offset += 8;
     std::memcpy(m.provider.data(), p + offset, 33); offset += 33;

@@ -4439,7 +4439,10 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
     
 	    void handlePeerDisconnected(const network::Peer& peer) {
 	        utils::Logger::info("Peer disconnected: " + peer.id);
-	        peerHeights_.erase(peer.id);
+	        {
+	            std::lock_guard<std::mutex> lock(peerHeightsMtx_);
+	            peerHeights_.erase(peer.id);
+	        }
             {
                 std::lock_guard<std::mutex> lock(peerHelloMtx_);
                 peerHelloById_.erase(peer.id);
@@ -4454,8 +4457,11 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
 	        }
 	        
 	        uint64_t maxHeight = 0;
-	        for (const auto& [id, height] : peerHeights_) {
-	            if (height > maxHeight) maxHeight = height;
+	        {
+	            std::lock_guard<std::mutex> lock(peerHeightsMtx_);
+	            for (const auto& [id, height] : peerHeights_) {
+	                if (height > maxHeight) maxHeight = height;
+	            }
 	        }
 	        networkHeight_ = maxHeight;
 	    }
@@ -4463,18 +4469,25 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
     uint64_t getMemoryUsage() const {
         struct rusage usage;
         if (getrusage(RUSAGE_SELF, &usage) == 0) {
-            return usage.ru_maxrss * 1024;
+#ifdef __APPLE__
+            return static_cast<uint64_t>(usage.ru_maxrss);
+#else
+            return static_cast<uint64_t>(usage.ru_maxrss) * 1024;
+#endif
         }
         return 0;
     }
     
     uint64_t getDiskUsage() const {
         uint64_t total = 0;
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(config_.dataDir)) {
-            if (entry.is_regular_file()) {
-                total += entry.file_size();
+        try {
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(
+                     config_.dataDir, std::filesystem::directory_options::skip_permission_denied)) {
+                if (entry.is_regular_file()) {
+                    total += entry.file_size();
+                }
             }
-        }
+        } catch (...) {}
         return total;
     }
     
@@ -4522,6 +4535,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             json torBridgeProviderMeta_ = json::object();
             std::atomic<uint64_t> torBridgeProviderMetaUpdatedAt_{0};
 	    
+	    mutable std::mutex peerHeightsMtx_;
 	    std::unordered_map<std::string, uint64_t> peerHeights_;
         mutable std::mutex peerHelloMtx_;
         std::unordered_map<std::string, core::PeerHelloInfo> peerHelloById_;
