@@ -4,7 +4,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Version-0.1.0--alphaV4-000000?style=for-the-badge&labelColor=000000" alt="Version" />
-  <img src="https://img.shields.io/badge/Status-In_Development-000000?style=for-the-badge&labelColor=000000" alt="Status" />
+  <img src="https://img.shields.io/badge/Status-Released-000000?style=for-the-badge&labelColor=000000" alt="Status" />
   <img src="https://img.shields.io/badge/Migration-Go_to_C++-000000?style=for-the-badge&labelColor=000000" alt="Migration" />
   <img src="https://img.shields.io/badge/Frontend-Tauri_%2B_Svelte-000000?style=for-the-badge&labelColor=000000" alt="Frontend" />
 </p>
