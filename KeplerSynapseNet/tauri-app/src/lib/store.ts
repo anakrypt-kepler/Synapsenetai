@@ -7,8 +7,10 @@ export type TabId =
   | "transfers"
   | "knowledge"
   | "naan"
+  | "messages"
   | "ide"
   | "network"
+  | "rental"
   | "settings";
 
 export const activeTab = writable<TabId>("dashboard");
@@ -36,9 +38,9 @@ export const connectionColor = derived(nodeStatus, ($s) => {
 });
 
 export const connectionLabel = derived(nodeStatus, ($s) => {
-  if ($s.connection === "tor") return "Tor";
-  if ($s.connection === "clearnet") return "Clearnet";
-  return "Disconnected";
+  if ($s.connection === "tor") return "TOR";
+  if ($s.connection === "clearnet") return "NET";
+  return "OFF";
 });
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
@@ -50,9 +52,7 @@ export function startStatusPolling() {
       const raw = await getStatus();
       const parsed = parseStatus(raw);
       nodeStatus.set(parsed);
-    } catch {
-      // engine not ready
-    }
+    } catch {}
   }, 2000);
 }
 
@@ -64,12 +64,14 @@ export function stopStatusPolling() {
 }
 
 export const tabs: { id: TabId; label: string }[] = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "wallet", label: "Wallet" },
-  { id: "transfers", label: "Transfers" },
-  { id: "knowledge", label: "Knowledge" },
-  { id: "naan", label: "NAAN Agent" },
+  { id: "dashboard", label: "MAIN" },
+  { id: "wallet", label: "WALLET" },
+  { id: "transfers", label: "SEND" },
+  { id: "knowledge", label: "KNOW" },
+  { id: "naan", label: "NAAN" },
+  { id: "messages", label: "MSG" },
   { id: "ide", label: "IDE" },
-  { id: "network", label: "Network" },
-  { id: "settings", label: "Settings" },
+  { id: "network", label: "NET" },
+  { id: "rental", label: "RENT" },
+  { id: "settings", label: "SET" },
 ];

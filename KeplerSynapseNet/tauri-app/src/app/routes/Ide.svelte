@@ -1,39 +1,47 @@
 <script lang="ts">
-  import MonacoEditor from "../components/MonacoEditor.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
-  import { poeSubmitCode } from "../../lib/rpc";
+  import { poeSubmitCode, rpcCall } from "../../lib/rpc";
 
-  let editorRef: MonacoEditor;
+  let files: { name: string; content: string }[] = [
+    { name: "main.rs", content: '// SynapseNet code\nfn main() {\n    println!("Hello, SynapseNet!");\n}' },
+  ];
+  let activeFile = 0;
   let submitResult = "";
 
-  let files = [
-    { name: "untitled.py", content: "", language: "python" },
-  ];
-
-  async function submitPatch() {
-    submitResult = "";
-    if (!editorRef) return;
-    const code = editorRef.getValue();
-    if (!code.trim()) return;
+  async function submitToPoe() {
     try {
-      const result = await poeSubmitCode(code);
-      submitResult = "Submitted to PoE CODE.";
-    } catch (e: any) {
-      submitResult = `Error: ${e.message || e}`;
+      const file = files[activeFile];
+      const result = await poeSubmitCode(file.name, file.content);
+      const parsed = JSON.parse(result);
+      submitResult = parsed.message || "SUBMITTED";
+    } catch {
+      submitResult = "FAILED";
     }
   }
 </script>
 
 <div class="ide-layout">
   <div class="ide-editor">
-    <div class="ide-toolbar">
-      <button class="btn-secondary poe-btn" on:click={submitPatch}>PoE CODE Submit</button>
-      {#if submitResult}
-        <span class="submit-result">{submitResult}</span>
-      {/if}
+    <div class="editor-tabs">
+      {#each files as file, i}
+        <button class="editor-tab" class:active={activeFile === i} on:click={() => (activeFile = i)}>
+          {file.name}
+        </button>
+      {/each}
     </div>
-    <div class="editor-area">
-      <MonacoEditor bind:this={editorRef} {files} />
+    <div class="editor-content">
+      <textarea
+        class="code-textarea"
+        bind:value={files[activeFile].content}
+        spellcheck="false"
+      ></textarea>
+    </div>
+    <div class="editor-status">
+      <span>LN:{files[activeFile].content.split("\n").length}</span>
+      <button class="btn-secondary sub-btn" on:click={submitToPoe}>[ POE ]</button>
+      {#if submitResult}
+        <span class="sub-result">{submitResult}</span>
+      {/if}
     </div>
   </div>
   <div class="ide-chat">
@@ -44,46 +52,93 @@
 <style>
   .ide-layout {
     display: flex;
-    flex-direction: column;
     height: 100%;
-    background: var(--bg);
+    background: #000000;
   }
 
   .ide-editor {
-    flex: 6;
+    flex: 1;
     display: flex;
     flex-direction: column;
-    min-height: 0;
+    border-right: 1px solid var(--border);
+    min-width: 0;
   }
 
-  .ide-toolbar {
+  .editor-tabs {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 4px 10px;
     border-bottom: 1px solid var(--border);
-    background: var(--surface);
     flex-shrink: 0;
   }
 
-  .poe-btn {
-    font-size: 11px;
-    padding: 3px 10px;
-    border-radius: 4px;
-  }
-
-  .submit-result {
-    font-size: 11px;
+  .editor-tab {
+    padding: 4px 12px;
+    font-size: 8px;
+    border: none;
+    border-right: 1px solid var(--border);
+    border-radius: 0;
+    background: none;
     color: var(--text-secondary);
+    letter-spacing: 1px;
   }
 
-  .editor-area {
+  .editor-tab.active {
+    background: var(--accent-muted);
+    color: var(--text-primary);
+  }
+
+  .editor-content {
     flex: 1;
-    min-height: 0;
+    overflow: hidden;
+  }
+
+  .code-textarea {
+    width: 100%;
+    height: 100%;
+    resize: none;
+    border: none;
+    background: #000000;
+    color: var(--text-primary);
+    font-family: 'Silkscreen', monospace;
+    font-size: 10px;
+    padding: 10px;
+    line-height: 1.8;
+    tab-size: 4;
+    white-space: pre;
+    overflow: auto;
+  }
+
+  .code-textarea:focus {
+    outline: none;
+    border: none;
+  }
+
+  .editor-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 8px;
+    border-top: 1px solid var(--border);
+    font-size: 8px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+    letter-spacing: 1px;
+  }
+
+  .sub-btn {
+    font-size: 8px;
+    padding: 2px 8px;
+  }
+
+  .sub-result {
+    font-size: 8px;
+    color: var(--ok);
   }
 
   .ide-chat {
-    flex: 4;
-    min-height: 0;
+    width: 300px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 </style>

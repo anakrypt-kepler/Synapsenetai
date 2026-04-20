@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import "../styles/global.css";
   import "../styles/dark.css";
-  import "../styles/light.css";
   import { activeTab, showSetupWizard, startStatusPolling, stopStatusPolling } from "../lib/store";
   import { checkFirstLaunch, initEngine } from "../lib/rpc";
   import TopBar from "./components/TopBar.svelte";
@@ -12,8 +12,10 @@
   import Transfers from "./routes/Transfers.svelte";
   import Knowledge from "./routes/Knowledge.svelte";
   import NaanAgent from "./routes/NaanAgent.svelte";
+  import Messages from "./routes/Messages.svelte";
   import Ide from "./routes/Ide.svelte";
   import Network from "./routes/Network.svelte";
+  import Rental from "./routes/Rental.svelte";
   import Settings from "./routes/Settings.svelte";
 
   let ready = false;
@@ -66,10 +68,14 @@
           <Knowledge />
         {:else if $activeTab === "naan"}
           <NaanAgent />
+        {:else if $activeTab === "messages"}
+          <Messages />
         {:else if $activeTab === "ide"}
           <Ide />
         {:else if $activeTab === "network"}
           <Network />
+        {:else if $activeTab === "rental"}
+          <Rental />
         {:else if $activeTab === "settings"}
           <Settings />
         {/if}
@@ -85,7 +91,7 @@
     flex-direction: column;
     height: 100vh;
     width: 100vw;
-    background: var(--bg);
+    background: #000000;
   }
 
   .app-content {

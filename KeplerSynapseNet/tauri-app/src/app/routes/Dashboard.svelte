@@ -1,96 +1,116 @@
 <script lang="ts">
   import { nodeStatus, activeTab } from "../../lib/store";
 
-  function goSend() {
-    activeTab.set("transfers");
-  }
+  $: isTor = $nodeStatus.connection === "tor";
 
-  function goKnowledge() {
-    activeTab.set("knowledge");
-  }
-
-  function goIde() {
-    activeTab.set("ide");
-  }
+  function goSend() { activeTab.set("transfers"); }
+  function goKnowledge() { activeTab.set("knowledge"); }
+  function goIde() { activeTab.set("ide"); }
+  function goWallet() { activeTab.set("wallet"); }
+  function goNaan() { activeTab.set("naan"); }
+  function goRental() { activeTab.set("rental"); }
 </script>
 
 <div class="content-area">
-  <div class="dashboard-balance">
-    <div class="card-header">NGT Balance</div>
-    <div class="balance-value">{$nodeStatus.balance} <span class="balance-unit">NGT</span></div>
+  <div class="balance-block">
+    <div class="card-header">BALANCE</div>
+    <div class="balance-value">{$nodeStatus.balance}<span class="balance-unit">NGT</span></div>
   </div>
 
   <div class="grid-2">
     <div class="card">
-      <div class="card-header">NAAN Agent</div>
-      <div class="card-value">{$nodeStatus.naan_state.toUpperCase()}</div>
+      <div class="card-header">CONNECTION</div>
+      <div class="card-value">
+        {#if isTor}
+          <span class="conn-dot tor-blink"></span>TOR
+        {:else if $nodeStatus.connection === "clearnet"}
+          <span class="conn-dot on"></span>NET
+        {:else}
+          <span class="conn-dot"></span>OFF
+        {/if}
+      </div>
     </div>
     <div class="card">
-      <div class="card-header">Connected Peers</div>
+      <div class="card-header">PEERS</div>
       <div class="card-value">{$nodeStatus.peers}</div>
     </div>
   </div>
 
   <div class="grid-2">
     <div class="card">
-      <div class="card-header">Connection</div>
-      <div class="card-value">
-        {#if $nodeStatus.connection === "tor"}
-          <span class="status-dot green"></span> Tor
-        {:else if $nodeStatus.connection === "clearnet"}
-          <span class="status-dot yellow"></span> Clearnet
-        {:else}
-          <span class="status-dot red"></span> Disconnected
-        {/if}
-      </div>
+      <div class="card-header">NAAN AGENT</div>
+      <div class="card-value">{$nodeStatus.naan_state.toUpperCase()}</div>
     </div>
     <div class="card">
-      <div class="card-header">Last Synced Block</div>
+      <div class="card-header">BLOCK</div>
       <div class="card-value">#{$nodeStatus.last_block}</div>
     </div>
   </div>
 
   <div class="card">
-    <div class="card-header">AI Model</div>
+    <div class="card-header">AI MODEL</div>
     <div class="card-value">
       {#if $nodeStatus.model_loaded}
-        Loaded: {$nodeStatus.model_name}
+        {$nodeStatus.model_name}
       {:else}
-        Not loaded
+        NONE
       {/if}
     </div>
   </div>
 
-  <div class="section-title">Quick Actions</div>
+  <div class="section-title">ACTIONS</div>
   <div class="grid-3">
-    <button class="btn-secondary" on:click={goSend}>Send NGT</button>
-    <button class="btn-secondary" on:click={goKnowledge}>Submit Knowledge</button>
-    <button class="btn-secondary" on:click={goIde}>Open IDE</button>
+    <button class="btn-secondary" on:click={goSend}>[ SEND ]</button>
+    <button class="btn-secondary" on:click={goWallet}>[ WALLET ]</button>
+    <button class="btn-secondary" on:click={goKnowledge}>[ KNOW ]</button>
+  </div>
+  <div class="grid-3">
+    <button class="btn-secondary" on:click={goIde}>[ IDE ]</button>
+    <button class="btn-secondary" on:click={goNaan}>[ NAAN ]</button>
+    <button class="btn-secondary" on:click={goRental}>[ RENT ]</button>
   </div>
 </div>
 
 <style>
-  .dashboard-balance {
+  .balance-block {
     text-align: center;
-    padding: 32px 0;
+    padding: 24px 0;
     border: 1px solid var(--border);
-    border-radius: 6px;
-    margin-bottom: 12px;
-    background: var(--surface);
-    box-shadow: var(--shadow-sm);
+    margin-bottom: 8px;
   }
 
   .balance-value {
-    font-size: 38px;
+    font-size: 28px;
     font-weight: 700;
     color: var(--text-primary);
-    letter-spacing: -0.5px;
   }
 
   .balance-unit {
-    font-size: 16px;
+    font-size: 10px;
     font-weight: 400;
     color: var(--text-secondary);
-    margin-left: 4px;
+    margin-left: 6px;
+  }
+
+  .conn-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background: var(--err);
+    margin-right: 6px;
+  }
+
+  .conn-dot.on {
+    background: var(--text-primary);
+  }
+
+  @keyframes tor-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.15; }
+  }
+
+  .conn-dot.tor-blink {
+    background: var(--text-primary);
+    animation: tor-blink 1.5s step-end infinite;
   }
 </style>

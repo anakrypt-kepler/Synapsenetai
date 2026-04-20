@@ -1,6 +1,7 @@
 <script lang="ts">
   import { nodeStatus } from "../../lib/store";
   import { rpcCall } from "../../lib/rpc";
+  import { generateQRSvg } from "../../lib/qr";
 
   let walletAddress = "";
   let seedVisible = false;
@@ -8,12 +9,14 @@
   let passwordInput = "";
   let passwordRequired = false;
   let copied = false;
+  let qrSvg = "";
 
   async function loadWalletInfo() {
     try {
       const result = await rpcCall("wallet.info", "{}");
       const info = JSON.parse(result);
       walletAddress = info.address || "";
+      if (walletAddress) qrSvg = generateQRSvg(walletAddress, 3);
     } catch {}
   }
 
@@ -31,10 +34,7 @@
 
   async function confirmShowSeed() {
     try {
-      const result = await rpcCall(
-        "wallet.seed",
-        JSON.stringify({ password: passwordInput })
-      );
+      const result = await rpcCall("wallet.seed", JSON.stringify({ password: passwordInput }));
       const parsed = JSON.parse(result);
       seedPhrase = parsed.seed || "";
       seedVisible = true;
@@ -51,9 +51,7 @@
   }
 
   async function exportWallet() {
-    try {
-      await rpcCall("wallet.export", "{}");
-    } catch {}
+    try { await rpcCall("wallet.export", "{}"); } catch {}
   }
 
   async function importWallet() {
@@ -74,58 +72,51 @@
 
 <div class="content-area">
   <div class="card">
-    <div class="card-header">NGT Balance</div>
+    <div class="card-header">BALANCE</div>
     <div class="card-value">{$nodeStatus.balance} NGT</div>
   </div>
 
   <div class="card">
-    <div class="card-header">Wallet Address</div>
+    <div class="card-header">ADDRESS</div>
     <div class="address-row">
-      <code class="address-text">{walletAddress || "Loading..."}</code>
+      <code class="address-text">{walletAddress || "..."}</code>
       <button class="btn-secondary" on:click={copyAddress}>
-        {copied ? "Copied" : "Copy"}
+        {copied ? "OK" : "[ COPY ]"}
       </button>
     </div>
   </div>
 
   <div class="card">
-    <div class="card-header">QR Code</div>
-    <div class="qr-placeholder">
-      <svg viewBox="0 0 100 100" width="120" height="120">
-        <rect x="10" y="10" width="20" height="20" fill="var(--text-primary)" />
-        <rect x="70" y="10" width="20" height="20" fill="var(--text-primary)" />
-        <rect x="10" y="70" width="20" height="20" fill="var(--text-primary)" />
-        <rect x="40" y="40" width="20" height="20" fill="var(--text-primary)" />
-        <rect x="35" y="10" width="5" height="5" fill="var(--text-primary)" />
-        <rect x="45" y="15" width="5" height="5" fill="var(--text-primary)" />
-        <rect x="55" y="10" width="5" height="5" fill="var(--text-primary)" />
-        <rect x="35" y="55" width="5" height="5" fill="var(--text-primary)" />
-        <rect x="60" y="45" width="5" height="5" fill="var(--text-primary)" />
-        <rect x="15" y="45" width="5" height="5" fill="var(--text-primary)" />
-      </svg>
+    <div class="card-header">QR CODE</div>
+    <div class="qr-container">
+      {#if qrSvg}
+        {@html qrSvg}
+      {:else}
+        <div class="qr-empty">NO ADDRESS</div>
+      {/if}
     </div>
   </div>
 
-  <div class="section-title">Seed Phrase</div>
+  <div class="section-title">SEED PHRASE</div>
   {#if !seedVisible && !passwordRequired}
-    <button class="btn-secondary" on:click={showSeed}>Show Seed Phrase</button>
+    <button class="btn-secondary" on:click={showSeed}>[ SHOW SEED ]</button>
   {/if}
   {#if passwordRequired}
     <div class="form-group">
-      <label>Enter password to reveal seed phrase</label>
-      <input type="password" bind:value={passwordInput} placeholder="Password" />
+      <label>ENTER PASSWORD</label>
+      <input type="password" bind:value={passwordInput} placeholder="..." />
     </div>
-    <button class="btn-primary" on:click={confirmShowSeed}>Confirm</button>
+    <button class="btn-primary" on:click={confirmShowSeed}>[ CONFIRM ]</button>
   {/if}
   {#if seedVisible}
     <div class="seed-display">{seedPhrase}</div>
-    <button class="btn-secondary" on:click={hideSeed}>Hide</button>
+    <button class="btn-secondary" on:click={hideSeed}>[ HIDE ]</button>
   {/if}
 
-  <div class="section-title">Wallet Management</div>
+  <div class="section-title">MANAGE</div>
   <div class="grid-2">
-    <button class="btn-secondary" on:click={exportWallet}>Export Wallet</button>
-    <button class="btn-secondary" on:click={importWallet}>Import Wallet</button>
+    <button class="btn-secondary" on:click={exportWallet}>[ EXPORT ]</button>
+    <button class="btn-secondary" on:click={importWallet}>[ IMPORT ]</button>
   </div>
 </div>
 
@@ -133,31 +124,35 @@
   .address-row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-top: 8px;
+    gap: 8px;
+    margin-top: 6px;
   }
 
   .address-text {
-    font-size: 11px;
+    font-size: 8px;
     color: var(--text-primary);
     word-break: break-all;
     flex: 1;
-    line-height: 1.5;
+    line-height: 1.6;
   }
 
-  .qr-placeholder {
+  .qr-container {
     display: flex;
     justify-content: center;
-    padding: 20px;
+    padding: 16px;
+  }
+
+  .qr-empty {
+    font-size: 8px;
+    color: var(--text-secondary);
   }
 
   .seed-display {
-    padding: 14px;
-    border: 1px solid var(--status-yellow);
-    border-radius: 4px;
-    background: var(--status-yellow-muted);
-    font-size: 13px;
-    line-height: 1.8;
+    padding: 12px;
+    border: 1px solid var(--warn);
+    background: var(--warn-muted);
+    font-size: 10px;
+    line-height: 2;
     word-spacing: 4px;
     color: var(--text-primary);
     margin-bottom: 8px;
