@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/SynapseNet-0.1.0--alpha-000000?style=for-the-badge&labelColor=000000" alt="Version" />
+  <img src="https://img.shields.io/badge/SynapseNet-0.1.0--alphaV4-000000?style=for-the-badge&labelColor=000000" alt="Version" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-000000?style=for-the-badge&labelColor=000000" alt="License" /></a>
   <img src="https://img.shields.io/badge/Status-Active_Development-000000?style=for-the-badge&labelColor=000000" alt="Status" />
 </p>
@@ -41,11 +41,11 @@
 
 ---
 
-> **Alpha Release**
+> **Alpha Release — V4**
 >
-> This is the alpha version of SynapseNet. The codebase has been developed locally since 2023, outside of GitHub — this is its first public release. The code is open for anyone to explore: look at the architecture, run it locally, see how mining works on a local devnet, trace the code structure and functions. This is not production-ready. Expect bugs. The long-term goal is to move everything from the terminal into a proper graphical interface so it's accessible to newcomers, not just people comfortable with CLI tools. Right now you can build it, poke around, break things, and report what you find. Beta is still a ways out — there's a lot of work left to get the UX where it needs to be.
+> This is the alpha version of SynapseNet. The codebase has been developed locally since 2023, outside of GitHub — this is its first public release. V4 eliminates all Go from the project. Every component is now native C++ with a Tauri desktop app (Rust + Svelte) on top. The code is open for anyone to explore: look at the architecture, run it locally, see how mining works on a local devnet, trace the code structure and functions. This is not production-ready. Expect bugs. Right now you can build it, poke around, break things, and report what you find. Beta is still a ways out — there's a lot of work left to get the UX where it needs to be.
 >
-> The website and VPS infrastructure are currently in development. Once the alpha release is finished, the public rollout will follow soon. Until then, I am continuing to stabilize the alpha, fix bugs, ship hardening updates, and add new improvements.
+> The website and VPS infrastructure are currently in development. Seed nodes will be available over Tor hidden services. Until then, I am continuing to stabilize the alpha, fix bugs, ship hardening updates, and add new improvements.
 
 ---
 
@@ -90,24 +90,30 @@ Web1 was read. Web2 was read-write. Web3 was read-write-own. **Web4 is read-writ
 ```
 KeplerSynapseNet/
   src/
-    main.cpp             Node orchestration, RPC, P2P dispatch
-    network/             Socket layer + peer discovery + sync
+    main.cpp             Node entry point
+    node/                SynapseNet node daemon (synapsed)
+    network/             Socket layer + peer discovery + Tor mesh
     core/                Ledger, Transfer, Knowledge, PoE v1, Consensus
+    crypto/              secp256k1, AES-256-GCM, post-quantum Kyber/Dilithium
     model/               Model loading / inference / marketplace
     web/                 Web4 search + Tor + context injection
+    ide/                 IDE engine — agent, session, LSP, MCP, OAuth, FFI
     tui/                 ncurses terminal UI
-  include/               Public headers
+  include/               Public headers + synapsed_ffi.h (C ABI)
   tests/                 C++ tests (ctest, 267 passing)
-  ide/                   IDE engine (C++ — agent, session, LSP, MCP)
+  tauri-app/             Desktop app — Rust (Tauri) + Svelte frontend
   third_party/
     llama.cpp            Local LLM inference engine
 ```
 
 **synapsed** — C++ node daemon  
-P2P networking, PoE v1 consensus, NGT ledger, local GGUF model inference, wallet management, optional Tor routing, ncurses TUI, integrated IDE engine with agent coordinator, LSP client, and MCP server.
+P2P networking over Tor-only mesh, PoE v1 consensus, NGT ledger, local GGUF model inference, wallet management, Tor hidden service routing, ncurses TUI, integrated IDE engine with agent coordinator, LSP client, and MCP server. Exposes `libsynapsed` shared library with stable C ABI for Tauri FFI.
+
+**Tauri desktop app** — `tauri-app/`  
+Svelte frontend, Rust FFI bridge to libsynapsed, dashboard, wallet, knowledge explorer, NAAN agent panel, settings.
 
 **VS Code extension** — `ide/synapsenet-vscode/`  
-GitHub Quests workflow, chat panel with Web4 injection, remote model sessions.
+GitHub Quests workflow, chat panel with Web4 injection, remote model sessions. Talks directly to synapsed C++ — no Go middleman.
 
 ---
 
@@ -188,7 +194,10 @@ Full architecture docs are in `interfaces txt/`. For the organized documentation
 <p align="center">
   <img src="https://img.shields.io/badge/C++-000000?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++" />
   <img src="https://img.shields.io/badge/C-000000?style=for-the-badge&logo=c&logoColor=white" alt="C" />
-  <img src="https://img.shields.io/badge/Go-000000?style=for-the-badge&logo=go&logoColor=white" alt="Go" />
+  <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust" />
+  <img src="https://img.shields.io/badge/TypeScript-000000?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Svelte-000000?style=for-the-badge&logo=svelte&logoColor=white" alt="Svelte" />
+  <img src="https://img.shields.io/badge/Tauri-000000?style=for-the-badge&logo=tauri&logoColor=white" alt="Tauri" />
   <img src="https://img.shields.io/badge/CMake-000000?style=for-the-badge&logo=cmake&logoColor=white" alt="CMake" />
   <img src="https://img.shields.io/badge/Docker-000000?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/Tor-000000?style=for-the-badge&logo=torproject&logoColor=white" alt="Tor" />
@@ -218,13 +227,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Code contributions can be submitted as P
 
 ## Changelog
 
-### 0.1.0-alphaV4 (In Development)
+### 0.1.0-alphaV4 (April 19, 2026)
 
 - Eliminated all Go code from the project; every component formerly in crush-main is now native C++
 - Added IDE engine: agent coordinator, tool suite (bash, edit, grep, glob, fetch, write, download, web search), session management, config, patch, skills, LSP client, MCP server, and OAuth
-- Exposed synapsed as a shared library (libsynapsed) with a stable C ABI for Tauri FFI integration
+- Exposed synapsed as a shared library (libsynapsed) with a stable C ABI (`synapsed_ffi.h`) for Tauri FFI integration
+- Built Tauri desktop application with Svelte frontend, Rust FFI bridge, and full node dashboard
 - Removed crush-main directory, go.mod, go.sum, and all Go build targets from CI
-- Planned next: Tauri desktop application with Svelte frontend consuming libsynapsed
+- Implemented Tor-only decentralized peer discovery — every node acts as server via hidden service, no VPS required
+- Added `get_onion_peers` / `onion_peers` wire protocol for .onion peer address exchange
+- Automatic Tor binary provisioning via CMake bootstrap script
+- Fixed 12 bugs: deserialization bounds checking across all wire message types, peerHeights data race, MemoryPool accounting leak, static rate-limiter maps unbounded growth, macOS memory reporting, getDiskUsage crash on missing dirs, secp256k1 context thread safety
 
 ### 0.1.0-alphaV3.7 (March 27, 2026)
 
