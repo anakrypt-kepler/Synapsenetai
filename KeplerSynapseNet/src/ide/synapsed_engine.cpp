@@ -357,7 +357,7 @@ std::string SynapsedEngine::fetchViaTor(const std::string& url) const {
     std::string cmd = "curl -s -k --max-time " + std::to_string(timeout) +
         " --socks5-hostname 127.0.0.1:9050 -L "
         "-H \"User-Agent: " + ua + "\" "
-        "-c /tmp/synapsed_tor_cookies.txt -b /tmp/synapsed_tor_cookies.txt "
+        "-c " + dataDir_ + "/tor_cookies.txt -b " + dataDir_ + "/tor_cookies.txt "
         "\"" + url + "\" 2>/dev/null";
     return execCmd(cmd);
 }
@@ -636,19 +636,31 @@ std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
     if (imgUrl.empty()) return "";
 
     std::string ts = std::to_string(nowMillis());
-    std::string tmpImg = "/tmp/synapsed_captcha_" + ts + ".png";
-    std::string cleanImg = "/tmp/synapsed_captcha_" + ts + "_clean.png";
+    std::string tmpImg = "" + dataDir_ + "/captcha_" + ts + ".png";
+    std::string cleanImg = "" + dataDir_ + "/captcha_" + ts + "_clean.png";
 
     if (imgUrl.find("data:image") == 0) {
         size_t commaP = imgUrl.find(',');
         if (commaP == std::string::npos) return "";
         std::string b64 = imgUrl.substr(commaP + 1);
-        std::string decodeCmd = "echo '" + b64 + "' | base64 -d > " + tmpImg + " 2>/dev/null";
+        for (char c : b64) {
+            if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=' || c == '\n' || c == '\r'))
+                return "";
+        }
+        {
+            std::ofstream b64f(tmpImg + ".b64", std::ios::binary);
+            if (!b64f) return "";
+            b64f.write(b64.c_str(), b64.size());
+        }
+        std::string decodeCmd = "base64 -d < " + tmpImg + ".b64 > " + tmpImg + " 2>/dev/null";
         system(decodeCmd.c_str());
+        std::remove((tmpImg + ".b64").c_str());
     } else {
         if (imgUrl[0] == '/') return "";
+        if (!isUrlSafe(imgUrl)) return "";
         std::string dlCmd = "curl -s --max-time 15 --socks5-hostname 127.0.0.1:9050 -L "
-            "-c /tmp/synapsed_tor_cookies.txt -b /tmp/synapsed_tor_cookies.txt "
+            "-c " + dataDir_ + "/tor_cookies.txt -b " + dataDir_ + "/tor_cookies.txt "
             "-o " + tmpImg + " \"" + imgUrl + "\" 2>/dev/null";
         system(dlCmd.c_str());
     }
@@ -777,7 +789,7 @@ std::string SynapsedEngine::submitCaptchaAndRefetch(const std::string& url,
 
     std::string postData = field + "=" + answer;
     std::string cmd = "curl -s --max-time 30 --socks5-hostname 127.0.0.1:9050 -L "
-                      "-c /tmp/synapsed_cookies.txt -b /tmp/synapsed_cookies.txt "
+                      "-c " + dataDir_ + "/cookies.txt -b " + dataDir_ + "/cookies.txt "
                       "-d \"" + postData + "\" "
                       "\"" + postUrl + "\" 2>/dev/null";
     std::string result = execCmd(cmd);
@@ -791,7 +803,7 @@ std::string SynapsedEngine::submitCaptchaAndRefetch(const std::string& url,
 
 std::string SynapsedEngine::downloadCaptchaImage(const std::string& imgUrl) const {
     if (imgUrl.empty() || !isUrlSafe(imgUrl)) return "";
-    std::string tmpImg = "/tmp/synapsed_cap_" + std::to_string(nowMillis()) + ".png";
+    std::string tmpImg = "" + dataDir_ + "/cap_" + std::to_string(nowMillis()) + ".png";
     std::string cmd = "curl -s --max-time 15 --socks5-hostname 127.0.0.1:9050 -L -o " +
                       tmpImg + " \"" + imgUrl + "\" 2>/dev/null";
     system(cmd.c_str());
@@ -1736,7 +1748,7 @@ SynapsedEngine::ClearnetBypass SynapsedEngine::detectClearnetProtection(
 std::string SynapsedEngine::fetchClearnet(const std::string& url) const {
     if (!isUrlSafe(url)) return "";
     std::string ua = randomUserAgent();
-    std::string cookieJar = "/tmp/synapsed_clearnet_cookies.txt";
+    std::string cookieJar = "" + dataDir_ + "/clearnet_cookies.txt";
     std::string cmd = "curl -s --max-time 30 -L "
         "-H \"User-Agent: " + ua + "\" "
         "-H \"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\" "
@@ -1765,16 +1777,16 @@ std::string SynapsedEngine::bypassCloudflareChallenge(const std::string& url) co
         "  from subprocess import run, PIPE;"
         "  import time, json;"
         "  r = run(['curl-impersonate-chrome', '-s', '-L', '--max-time', '30',"
-        "    '-c', '/tmp/synapsed_cf_cookies.txt',"
-        "    '-b', '/tmp/synapsed_cf_cookies.txt',"
+        "    '-c', '" + dataDir_ + "/cf_cookies.txt',"
+        "    '-b', '" + dataDir_ + "/cf_cookies.txt',"
         "    '" + url + "'], capture_output=True, text=True, timeout=35);"
         "  if r.returncode == 0 and len(r.stdout) > 100:"
         "    print(r.stdout);"
         "  else:"
         "    r2 = run(['curl', '-s', '-L', '--max-time', '30',"
         "      '-H', 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',"
-        "      '-c', '/tmp/synapsed_cf_cookies.txt',"
-        "      '-b', '/tmp/synapsed_cf_cookies.txt',"
+        "      '-c', '" + dataDir_ + "/cf_cookies.txt',"
+        "      '-b', '" + dataDir_ + "/cf_cookies.txt',"
         "      '" + url + "'], capture_output=True, text=True, timeout=35);"
         "    print(r2.stdout);"
         "except Exception as e: print('');"
@@ -1922,8 +1934,8 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                     std::string postCmd = "curl -s --max-time 30 -L "
                         "-H \"User-Agent: " + randomUserAgent() + "\" "
                         "-d \"g-recaptcha-response=" + token + "\" "
-                        "-c /tmp/synapsed_clearnet_cookies.txt "
-                        "-b /tmp/synapsed_clearnet_cookies.txt "
+                        "-c " + dataDir_ + "/clearnet_cookies.txt "
+                        "-b " + dataDir_ + "/clearnet_cookies.txt "
                         "\"" + url + "\" 2>/dev/null";
                     std::string result = execCmd(postCmd);
                     if (!result.empty() && result.find("g-recaptcha") == std::string::npos)
@@ -1938,8 +1950,8 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                     std::string postCmd = "curl -s --max-time 30 -L "
                         "-H \"User-Agent: " + randomUserAgent() + "\" "
                         "-d \"h-captcha-response=" + token + "\" "
-                        "-c /tmp/synapsed_clearnet_cookies.txt "
-                        "-b /tmp/synapsed_clearnet_cookies.txt "
+                        "-c " + dataDir_ + "/clearnet_cookies.txt "
+                        "-b " + dataDir_ + "/clearnet_cookies.txt "
                         "\"" + url + "\" 2>/dev/null";
                     std::string result = execCmd(postCmd);
                     if (!result.empty()) return result;
@@ -2004,13 +2016,13 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
             }
 
             std::string submitCmd = "curl -s -k --max-time 30 --socks5-hostname 127.0.0.1:9050 -L "
-                "-c /tmp/synapsed_tor_cookies.txt -b /tmp/synapsed_tor_cookies.txt "
+                "-c " + dataDir_ + "/tor_cookies.txt -b " + dataDir_ + "/tor_cookies.txt "
                 "-H \"User-Agent: " + randomUserAgent() + "\" "
                 "-d \"" + postData + "\" "
                 "\"" + formAction + "\" 2>/dev/null";
             if (!isOnion) {
                 submitCmd = "curl -s --max-time 30 -L "
-                    "-c /tmp/synapsed_clearnet_cookies.txt -b /tmp/synapsed_clearnet_cookies.txt "
+                    "-c " + dataDir_ + "/clearnet_cookies.txt -b " + dataDir_ + "/clearnet_cookies.txt "
                     "-H \"User-Agent: " + randomUserAgent() + "\" "
                     "-d \"" + postData + "\" "
                     "\"" + formAction + "\" 2>/dev/null";
@@ -2179,7 +2191,7 @@ std::vector<std::string> SynapsedEngine::extractTitles(const std::string& html) 
 }
 
 std::string SynapsedEngine::sha256Hex(const std::string& data) const {
-    std::string tmpFile = "/tmp/synapsed_sha_" + std::to_string(nowMillis());
+    std::string tmpFile = "" + dataDir_ + "/sha_" + std::to_string(nowMillis());
     {
         std::ofstream f(tmpFile, std::ios::binary);
         f.write(data.c_str(), data.size());
@@ -2202,8 +2214,8 @@ void SynapsedEngine::ensureSigningKey() const {
 std::string SynapsedEngine::ed25519Sign(const std::string& data) const {
     ensureSigningKey();
     std::string keyPath = dataDir_ + "/node_ed25519.pem";
-    std::string tmpIn = "/tmp/synapsed_sign_in_" + std::to_string(nowMillis());
-    std::string tmpOut = "/tmp/synapsed_sign_out_" + std::to_string(nowMillis());
+    std::string tmpIn = "" + dataDir_ + "/sign_in_" + std::to_string(nowMillis());
+    std::string tmpOut = "" + dataDir_ + "/sign_out_" + std::to_string(nowMillis());
     {
         std::ofstream f(tmpIn, std::ios::binary);
         f.write(data.c_str(), data.size());

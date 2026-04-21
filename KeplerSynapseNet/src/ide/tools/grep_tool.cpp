@@ -57,6 +57,14 @@ ToolResult GrepTool::execute(const std::string& paramsJson) {
         path = workingDir_;
     }
 
+    for (char c : path) {
+        if (c == '\'' || c == '"' || c == '`' || c == '$' || c == '\\' ||
+            c == ';' || c == '|' || c == '&' || c == '\n' || c == '\r')
+            return ToolResult{"invalid path character", false, ""};
+    }
+    if (path.find("..") != std::string::npos)
+        return ToolResult{"path traversal not allowed", false, ""};
+
     std::string cmd = "grep -rn -- ";
 
     std::string escapedPattern;
@@ -67,7 +75,7 @@ ToolResult GrepTool::execute(const std::string& paramsJson) {
     }
     escapedPattern.push_back('\'');
 
-    cmd += escapedPattern + " " + path + " 2>/dev/null | head -100";
+    cmd += escapedPattern + " '" + path + "' 2>/dev/null | head -100";
 
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) {

@@ -55,6 +55,39 @@ ToolResult BashTool::execute(const std::string& paramsJson) {
         return ToolResult{"command is empty", false, ""};
     }
 
+    {
+        std::string lower = command;
+        for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        static const char* blocklist[] = {
+            "rm -rf /", "rm -rf /*", "mkfs", "dd if=",
+            ":(){", "fork", ">(", "/dev/sd",
+            "chmod -r 000", "chown -r",
+            "curl ", "wget ", "nc ", "ncat ",
+            "ssh ", "scp ", "sftp ", "rsync ",
+            "python3 -c", "python -c", "perl -e", "ruby -e",
+            ".ssh/", "private_key", "privatekey", "wallet.dat",
+            "id_rsa", "id_ed25519", "secret", "mnemonic",
+            "passwd", "shadow", "/etc/",
+            "xargs", "eval ", "base64",
+            "openssl", "gpg ",
+        };
+        for (const auto& b : blocklist) {
+            if (lower.find(b) != std::string::npos) {
+                return ToolResult{"blocked: command contains restricted pattern", false, ""};
+            }
+        }
+        if (command.find("..") != std::string::npos) {
+            return ToolResult{"blocked: path traversal not allowed", false, ""};
+        }
+    }
+
+    for (char c : workDir) {
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '/' || c == '.' ||
+              c == '_' || c == '-' || c == ' '))
+            return ToolResult{"invalid working directory", false, ""};
+    }
+
     std::string fullCmd = "cd " + workDir + " && " + command + " 2>&1";
     FILE* pipe = popen(fullCmd.c_str(), "r");
     if (!pipe) {

@@ -58,7 +58,20 @@ ToolResult GlobTool::execute(const std::string& paramsJson) {
         path = workingDir_;
     }
 
-    std::string cmd = "find " + path + " -name '" + pattern + "' -type f 2>/dev/null | head -100";
+    for (char c : path) {
+        if (c == '\'' || c == '"' || c == '`' || c == '$' || c == '\\' ||
+            c == ';' || c == '|' || c == '&' || c == '\n' || c == '\r')
+            return ToolResult{"invalid path character", false, ""};
+    }
+    for (char c : pattern) {
+        if (c == '\'' || c == '"' || c == '`' || c == '$' || c == '\\' ||
+            c == ';' || c == '|' || c == '&' || c == '\n' || c == '\r')
+            return ToolResult{"invalid pattern character", false, ""};
+    }
+    if (path.find("..") != std::string::npos)
+        return ToolResult{"path traversal not allowed", false, ""};
+
+    std::string cmd = "find '" + path + "' -name '" + pattern + "' -type f 2>/dev/null | head -100";
 
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) {

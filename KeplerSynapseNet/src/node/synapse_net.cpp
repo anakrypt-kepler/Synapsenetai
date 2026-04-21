@@ -1839,6 +1839,7 @@ std::string createAndSubmitPaymentTx(const std::string& to, uint64_t amountAtoms
     const bool signed_ok = keys_->hasHybridKeyPair()
         ? transfer_->signTransaction(tx, pk, keys_->getHybridKeyPair())
         : transfer_->signTransaction(tx, pk);
+    crypto::secureZero(pk.data(), pk.size());
     if (!signed_ok) {
         throw std::runtime_error("Failed to sign transaction");
     }
