@@ -65,6 +65,19 @@ private:
     std::vector<std::string> extractTitles(const std::string& html) const;
     std::string topicToUrl(const std::string& topic) const;
     std::string sha256Hex(const std::string& data) const;
+
+    struct CaptchaResult {
+        bool detected = false;
+        bool solved = false;
+        std::string type;
+        std::string answer;
+    };
+    CaptchaResult detectCaptcha(const std::string& html) const;
+    std::string solveMathCaptcha(const std::string& expr) const;
+    std::string solveTextCaptcha(const std::string& imgUrl) const;
+    std::string submitCaptchaAndRefetch(const std::string& url,
+        const std::string& formAction, const std::string& field,
+        const std::string& answer) const;
     std::string ed25519Sign(const std::string& data) const;
     void ensureSigningKey() const;
     void persistDraft(const NaanDraft& d, const std::string& hash) const;

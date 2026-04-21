@@ -312,6 +312,172 @@ std::string SynapsedEngine::fetchViaTor(const std::string& url) const {
     return execCmd(cmd);
 }
 
+SynapsedEngine::CaptchaResult SynapsedEngine::detectCaptcha(const std::string& html) const {
+    CaptchaResult r;
+
+    if (html.find("captcha") == std::string::npos &&
+        html.find("CAPTCHA") == std::string::npos &&
+        html.find("Captcha") == std::string::npos) {
+        return r;
+    }
+    r.detected = true;
+
+    size_t mathPos = std::string::npos;
+    for (const auto& pat : {"What is ", "Solve: ", "Calculate: ", "Enter the result of "}) {
+        mathPos = html.find(pat);
+        if (mathPos != std::string::npos) break;
+    }
+    if (mathPos == std::string::npos) {
+        size_t inp = html.find("name=\"captcha");
+        if (inp != std::string::npos) {
+            size_t scan = inp;
+            while (scan > 0 && scan > inp - 200) {
+                scan--;
+                if (html[scan] >= '0' && html[scan] <= '9') {
+                    size_t exprStart = scan;
+                    while (exprStart > 0 && (
+                        (html[exprStart - 1] >= '0' && html[exprStart - 1] <= '9') ||
+                        html[exprStart - 1] == '+' || html[exprStart - 1] == '-' ||
+                        html[exprStart - 1] == '*' || html[exprStart - 1] == '/' ||
+                        html[exprStart - 1] == ' ' || html[exprStart - 1] == 'x'))
+                        exprStart--;
+                    std::string candidate = trim(html.substr(exprStart, scan - exprStart + 1));
+                    bool hasOp = false;
+                    for (char c : candidate) {
+                        if (c == '+' || c == '-' || c == '*' || c == '/' || c == 'x') hasOp = true;
+                    }
+                    if (hasOp && candidate.size() >= 3) {
+                        r.type = "math";
+                        r.answer = solveMathCaptcha(candidate);
+                        r.solved = !r.answer.empty();
+                        return r;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    if (mathPos != std::string::npos) {
+        size_t eqEnd = html.find_first_of("?=<\n\r", mathPos + 5);
+        if (eqEnd == std::string::npos) eqEnd = mathPos + 30;
+        std::string expr = trim(html.substr(mathPos, eqEnd - mathPos));
+        for (const auto& pfx : {"What is ", "Solve: ", "Calculate: ", "Enter the result of "}) {
+            if (expr.find(pfx) == 0) expr = expr.substr(strlen(pfx));
+        }
+        expr = trim(expr);
+        if (expr.back() == '?' || expr.back() == '=') expr.pop_back();
+        expr = trim(expr);
+        r.type = "math";
+        r.answer = solveMathCaptcha(expr);
+        r.solved = !r.answer.empty();
+        return r;
+    }
+
+    size_t imgPos = html.find("captcha");
+    if (imgPos != std::string::npos) {
+        size_t imgTag = html.rfind("<img", imgPos);
+        if (imgTag == std::string::npos) imgTag = html.find("<img", imgPos);
+        if (imgTag != std::string::npos) {
+            size_t srcPos = html.find("src=\"", imgTag);
+            if (srcPos != std::string::npos && srcPos < imgTag + 300) {
+                srcPos += 5;
+                size_t srcEnd = html.find('"', srcPos);
+                if (srcEnd != std::string::npos) {
+                    std::string imgUrl = html.substr(srcPos, srcEnd - srcPos);
+                    r.type = "text_image";
+                    r.answer = solveTextCaptcha(imgUrl);
+                    r.solved = !r.answer.empty();
+                    return r;
+                }
+            }
+        }
+    }
+
+    r.type = "unknown";
+    return r;
+}
+
+std::string SynapsedEngine::solveMathCaptcha(const std::string& expr) const {
+    std::string clean;
+    for (char c : expr) {
+        if (c == 'x' || c == 'X') clean += '*';
+        else if ((c >= '0' && c <= '9') || c == '+' || c == '-' || c == '*' || c == '/' || c == ' ')
+            clean += c;
+    }
+    clean = trim(clean);
+    if (clean.empty()) return "";
+
+    int result = 0;
+    int current = 0;
+    char lastOp = '+';
+    bool hasNum = false;
+
+    for (size_t i = 0; i <= clean.size(); i++) {
+        char c = (i < clean.size()) ? clean[i] : '+';
+        if (c >= '0' && c <= '9') {
+            current = current * 10 + (c - '0');
+            hasNum = true;
+        } else if (c == '+' || c == '-' || c == '*' || c == '/') {
+            if (!hasNum) continue;
+            if (lastOp == '+') result += current;
+            else if (lastOp == '-') result -= current;
+            else if (lastOp == '*') result *= current;
+            else if (lastOp == '/' && current != 0) result /= current;
+            current = 0;
+            hasNum = false;
+            lastOp = c;
+        }
+    }
+
+    return std::to_string(result);
+}
+
+std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
+    if (imgUrl.empty()) return "";
+
+    std::string fullUrl = imgUrl;
+    if (imgUrl[0] == '/') return "";
+
+    std::string tmpImg = "/tmp/synapsed_captcha_" + std::to_string(nowMillis()) + ".png";
+    std::string dlCmd = "curl -s --max-time 15 --socks5-hostname 127.0.0.1:9050 -L -o " +
+                        tmpImg + " \"" + fullUrl + "\" 2>/dev/null";
+    system(dlCmd.c_str());
+
+    std::string ocrResult = execCmd(
+        "tesseract " + tmpImg + " stdout --psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 2>/dev/null");
+    std::remove(tmpImg.c_str());
+
+    std::string answer;
+    for (char c : ocrResult) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+            answer += c;
+    }
+    return answer;
+}
+
+std::string SynapsedEngine::submitCaptchaAndRefetch(const std::string& url,
+    const std::string& formAction, const std::string& field,
+    const std::string& answer) const {
+    if (!isUrlSafe(url) || answer.empty()) return "";
+
+    std::string postUrl = formAction.empty() ? url : formAction;
+    if (!isUrlSafe(postUrl)) return "";
+
+    std::string postData = field + "=" + answer;
+    std::string cmd = "curl -s --max-time 30 --socks5-hostname 127.0.0.1:9050 -L "
+                      "-c /tmp/synapsed_cookies.txt -b /tmp/synapsed_cookies.txt "
+                      "-d \"" + postData + "\" "
+                      "\"" + postUrl + "\" 2>/dev/null";
+    std::string result = execCmd(cmd);
+
+    if (result.find("captcha") != std::string::npos ||
+        result.find("CAPTCHA") != std::string::npos) {
+        return "";
+    }
+    return result;
+}
+
 std::string SynapsedEngine::topicToUrl(const std::string& topic) const {
     if (topic.find("whistleblower") != std::string::npos ||
         topic.find("leak") != std::string::npos) {
@@ -682,6 +848,37 @@ void SynapsedEngine::naanLoop() {
         std::string url = topicToUrl(topic);
         std::string html = fetchViaTor(url);
         std::string fetchedVia = html.empty() ? "failed" : "tor_socks5";
+
+        if (!html.empty()) {
+            auto cap = detectCaptcha(html);
+            if (cap.detected && cap.solved) {
+                std::string formField = "captcha";
+                size_t namePos = html.find("name=\"captcha");
+                if (namePos != std::string::npos) {
+                    size_t q1 = html.find('"', namePos + 5);
+                    size_t q2 = html.find('"', q1 + 1);
+                    if (q1 != std::string::npos && q2 != std::string::npos)
+                        formField = html.substr(q1 + 1, q2 - q1 - 1);
+                }
+                std::string formAction = url;
+                size_t actPos = html.find("action=\"");
+                if (actPos != std::string::npos) {
+                    size_t aq1 = actPos + 8;
+                    size_t aq2 = html.find('"', aq1);
+                    if (aq2 != std::string::npos) {
+                        std::string act = html.substr(aq1, aq2 - aq1);
+                        if (!act.empty()) formAction = act;
+                    }
+                }
+                std::string solved = submitCaptchaAndRefetch(url, formAction, formField, cap.answer);
+                if (!solved.empty()) {
+                    html = solved;
+                    fetchedVia = "tor_socks5_captcha_" + cap.type;
+                }
+            } else if (cap.detected && !cap.solved) {
+                fetchedVia = "captcha_unsolved_" + cap.type;
+            }
+        }
 
         std::vector<std::string> titles;
         if (!html.empty()) titles = extractTitles(html);
