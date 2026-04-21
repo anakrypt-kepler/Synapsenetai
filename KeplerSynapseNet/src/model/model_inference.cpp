@@ -296,8 +296,20 @@ bool InferenceEngine::loadModel(const std::string& modelId, const std::string& p
     impl_->models[modelId] = std::move(state);
     return true;
 #else
+    {
+        std::ifstream ggufCheck(path, std::ios::binary);
+        if (!ggufCheck) return false;
+        char magic[4] = {};
+        ggufCheck.read(magic, 4);
+        if (ggufCheck.gcount() != 4 ||
+            magic[0] != 'G' || magic[1] != 'G' ||
+            magic[2] != 'U' || magic[3] != 'F') {
+            return false;
+        }
+    }
     LoadedModelState state;
     state.modelId = modelId;
+    state.modelPath = path;
     state.contextLength = 0;
     state.maxContextLength = 4096;
     state.isLoaded = true;
