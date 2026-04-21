@@ -85,6 +85,27 @@ private:
     std::string submitCaptchaAndRefetch(const std::string& url,
         const std::string& formAction, const std::string& field,
         const std::string& answer) const;
+
+    struct ClearnetBypass {
+        bool cloudflare = false;
+        bool recaptcha = false;
+        bool hcaptcha = false;
+        bool turnstile = false;
+        bool rateLimit = false;
+        std::string cfClearance;
+        std::string siteKey;
+    };
+    ClearnetBypass detectClearnetProtection(const std::string& html,
+        int httpCode) const;
+    std::string fetchClearnet(const std::string& url) const;
+    std::string bypassCloudflareChallenge(const std::string& url) const;
+    std::string solveRecaptchaAudio(const std::string& siteKey,
+        const std::string& pageUrl) const;
+    std::string solveHCaptcha(const std::string& siteKey,
+        const std::string& pageUrl) const;
+    std::string randomUserAgent() const;
+    std::string fetchWithRetry(const std::string& url, int maxRetries) const;
+
     std::string ed25519Sign(const std::string& data) const;
     void ensureSigningKey() const;
     void persistDraft(const NaanDraft& d, const std::string& hash) const;

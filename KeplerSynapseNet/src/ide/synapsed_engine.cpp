@@ -921,6 +921,264 @@ std::string SynapsedEngine::solveMultiStepCaptcha(const std::string& html) const
     return combined;
 }
 
+std::string SynapsedEngine::randomUserAgent() const {
+    static const char* agents[] = {
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:125.0) Gecko/20100101 Firefox/125.0",
+        "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    };
+    std::mt19937 g(std::random_device{}());
+    return agents[g() % 8];
+}
+
+SynapsedEngine::ClearnetBypass SynapsedEngine::detectClearnetProtection(
+    const std::string& html, int httpCode) const {
+    ClearnetBypass b;
+
+    if (httpCode == 403 || httpCode == 429) b.rateLimit = true;
+
+    if (html.find("cf-browser-verification") != std::string::npos ||
+        html.find("cf_clearance") != std::string::npos ||
+        html.find("Checking your browser") != std::string::npos ||
+        html.find("cf-challenge") != std::string::npos ||
+        html.find("_cf_chl") != std::string::npos) {
+        b.cloudflare = true;
+    }
+
+    if (html.find("challenges.cloudflare.com/turnstile") != std::string::npos ||
+        html.find("cf-turnstile") != std::string::npos) {
+        b.turnstile = true;
+        b.cloudflare = true;
+    }
+
+    if (html.find("google.com/recaptcha") != std::string::npos ||
+        html.find("g-recaptcha") != std::string::npos ||
+        html.find("recaptcha/api") != std::string::npos) {
+        b.recaptcha = true;
+        size_t sk = html.find("data-sitekey=\"");
+        if (sk != std::string::npos) {
+            sk += 14;
+            size_t se = html.find('"', sk);
+            if (se != std::string::npos) b.siteKey = html.substr(sk, se - sk);
+        }
+    }
+
+    if (html.find("hcaptcha.com") != std::string::npos ||
+        html.find("h-captcha") != std::string::npos) {
+        b.hcaptcha = true;
+        size_t sk = html.find("data-sitekey=\"");
+        if (sk != std::string::npos) {
+            sk += 14;
+            size_t se = html.find('"', sk);
+            if (se != std::string::npos) b.siteKey = html.substr(sk, se - sk);
+        }
+    }
+
+    return b;
+}
+
+std::string SynapsedEngine::fetchClearnet(const std::string& url) const {
+    if (!isUrlSafe(url)) return "";
+    std::string ua = randomUserAgent();
+    std::string cookieJar = "/tmp/synapsed_clearnet_cookies.txt";
+    std::string cmd = "curl -s --max-time 30 -L "
+        "-H \"User-Agent: " + ua + "\" "
+        "-H \"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\" "
+        "-H \"Accept-Language: en-US,en;q=0.9\" "
+        "-H \"Accept-Encoding: gzip, deflate, br\" "
+        "-H \"Connection: keep-alive\" "
+        "-H \"Upgrade-Insecure-Requests: 1\" "
+        "-H \"Sec-Fetch-Dest: document\" "
+        "-H \"Sec-Fetch-Mode: navigate\" "
+        "-H \"Sec-Fetch-Site: none\" "
+        "-H \"Sec-Fetch-User: ?1\" "
+        "--compressed "
+        "-c " + cookieJar + " -b " + cookieJar + " "
+        "-w \"\\n__HTTP_CODE__%{http_code}\" "
+        "\"" + url + "\" 2>/dev/null";
+    return execCmd(cmd);
+}
+
+std::string SynapsedEngine::bypassCloudflareChallenge(const std::string& url) const {
+    if (!isUrlSafe(url)) return "";
+
+    std::string script =
+        "python3 -c \""
+        "import sys;"
+        "try:\n"
+        "  from subprocess import run, PIPE;"
+        "  import time, json;"
+        "  r = run(['curl-impersonate-chrome', '-s', '-L', '--max-time', '30',"
+        "    '-c', '/tmp/synapsed_cf_cookies.txt',"
+        "    '-b', '/tmp/synapsed_cf_cookies.txt',"
+        "    '" + url + "'], capture_output=True, text=True, timeout=35);"
+        "  if r.returncode == 0 and len(r.stdout) > 100:"
+        "    print(r.stdout);"
+        "  else:"
+        "    r2 = run(['curl', '-s', '-L', '--max-time', '30',"
+        "      '-H', 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',"
+        "      '-c', '/tmp/synapsed_cf_cookies.txt',"
+        "      '-b', '/tmp/synapsed_cf_cookies.txt',"
+        "      '" + url + "'], capture_output=True, text=True, timeout=35);"
+        "    print(r2.stdout);"
+        "except Exception as e: print('');"
+        "\" 2>/dev/null";
+    std::string result = execCmd(script);
+    if (result.size() < 100) return "";
+    return result;
+}
+
+std::string SynapsedEngine::solveRecaptchaAudio(const std::string& siteKey,
+    const std::string& pageUrl) const {
+    if (siteKey.empty() || pageUrl.empty()) return "";
+
+    std::string script =
+        "python3 -c \""
+        "import sys;"
+        "try:\n"
+        "  import requests, base64, json, speech_recognition as sr;"
+        "  from io import BytesIO;"
+        "  import urllib.request;"
+        "  api = 'https://www.google.com/recaptcha/api2';"
+        "  s = requests.Session();"
+        "  s.headers['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64) Chrome/124.0.0.0';"
+        "  r = s.get(f'{api}/anchor?ar=1&k=" + siteKey + "&co=aHR0cHM6Ly9leGFtcGxlLmNvbQ..&hl=en&v=jF0kMEbCnEo&size=normal');"
+        "  import re;"
+        "  tok = re.search(r'recaptcha-token.*?value=\"(.*?)\"', r.text);"
+        "  if not tok: print('');sys.exit();"
+        "  token = tok.group(1);"
+        "  r2 = s.post(f'{api}/reload?k=" + siteKey + "', data={'v':'jF0kMEbCnEo','reason':'q','c':token,'k':'" + siteKey + "','co':'aHR0cHM6Ly9leGFtcGxlLmNvbQ..','hl':'en','size':'normal','chr':'','vh':'','bg':''});"
+        "  aud = re.search(r'rresp\",\"(.*?)\"', r2.text);"
+        "  if not aud: r3 = s.post(f'{api}/reload?k=" + siteKey + "', data={'v':'jF0kMEbCnEo','reason':'a','c':token,'k':'" + siteKey + "','co':'aHR0cHM6Ly9leGFtcGxlLmNvbQ..','hl':'en','size':'normal'}); aud = re.search(r'rresp\",\"(.*?)\"', r3.text);"
+        "  if aud: print(aud.group(1));"
+        "  else: print('');"
+        "except: print('');"
+        "\" 2>/dev/null";
+    return trim(execCmd(script));
+}
+
+std::string SynapsedEngine::solveHCaptcha(const std::string& siteKey,
+    const std::string& pageUrl) const {
+    if (siteKey.empty()) return "";
+
+    std::string script =
+        "python3 -c \""
+        "import sys;"
+        "try:\n"
+        "  import requests, json;"
+        "  s = requests.Session();"
+        "  s.headers['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64) Chrome/124.0.0.0';"
+        "  r = s.post('https://hcaptcha.com/checksiteconfig', json={'host':'" + pageUrl + "','sitekey':'" + siteKey + "','sc':1,'swa':1});"
+        "  d = r.json();"
+        "  if d.get('pass'): print('bypass');sys.exit();"
+        "  r2 = s.post('https://hcaptcha.com/getcaptcha/' + '" + siteKey + "', json={'host':'" + pageUrl + "','sitekey':'" + siteKey + "','motionData':'{}'});"
+        "  d2 = r2.json();"
+        "  if 'generated_pass_UUID' in d2: print(d2['generated_pass_UUID']);"
+        "  else: print('');"
+        "except: print('');"
+        "\" 2>/dev/null";
+    return trim(execCmd(script));
+}
+
+std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetries) const {
+    bool isOnion = url.find(".onion") != std::string::npos;
+
+    for (int attempt = 0; attempt < maxRetries; attempt++) {
+        std::string html;
+        int httpCode = 200;
+
+        if (isOnion) {
+            html = fetchViaTor(url);
+        } else {
+            std::string raw = fetchClearnet(url);
+            size_t codePos = raw.rfind("__HTTP_CODE__");
+            if (codePos != std::string::npos) {
+                httpCode = std::atoi(raw.c_str() + codePos + 13);
+                html = raw.substr(0, codePos);
+            } else {
+                html = raw;
+            }
+        }
+
+        if (html.empty()) {
+            std::this_thread::sleep_for(std::chrono::seconds(2 + attempt * 3));
+            continue;
+        }
+
+        if (!isOnion) {
+            auto prot = detectClearnetProtection(html, httpCode);
+
+            if (prot.cloudflare) {
+                std::string bypass = bypassCloudflareChallenge(url);
+                if (!bypass.empty()) return bypass;
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+                continue;
+            }
+
+            if (prot.recaptcha && !prot.siteKey.empty()) {
+                std::string token = solveRecaptchaAudio(prot.siteKey, url);
+                if (!token.empty()) {
+                    std::string postCmd = "curl -s --max-time 30 -L "
+                        "-H \"User-Agent: " + randomUserAgent() + "\" "
+                        "-d \"g-recaptcha-response=" + token + "\" "
+                        "-c /tmp/synapsed_clearnet_cookies.txt "
+                        "-b /tmp/synapsed_clearnet_cookies.txt "
+                        "\"" + url + "\" 2>/dev/null";
+                    std::string result = execCmd(postCmd);
+                    if (!result.empty() && result.find("g-recaptcha") == std::string::npos)
+                        return result;
+                }
+                continue;
+            }
+
+            if (prot.hcaptcha && !prot.siteKey.empty()) {
+                std::string token = solveHCaptcha(prot.siteKey, url);
+                if (!token.empty() && token != "bypass") {
+                    std::string postCmd = "curl -s --max-time 30 -L "
+                        "-H \"User-Agent: " + randomUserAgent() + "\" "
+                        "-d \"h-captcha-response=" + token + "\" "
+                        "-c /tmp/synapsed_clearnet_cookies.txt "
+                        "-b /tmp/synapsed_clearnet_cookies.txt "
+                        "\"" + url + "\" 2>/dev/null";
+                    std::string result = execCmd(postCmd);
+                    if (!result.empty()) return result;
+                }
+                continue;
+            }
+
+            if (prot.rateLimit) {
+                std::this_thread::sleep_for(std::chrono::seconds(10 + attempt * 10));
+                continue;
+            }
+        }
+
+        auto darkCap = detectCaptcha(html);
+        if (darkCap.detected && darkCap.solved) {
+            std::string formField = "captcha";
+            size_t namePos = html.find("name=\"captcha");
+            if (namePos != std::string::npos) {
+                size_t q1 = html.find('"', namePos + 5);
+                size_t q2 = html.find('"', q1 + 1);
+                if (q1 != std::string::npos && q2 != std::string::npos)
+                    formField = html.substr(q1 + 1, q2 - q1 - 1);
+            }
+            std::string solved = submitCaptchaAndRefetch(url, url, formField, darkCap.answer);
+            if (!solved.empty()) return solved;
+            continue;
+        }
+
+        if (!darkCap.detected) return html;
+
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    }
+    return "";
+}
+
 std::string SynapsedEngine::topicToUrl(const std::string& topic) const {
     if (topic.find("whistleblower") != std::string::npos ||
         topic.find("leak") != std::string::npos) {
@@ -1289,39 +1547,12 @@ void SynapsedEngine::naanLoop() {
         }
 
         std::string url = topicToUrl(topic);
-        std::string html = fetchViaTor(url);
-        std::string fetchedVia = html.empty() ? "failed" : "tor_socks5";
-
-        if (!html.empty()) {
-            auto cap = detectCaptcha(html);
-            if (cap.detected && cap.solved) {
-                std::string formField = "captcha";
-                size_t namePos = html.find("name=\"captcha");
-                if (namePos != std::string::npos) {
-                    size_t q1 = html.find('"', namePos + 5);
-                    size_t q2 = html.find('"', q1 + 1);
-                    if (q1 != std::string::npos && q2 != std::string::npos)
-                        formField = html.substr(q1 + 1, q2 - q1 - 1);
-                }
-                std::string formAction = url;
-                size_t actPos = html.find("action=\"");
-                if (actPos != std::string::npos) {
-                    size_t aq1 = actPos + 8;
-                    size_t aq2 = html.find('"', aq1);
-                    if (aq2 != std::string::npos) {
-                        std::string act = html.substr(aq1, aq2 - aq1);
-                        if (!act.empty()) formAction = act;
-                    }
-                }
-                std::string solved = submitCaptchaAndRefetch(url, formAction, formField, cap.answer);
-                if (!solved.empty()) {
-                    html = solved;
-                    fetchedVia = "tor_socks5_captcha_" + cap.type;
-                }
-            } else if (cap.detected && !cap.solved) {
-                fetchedVia = "captcha_unsolved_" + cap.type;
-            }
-        }
+        bool isOnion = url.find(".onion") != std::string::npos;
+        std::string html = fetchWithRetry(url, 3);
+        std::string fetchedVia;
+        if (html.empty()) fetchedVia = "failed";
+        else if (isOnion) fetchedVia = "tor_socks5";
+        else fetchedVia = "clearnet";
 
         std::vector<std::string> titles;
         if (!html.empty()) titles = extractTitles(html);
