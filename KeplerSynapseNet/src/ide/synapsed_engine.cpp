@@ -341,9 +341,10 @@ std::string SynapsedEngine::topicToUrl(const std::string& topic) const {
             "http://secrdrop5wyphb5x.onion/",
             "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/",
             "https://mail.protonmail.ch/",
+            "http://piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion/",
         };
         std::mt19937 g(std::random_device{}());
-        return urls[g() % 3];
+        return urls[g() % 4];
     }
     if (topic.find("crypto") != std::string::npos)
         return "https://arxiv.org/list/cs.CR/recent";

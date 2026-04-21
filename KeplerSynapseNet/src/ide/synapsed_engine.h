@@ -45,9 +45,8 @@ private:
     SynapsedEngine();
     ~SynapsedEngine();
 
-    // --- Tor integration ---
     struct TorInfo {
-        std::string bootstrap;   // e.g. "100%"
+        std::string bootstrap;
         int circuits = 0;
         std::string version;
         std::string exitIp;
@@ -58,7 +57,6 @@ private:
     bool isUrlSafe(const std::string& url) const;
     void generateTorrc() const;
 
-    // --- NAAN runtime ---
     void startNaan();
     void stopNaan();
     void naanLoop();
