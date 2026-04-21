@@ -308,7 +308,11 @@ bool SynapsedEngine::isUrlSafe(const std::string& url) const {
 
 std::string SynapsedEngine::fetchViaTor(const std::string& url) const {
     if (!isUrlSafe(url)) return "";
-    std::string cmd = "curl -s --max-time 30 --socks5-hostname 127.0.0.1:9050 -L \"" + url + "\" 2>/dev/null";
+    std::string ua = randomUserAgent();
+    std::string cmd = "curl -s -k --max-time 30 --socks5-hostname 127.0.0.1:9050 -L "
+        "-H \"User-Agent: " + ua + "\" "
+        "-c /tmp/synapsed_tor_cookies.txt -b /tmp/synapsed_tor_cookies.txt "
+        "\"" + url + "\" 2>/dev/null";
     return execCmd(cmd);
 }
 
@@ -1458,6 +1462,13 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
             continue;
         }
 
+        if (html.find("placed in a queue") != std::string::npos ||
+            html.find("awaiting forwarding") != std::string::npos ||
+            html.find("estimated entry time") != std::string::npos) {
+            std::this_thread::sleep_for(std::chrono::seconds(15 + attempt * 10));
+            continue;
+        }
+
         if (!isOnion) {
             auto prot = detectClearnetProtection(html, httpCode);
 
@@ -1555,6 +1566,7 @@ std::string SynapsedEngine::topicToUrl(const std::string& topic) const {
         std::string q = topic;
         for (auto& c : q) if (c == ' ') c = '+';
         static const std::string engines[] = {
+            "http://torchdeedp3i2jigzjdmfpn5ttjhthh5wbmda2rr3jvqjg5p77c54dqd.onion/search?query=",
             "http://xmh57jrknzkhv6y3ls3ubitzfqnkrwxhopf5aygthi7d6rplyvk3noyd.onion/cgi-bin/omega/omega?P=",
             "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/search/?q=",
             "http://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/?q=",
@@ -1563,13 +1575,14 @@ std::string SynapsedEngine::topicToUrl(const std::string& topic) const {
             "http://darkzqtmbdeauwq5mzcmgeeuhet42fhfjj4p5wbak3ofx2yqgecoeqyd.onion/search?query=",
             "http://3bbad7fauom4d6sgppalyqddsqbf5u5p56b5k5uk2zxsy3d6ey2jobad.onion/search?q=",
             "http://search7tdrcvri22rieiwgi5g46qnwsesvnubqav2xakhezv4hjzkkad.onion/result.php?search=",
+            "http://dreadytofatroptsdj6io7l3xptbet6onoyno2yv7jicoxknyazubrad.onion/d/DarkSearch",
             "http://zqktlwiuavvvqqt4ybvgvi7tyo4hjl5xgfuvpdf6otjiycgwqbym2qad.onion/",
             "http://piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion/search.php?q=",
             "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/search?q=",
         };
         std::mt19937 g(std::random_device{}());
-        size_t idx = g() % 11;
-        if (idx == 8) return engines[idx];
+        size_t idx = g() % 13;
+        if (idx == 9 || idx == 10) return engines[idx];
         return engines[idx] + q;
     }
     if (topic.find("crypto") != std::string::npos)
