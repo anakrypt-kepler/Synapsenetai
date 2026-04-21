@@ -309,7 +309,10 @@ bool SynapsedEngine::isUrlSafe(const std::string& url) const {
 std::string SynapsedEngine::fetchViaTor(const std::string& url) const {
     if (!isUrlSafe(url)) return "";
     std::string ua = randomUserAgent();
-    std::string cmd = "curl -s -k --max-time 30 --socks5-hostname 127.0.0.1:9050 -L "
+    int timeout = 45;
+    if (url.find("dread") != std::string::npos) timeout = 90;
+    std::string cmd = "curl -s -k --max-time " + std::to_string(timeout) +
+        " --socks5-hostname 127.0.0.1:9050 -L "
         "-H \"User-Agent: " + ua + "\" "
         "-c /tmp/synapsed_tor_cookies.txt -b /tmp/synapsed_tor_cookies.txt "
         "\"" + url + "\" 2>/dev/null";
@@ -607,62 +610,113 @@ std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
         system(dlCmd.c_str());
     }
 
-    std::string easyOcrResult = execCmd(
+    std::string mlScript =
         "python3 -c \""
-        "import sys;"
-        "try:\n"
-        "  import easyocr;"
-        "  reader = easyocr.Reader(['en'], gpu=False, verbose=False);"
-        "  r = reader.readtext('" + tmpImg + "', detail=0, "
-        "allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789');"
-        "  print(''.join(r));"
-        "except: pass;"
-        "\" 2>/dev/null");
-
-    std::string preprocess =
-        "python3 -c \""
-        "import cv2, numpy as np;"
-        "img = cv2.imread('" + tmpImg + "', cv2.IMREAD_GRAYSCALE);"
-        "if img is None: exit(1);"
-        "h, w = img.shape;"
-        "scale = max(3, 600 // max(w, 1));"
-        "resized = cv2.resize(img, (w*scale, h*scale), interpolation=cv2.INTER_LANCZOS4);"
-        "blurred = cv2.GaussianBlur(resized, (3,3), 0);"
-        "_, th = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU);"
-        "cv2.imwrite('" + cleanImg + "', th);"
+        "import sys, os\\n"
+        "img_path = '" + tmpImg + "'\\n"
+        "clean_path = '" + cleanImg + "'\\n"
+        "WL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'\\n"
+        "results = []\\n"
+        "try:\\n"
+        "  import cv2, numpy as np\\n"
+        "  img = cv2.imread(img_path)\\n"
+        "  if img is None: print(''); sys.exit()\\n"
+        "  gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)\\n"
+        "  h, w = gray.shape\\n"
+        "  is_hard = (w >= 300 and h >= 80)\\n"
+        "  # Strategy 1: Otsu threshold + resize\\n"
+        "  sc = max(3, 600 // max(w, 1))\\n"
+        "  big = cv2.resize(gray, (w*sc, h*sc), interpolation=cv2.INTER_LANCZOS4)\\n"
+        "  blur = cv2.GaussianBlur(big, (3,3), 0)\\n"
+        "  _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)\\n"
+        "  cv2.imwrite(clean_path, th)\\n"
+        "  # Strategy 2: color kmeans segmentation (for busy backgrounds)\\n"
+        "  kmeans_paths = []\\n"
+        "  if is_hard:\\n"
+        "    Z = img.reshape((-1,3)).astype(np.float32)\\n"
+        "    crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)\\n"
+        "    _, labels, centers = cv2.kmeans(Z, 5, None, crit, 5, cv2.KMEANS_RANDOM_CENTERS)\\n"
+        "    centers = np.uint8(centers)\\n"
+        "    bri = [np.mean(c) for c in centers]\\n"
+        "    si = list(np.argsort(bri))\\n"
+        "    for combo in [si[:1], si[:2], si[-1:], si[-2:]]:\\n"
+        "      mask = np.zeros(labels.shape[0], dtype=np.uint8)\\n"
+        "      for i in combo: mask[labels.flatten() == i] = 255\\n"
+        "      mask = mask.reshape((h, w))\\n"
+        "      inv = cv2.bitwise_not(mask)\\n"
+        "      bp = clean_path.replace('.png', '_km' + str(combo[0]) + '.png')\\n"
+        "      b2 = cv2.resize(inv, (800, 200), interpolation=cv2.INTER_LANCZOS4)\\n"
+        "      cv2.imwrite(bp, b2)\\n"
+        "      kmeans_paths.append(bp)\\n"
+        "    # Strategy 3: HSV color isolation\\n"
+        "    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)\\n"
+        "    green = cv2.inRange(hsv, np.array([35,40,40]), np.array([85,255,255]))\\n"
+        "    white = cv2.inRange(hsv, np.array([0,0,180]), np.array([180,30,255]))\\n"
+        "    dark = cv2.inRange(hsv, np.array([0,0,0]), np.array([180,255,80]))\\n"
+        "    combined = green | white | dark\\n"
+        "    b3 = cv2.resize(cv2.bitwise_not(combined), (800,200), interpolation=cv2.INTER_LANCZOS4)\\n"
+        "    hsvp = clean_path.replace('.png', '_hsv.png')\\n"
+        "    cv2.imwrite(hsvp, b3)\\n"
+        "    kmeans_paths.append(hsvp)\\n"
+        "except: pass\\n"
+        "# EasyOCR on original\\n"
+        "try:\\n"
+        "  import easyocr\\n"
+        "  reader = easyocr.Reader(['en'], gpu=False, verbose=False)\\n"
+        "  r = reader.readtext(img_path, detail=1, allowlist=WL)\\n"
+        "  for _, t, c in r:\\n"
+        "    results.append((t, c, 'easy_orig'))\\n"
+        "  # EasyOCR on kmeans variants\\n"
+        "  for kp in kmeans_paths:\\n"
+        "    if os.path.exists(kp):\\n"
+        "      r2 = reader.readtext(kp, detail=1, allowlist=WL)\\n"
+        "      for _, t2, c2 in r2:\\n"
+        "        results.append((t2, c2, 'easy_' + kp))\\n"
+        "except: pass\\n"
+        "# Tesseract on Otsu\\n"
+        "try:\\n"
+        "  import subprocess\\n"
+        "  for psm in ['7', '8', '6']:\\n"
+        "    for target in [clean_path, img_path]:\\n"
+        "      if not os.path.exists(target): continue\\n"
+        "      r3 = subprocess.run(['tesseract', target, 'stdout', '--psm', psm,\\n"
+        "        '-c', 'tessedit_char_whitelist=' + WL], capture_output=True, text=True, timeout=10)\\n"
+        "      t = r3.stdout.strip()\\n"
+        "      if len(t) >= 2: results.append((t, 0.5, 'tess_' + psm))\\n"
+        "      if len(t) >= 3: break\\n"
+        "except: pass\\n"
+        "# TrOCR transformer (best for scene text)\\n"
+        "try:\\n"
+        "  from transformers import TrOCRProcessor, VisionEncoderDecoderModel\\n"
+        "  from PIL import Image\\n"
+        "  proc = TrOCRProcessor.from_pretrained('microsoft/trocr-small-printed')\\n"
+        "  mdl = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-small-printed')\\n"
+        "  pil = Image.open(img_path).convert('RGB')\\n"
+        "  pv = proc(images=pil, return_tensors='pt').pixel_values\\n"
+        "  ids = mdl.generate(pv)\\n"
+        "  tt = proc.batch_decode(ids, skip_special_tokens=True)[0]\\n"
+        "  if len(tt) >= 2: results.append((tt, 0.9, 'trocr'))\\n"
+        "except: pass\\n"
+        "# Pick best: prefer longer result with higher confidence\\n"
+        "if not results: print('')\\n"
+        "else:\\n"
+        "  best = max(results, key=lambda x: len(x[0]) * 0.3 + x[1] * 0.7)\\n"
+        "  ans = ''.join(c for c in best[0] if c.isalnum())\\n"
+        "  print(ans)\\n"
+        "# Cleanup\\n"
+        "import glob\\n"
+        "for f in glob.glob(clean_path.replace('.png', '*.png')): os.remove(f)\\n"
         "\" 2>/dev/null";
-    system(preprocess.c_str());
-
-    std::ifstream checkClean(cleanImg);
-    std::string ocrTarget = checkClean.good() ? cleanImg : tmpImg;
-    checkClean.close();
-
-    std::string tessResult = execCmd(
-        "tesseract " + ocrTarget + " stdout --psm 7 "
-        "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 2>/dev/null");
-
-    if (tessResult.empty() || tessResult.size() < 2) {
-        tessResult = execCmd(
-            "tesseract " + ocrTarget + " stdout --psm 8 "
-            "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 2>/dev/null");
-    }
+    std::string mlResult = trim(execCmd(mlScript));
 
     std::remove(tmpImg.c_str());
     std::remove(cleanImg.c_str());
 
-    std::string easyClean, tessClean;
-    for (char c : easyOcrResult)
+    std::string answer;
+    for (char c : mlResult)
         if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
-            easyClean += c;
-    for (char c : tessResult)
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
-            tessClean += c;
-
-    if (easyClean.size() >= tessClean.size() && !easyClean.empty())
-        return easyClean;
-    if (!tessClean.empty())
-        return tessClean;
-    return easyClean;
+            answer += c;
+    return answer;
 }
 
 std::string SynapsedEngine::submitCaptchaAndRefetch(const std::string& url,
@@ -1736,8 +1790,9 @@ std::string SynapsedEngine::solveHCaptcha(const std::string& siteKey,
 
 std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetries) const {
     bool isOnion = url.find(".onion") != std::string::npos;
+    int effectiveRetries = isOnion ? std::max(maxRetries, 6) : maxRetries;
 
-    for (int attempt = 0; attempt < maxRetries; attempt++) {
+    for (int attempt = 0; attempt < effectiveRetries; attempt++) {
         std::string html;
         int httpCode = 200;
 
@@ -1761,8 +1816,27 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
 
         if (html.find("placed in a queue") != std::string::npos ||
             html.find("awaiting forwarding") != std::string::npos ||
-            html.find("estimated entry time") != std::string::npos) {
-            std::this_thread::sleep_for(std::chrono::seconds(15 + attempt * 10));
+            html.find("estimated entry time") != std::string::npos ||
+            html.find("Please wait") != std::string::npos ||
+            html.find("DDoS protection") != std::string::npos ||
+            (html.find("queue") != std::string::npos && html.size() < 15000)) {
+
+            int waitSec = 30 + attempt * 15;
+            size_t etaPos = html.find("estimated");
+            if (etaPos != std::string::npos) {
+                size_t numP = html.find_first_of("0123456789", etaPos);
+                if (numP != std::string::npos && numP < etaPos + 50) {
+                    int eta = std::atoi(html.c_str() + numP);
+                    if (eta > 0 && eta < 300) waitSec = eta + 5;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::seconds(waitSec));
+
+            if (attempt > 0 && attempt % 2 == 0) {
+                system("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
+                       "nc 127.0.0.1 9051 2>/dev/null");
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+            }
             continue;
         }
 
