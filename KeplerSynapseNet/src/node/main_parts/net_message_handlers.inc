@@ -1179,7 +1179,13 @@
         int64_t cfgBudget = runtimeCfg.getInt64(
             "poe.epoch_budget",
             config_.dev ? 100000000LL : 1000000000LL);
-        const uint64_t budget = cfgBudget > 0 ? static_cast<uint64_t>(cfgBudget) : 0ULL;
+        const uint64_t mintBudget = cfgBudget > 0 ? static_cast<uint64_t>(cfgBudget) : 0ULL;
+        const uint64_t collectedFees = transfer_->collectFeePool();
+        uint64_t budget = mintBudget;
+        if (collectedFees > 0) {
+            uint64_t tmp = 0;
+            if (safeAddU64(budget, collectedFees, tmp)) budget = tmp;
+        }
         if (budget == 0) {
             autoPoeEpochLastRunAt_.store(now);
             return;
@@ -1231,6 +1237,10 @@
         oss << "Auto epoch #" << epochRes.epochId << " distributed "
             << std::fixed << std::setprecision(8)
             << (static_cast<double>(mintedTotal) / 100000000.0) << " NGT";
+        if (collectedFees > 0) {
+            oss << " (fees: " << std::fixed << std::setprecision(8)
+                << (static_cast<double>(collectedFees) / 100000000.0) << " NGT)";
+        }
         if (mintedMine > 0) {
             oss << " (you: " << std::fixed << std::setprecision(8)
                 << (static_cast<double>(mintedMine) / 100000000.0) << " NGT)";

@@ -300,6 +300,7 @@ struct TransferManager::Impl {
     std::vector<Transaction> recentTxs;
     uint64_t txCounter = 0;
     uint64_t totalSupply_ = 0;
+    uint64_t feePool_ = 0;
     mutable std::mutex mtx;
     std::function<void(const Transaction&)> newTxCallback;
     std::function<void(const crypto::Hash256&)> confirmCallback;
@@ -331,6 +332,7 @@ bool TransferManager::open(const std::string& dbPath) {
         writeU64(z, 0);
         impl_->db.put("meta:txCounter", z);
         impl_->db.put("meta:totalSupply", z);
+        impl_->db.put("meta:feePool", z);
         impl_->utxoSet.clear();
         impl_->pending.clear();
         impl_->confirmed.clear();
@@ -347,6 +349,11 @@ bool TransferManager::open(const std::string& dbPath) {
     auto supplyData = impl_->db.get("meta:totalSupply");
     if (!supplyData.empty()) {
         impl_->totalSupply_ = readU64(supplyData.data());
+    }
+
+    auto feePoolData = impl_->db.get("meta:feePool");
+    if (!feePoolData.empty()) {
+        impl_->feePool_ = readU64(feePoolData.data());
     }
 
     impl_->pending.clear();
@@ -1235,6 +1242,19 @@ bool TransferManager::applyBlockTransactionsFromBlock(
     }
     impl_->db.put(undoKey, undoBuf);
 
+    uint64_t blockFees = 0;
+    for (const auto& tx : txs) {
+        safeAddU64(blockFees, tx.fee, blockFees);
+    }
+    if (blockFees > 0) {
+        uint64_t newPool = 0;
+        safeAddU64(impl_->feePool_, blockFees, newPool);
+        impl_->feePool_ = newPool;
+        std::vector<uint8_t> poolBuf;
+        writeU64(poolBuf, impl_->feePool_);
+        impl_->db.put("meta:feePool", poolBuf);
+    }
+
     if (!impl_->db.commitTransaction()) {
         rollback();
         return false;
@@ -1606,6 +1626,21 @@ void TransferManager::pruneMempool() {
             ++it;
         }
     }
+}
+
+uint64_t TransferManager::accumulatedFees() const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    return impl_->feePool_;
+}
+
+uint64_t TransferManager::collectFeePool() {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    uint64_t collected = impl_->feePool_;
+    impl_->feePool_ = 0;
+    std::vector<uint8_t> z;
+    writeU64(z, 0);
+    impl_->db.put("meta:feePool", z);
+    return collected;
 }
 
 }

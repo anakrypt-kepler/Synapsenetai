@@ -115,6 +115,8 @@ public:
     uint64_t totalSupply() const;
     uint64_t circulatingSupply() const;
     size_t transactionCount() const;
+    uint64_t accumulatedFees() const;
+    uint64_t collectFeePool();
     
     TransferStats getStats() const;
     std::vector<Transaction> getRecentTransactions(size_t count) const;
