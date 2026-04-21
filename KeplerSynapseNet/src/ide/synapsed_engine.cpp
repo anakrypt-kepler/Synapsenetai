@@ -602,6 +602,18 @@ std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
         system(dlCmd.c_str());
     }
 
+    std::string easyOcrResult = execCmd(
+        "python3 -c \""
+        "import sys;"
+        "try:\n"
+        "  import easyocr;"
+        "  reader = easyocr.Reader(['en'], gpu=False, verbose=False);"
+        "  r = reader.readtext('" + tmpImg + "', detail=0, "
+        "allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789');"
+        "  print(''.join(r));"
+        "except: pass;"
+        "\" 2>/dev/null");
+
     std::string preprocess =
         "python3 -c \""
         "import cv2, numpy as np;"
@@ -620,12 +632,12 @@ std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
     std::string ocrTarget = checkClean.good() ? cleanImg : tmpImg;
     checkClean.close();
 
-    std::string ocrResult = execCmd(
+    std::string tessResult = execCmd(
         "tesseract " + ocrTarget + " stdout --psm 7 "
         "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 2>/dev/null");
 
-    if (ocrResult.empty() || ocrResult.size() < 2) {
-        ocrResult = execCmd(
+    if (tessResult.empty() || tessResult.size() < 2) {
+        tessResult = execCmd(
             "tesseract " + ocrTarget + " stdout --psm 8 "
             "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 2>/dev/null");
     }
@@ -633,12 +645,19 @@ std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
     std::remove(tmpImg.c_str());
     std::remove(cleanImg.c_str());
 
-    std::string answer;
-    for (char c : ocrResult) {
+    std::string easyClean, tessClean;
+    for (char c : easyOcrResult)
         if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
-            answer += c;
-    }
-    return answer;
+            easyClean += c;
+    for (char c : tessResult)
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+            tessClean += c;
+
+    if (easyClean.size() >= tessClean.size() && !easyClean.empty())
+        return easyClean;
+    if (!tessClean.empty())
+        return tessClean;
+    return easyClean;
 }
 
 std::string SynapsedEngine::submitCaptchaAndRefetch(const std::string& url,
@@ -1783,9 +1802,16 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                     "\"" + formAction + "\" 2>/dev/null";
             }
             std::string solved = execCmd(submitCmd);
-            if (!solved.empty() && solved.find("captcha") == std::string::npos &&
-                solved.find("CAPTCHA") == std::string::npos)
-                return solved;
+            if (!solved.empty() &&
+                solved.find("Invalid captcha") == std::string::npos &&
+                solved.find("invalid captcha") == std::string::npos &&
+                solved.find("Wrong captcha") == std::string::npos &&
+                solved.find("wrong captcha") == std::string::npos &&
+                solved.find("Incorrect captcha") == std::string::npos) {
+                auto recheck = detectCaptcha(solved);
+                if (!recheck.detected) return solved;
+            }
+            std::this_thread::sleep_for(std::chrono::seconds(2));
             continue;
         }
 
