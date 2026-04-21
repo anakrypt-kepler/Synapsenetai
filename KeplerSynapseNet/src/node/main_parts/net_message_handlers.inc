@@ -274,6 +274,20 @@
         c.peerId = peerId;
         c.receivedAt = now;
         remoteOffers_[offer.offerId] = std::move(c);
+        if (modelMarketplace_) {
+            modelMarketplace_->upsertModel(
+                offer.offerId,
+                offer.providerAddress,
+                offer.modelId,
+                "",
+                0,
+                "",
+                0,
+                offer.pricePerRequestAtoms,
+                offer.maxSlots,
+                true
+            );
+        }
     }
 
     void handleRemoteRentMessage(const std::string& peerId, const network::Message& msg) {

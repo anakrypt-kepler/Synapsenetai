@@ -38,6 +38,8 @@ struct KnowledgeEntryV1 {
     uint64_t powNonce = 0;
     uint32_t powBits = 0;
     crypto::Signature authorSig{};
+    crypto::PublicKey zkCommitment{};
+    crypto::Hash256 zkResponse{};
 
     std::vector<uint8_t> canonicalBodyBytes() const;
     crypto::Hash256 contentId() const;
@@ -49,6 +51,7 @@ struct KnowledgeEntryV1 {
     bool checkLimits(const LimitsV1& limits, std::string* reason = nullptr) const;
     bool verifyPoW(std::string* reason = nullptr) const;
     bool verifySignature(std::string* reason = nullptr) const;
+    bool verifyZKProof(std::string* reason = nullptr) const;
     bool verifyAll(const LimitsV1& limits, std::string* reason = nullptr) const;
 
     std::vector<uint8_t> serialize() const;
@@ -86,6 +89,7 @@ struct FinalizationRecordV1 {
 
 crypto::Hash256 validatorSetHashV1(const std::vector<crypto::PublicKey>& validators);
 bool signKnowledgeEntryV1(KnowledgeEntryV1& entry, const crypto::PrivateKey& authorKey);
+bool generateZKProof(KnowledgeEntryV1& entry, const crypto::PrivateKey& authorKey);
 bool signValidationVoteV1(ValidationVoteV1& vote, const crypto::PrivateKey& validatorKey);
 bool signValidationVoteV1(ValidationVoteV1& vote, const crypto::PrivateKey& validatorKey,
                           const quantum::HybridKeyPair& quantumKeyPair);

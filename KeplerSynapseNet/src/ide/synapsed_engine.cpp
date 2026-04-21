@@ -8,8 +8,11 @@
 #include <cstring>
 #include <fstream>
 #include <iomanip>
+#include <mutex>
 #include <random>
 #include <sstream>
+#include <thread>
+#include <unordered_map>
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -80,6 +83,45 @@ std::string jsonEscape(const std::string& s) {
         else r += c;
     }
     return r;
+}
+
+std::string extractDomain(const std::string& url) {
+    size_t start = url.find("://");
+    if (start == std::string::npos) start = 0;
+    else start += 3;
+    size_t end = url.find('/', start);
+    if (end == std::string::npos) end = url.size();
+    size_t portPos = url.find(':', start);
+    if (portPos != std::string::npos && portPos < end) end = portPos;
+    return url.substr(start, end - start);
+}
+
+static std::mutex torRateMtx;
+static std::unordered_map<std::string, int64_t> torDomainLastRequest;
+static constexpr int64_t TOR_RATE_LIMIT_MS = 2000;
+
+bool torRateLimit(const std::string& domain) {
+    std::lock_guard<std::mutex> lock(torRateMtx);
+    int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    auto it = torDomainLastRequest.find(domain);
+    if (it != torDomainLastRequest.end()) {
+        int64_t elapsed = now - it->second;
+        if (elapsed < TOR_RATE_LIMIT_MS) {
+            int64_t wait = TOR_RATE_LIMIT_MS - elapsed;
+            std::this_thread::sleep_for(std::chrono::milliseconds(wait));
+        }
+    }
+    torDomainLastRequest[domain] = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    if (torDomainLastRequest.size() > 1024) {
+        int64_t cutoff = torDomainLastRequest[domain] - 300000;
+        for (auto i = torDomainLastRequest.begin(); i != torDomainLastRequest.end();) {
+            if (i->second < cutoff) i = torDomainLastRequest.erase(i);
+            else ++i;
+        }
+    }
+    return true;
 }
 
 }
@@ -308,6 +350,7 @@ bool SynapsedEngine::isUrlSafe(const std::string& url) const {
 
 std::string SynapsedEngine::fetchViaTor(const std::string& url) const {
     if (!isUrlSafe(url)) return "";
+    torRateLimit(extractDomain(url));
     std::string ua = randomUserAgent();
     int timeout = 45;
     if (url.find("dread") != std::string::npos) timeout = 90;

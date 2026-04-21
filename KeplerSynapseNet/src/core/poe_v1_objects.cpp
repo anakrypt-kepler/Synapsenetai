@@ -176,10 +176,40 @@ bool KnowledgeEntryV1::verifySignature(std::string* reason) const {
     return true;
 }
 
+bool KnowledgeEntryV1::verifyZKProof(std::string* reason) const {
+    bool empty = true;
+    for (auto b : zkCommitment) { if (b != 0) { empty = false; break; } }
+    if (empty) return true;
+
+    std::vector<uint8_t> challengeInput;
+    challengeInput.insert(challengeInput.end(), zkCommitment.begin(), zkCommitment.end());
+    challengeInput.insert(challengeInput.end(), authorPubKey.begin(), authorPubKey.end());
+    auto cid = contentId();
+    challengeInput.insert(challengeInput.end(), cid.begin(), cid.end());
+    crypto::Hash256 challenge = crypto::sha256(challengeInput.data(), challengeInput.size());
+
+    std::vector<uint8_t> lhsBuf;
+    lhsBuf.insert(lhsBuf.end(), zkResponse.begin(), zkResponse.end());
+    lhsBuf.insert(lhsBuf.end(), challenge.begin(), challenge.end());
+    lhsBuf.insert(lhsBuf.end(), authorPubKey.begin(), authorPubKey.end());
+    crypto::Hash256 lhs = crypto::sha256(lhsBuf.data(), lhsBuf.size());
+
+    std::vector<uint8_t> rhsBuf;
+    rhsBuf.insert(rhsBuf.end(), zkCommitment.begin(), zkCommitment.end());
+    crypto::Hash256 rhs = crypto::sha256(rhsBuf.data(), rhsBuf.size());
+
+    if (lhs != rhs) {
+        if (reason) *reason = "zk_proof_failed";
+        return false;
+    }
+    return true;
+}
+
 bool KnowledgeEntryV1::verifyAll(const LimitsV1& limits, std::string* reason) const {
     if (!checkLimits(limits, reason)) return false;
     if (!verifyPoW(reason)) return false;
     if (!verifySignature(reason)) return false;
+    if (!verifyZKProof(reason)) return false;
     return true;
 }
 
@@ -197,6 +227,8 @@ std::vector<uint8_t> KnowledgeEntryV1::serialize() const {
     writeU64LE(out, powNonce);
     writeU32LE(out, powBits);
     out.insert(out.end(), authorSig.begin(), authorSig.end());
+    out.insert(out.end(), zkCommitment.begin(), zkCommitment.end());
+    out.insert(out.end(), zkResponse.begin(), zkResponse.end());
     return out;
 }
 
@@ -243,6 +275,13 @@ std::optional<KnowledgeEntryV1> KnowledgeEntryV1::deserialize(const std::vector<
     if (p + e.authorSig.size() > end) return std::nullopt;
     std::memcpy(e.authorSig.data(), p, e.authorSig.size());
     p += e.authorSig.size();
+
+    if (p + e.zkCommitment.size() + e.zkResponse.size() <= end) {
+        std::memcpy(e.zkCommitment.data(), p, e.zkCommitment.size());
+        p += e.zkCommitment.size();
+        std::memcpy(e.zkResponse.data(), p, e.zkResponse.size());
+        p += e.zkResponse.size();
+    }
 
     if (p != end) return std::nullopt;
     return e;
@@ -398,7 +437,43 @@ crypto::Hash256 validatorSetHashV1(const std::vector<crypto::PublicKey>& validat
 bool signKnowledgeEntryV1(KnowledgeEntryV1& entry, const crypto::PrivateKey& authorKey) {
     entry.authorPubKey = crypto::derivePublicKey(authorKey);
     entry.authorSig = crypto::sign(entry.signatureHash(), authorKey);
+    generateZKProof(entry, authorKey);
     return true;
+}
+
+bool generateZKProof(KnowledgeEntryV1& entry, const crypto::PrivateKey& authorKey) {
+    auto nonce = crypto::randomBytes(32);
+    crypto::Hash256 k{};
+    std::memcpy(k.data(), nonce.data(), 32);
+
+    std::vector<uint8_t> commitBuf;
+    commitBuf.insert(commitBuf.end(), k.begin(), k.end());
+    commitBuf.insert(commitBuf.end(), entry.authorPubKey.begin(), entry.authorPubKey.end());
+    auto commitHash = crypto::sha256(commitBuf.data(), commitBuf.size());
+    std::memcpy(entry.zkCommitment.data(), commitHash.data(), std::min(commitHash.size(), entry.zkCommitment.size()));
+
+    std::vector<uint8_t> challengeInput;
+    challengeInput.insert(challengeInput.end(), entry.zkCommitment.begin(), entry.zkCommitment.end());
+    challengeInput.insert(challengeInput.end(), entry.authorPubKey.begin(), entry.authorPubKey.end());
+    auto cid = entry.contentId();
+    challengeInput.insert(challengeInput.end(), cid.begin(), cid.end());
+    crypto::Hash256 challenge = crypto::sha256(challengeInput.data(), challengeInput.size());
+
+    for (size_t i = 0; i < 32; ++i) {
+        entry.zkResponse[i] = k[i] ^ challenge[i] ^ authorKey[i];
+    }
+
+    std::vector<uint8_t> lhsBuf;
+    lhsBuf.insert(lhsBuf.end(), entry.zkResponse.begin(), entry.zkResponse.end());
+    lhsBuf.insert(lhsBuf.end(), challenge.begin(), challenge.end());
+    lhsBuf.insert(lhsBuf.end(), entry.authorPubKey.begin(), entry.authorPubKey.end());
+    crypto::Hash256 lhs = crypto::sha256(lhsBuf.data(), lhsBuf.size());
+
+    std::vector<uint8_t> rhsBuf;
+    rhsBuf.insert(rhsBuf.end(), entry.zkCommitment.begin(), entry.zkCommitment.end());
+    crypto::Hash256 rhs = crypto::sha256(rhsBuf.data(), rhsBuf.size());
+
+    return lhs == rhs;
 }
 
 bool signValidationVoteV1(ValidationVoteV1& vote, const crypto::PrivateKey& validatorKey) {
