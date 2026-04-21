@@ -64,14 +64,17 @@ private:
     void naanLoop();
     std::string naanStatus() const;
     std::string naanControl(const std::string& paramsJson);
-    std::vector<std::string> parseArxivTitles(const std::string& html) const;
+    std::vector<std::string> extractTitles(const std::string& html) const;
+    std::string topicToUrl(const std::string& topic) const;
+    std::string sha256Hex(const std::string& data) const;
+    std::string ed25519Sign(const std::string& data) const;
+    void ensureSigningKey() const;
+    void persistDraft(const NaanDraft& d, const std::string& hash) const;
 
-    // --- Model ---
     std::string modelLoad(const std::string& paramsJson);
     std::string modelStatus() const;
     bool validateGguf(const std::string& path) const;
 
-    // --- Core state ---
     mutable std::mutex mtx_;
     bool initialized_ = false;
     std::string configPath_;
@@ -83,19 +86,21 @@ private:
     std::string walletAddress_;
     std::string balance_ = "0.00";
 
-    // --- Model state ---
     bool modelLoaded_ = false;
     std::string modelName_;
     std::string modelPath_;
     size_t modelSizeMb_ = 0;
 
-    // --- NAAN state ---
     std::atomic<bool> naanRunning_{false};
     std::atomic<bool> naanStop_{false};
     std::thread naanThread_;
     std::string naanState_ = "off";
-    int naanTickInterval_ = 20;
-    std::vector<std::string> cfgTopics_ = {"cs.AI", "cs.CR", "cs.DC"};
+    int naanTickInterval_ = 45;
+    double naanBudgetPerEpoch_ = 100.0;
+    double naanSpentThisEpoch_ = 0.0;
+    std::vector<std::string> cfgTopics_ = {
+        "whistleblower", "zero-day", "darknet", "AI", "crypto"
+    };
     std::vector<NaanLogEntry> naanLog_;
     std::vector<NaanDraft> naanHist_;
     int naanSubmissions_ = 0;

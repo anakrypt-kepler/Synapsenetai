@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <random>
 #include <sstream>
 #ifdef _WIN32
@@ -311,26 +312,201 @@ std::string SynapsedEngine::fetchViaTor(const std::string& url) const {
     return execCmd(cmd);
 }
 
-std::vector<std::string> SynapsedEngine::parseArxivTitles(const std::string& html) const {
-    std::vector<std::string> titles;
-    const std::string marker = "class=\"list-title";
-    const std::string spanEnd = "</span>";
-    const std::string divEnd = "</div>";
-
-    size_t pos = 0;
-    while (titles.size() < 20) {
-        pos = html.find(marker, pos);
-        if (pos == std::string::npos) break;
-        size_t se = html.find(spanEnd, pos);
-        if (se == std::string::npos) break;
-        se += spanEnd.size();
-        size_t de = html.find(divEnd, se);
-        if (de == std::string::npos) break;
-        std::string t = trim(html.substr(se, de - se));
-        if (!t.empty()) titles.push_back(t);
-        pos = de + divEnd.size();
+std::string SynapsedEngine::topicToUrl(const std::string& topic) const {
+    if (topic.find("whistleblower") != std::string::npos ||
+        topic.find("leak") != std::string::npos) {
+        static const char* urls[] = {
+            "http://secrdrop5wyphb5x.onion/",
+            "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/",
+        };
+        std::mt19937 g(std::random_device{}());
+        return urls[g() % 2];
     }
+    if (topic.find("zero-day") != std::string::npos ||
+        topic.find("exploit") != std::string::npos ||
+        topic.find("vuln") != std::string::npos ||
+        topic.find("cve") != std::string::npos) {
+        static const char* urls[] = {
+            "https://cve.mitre.org/cgi-bin/cvekey.cgi?keyword=2024",
+            "https://arxiv.org/list/cs.CR/recent",
+            "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/news/technology",
+        };
+        std::mt19937 g(std::random_device{}());
+        return urls[g() % 3];
+    }
+    if (topic.find("onion") != std::string::npos ||
+        topic.find("darknet") != std::string::npos ||
+        topic.find("tor") != std::string::npos) {
+        static const char* urls[] = {
+            "http://secrdrop5wyphb5x.onion/",
+            "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/",
+            "https://mail.protonmail.ch/",
+        };
+        std::mt19937 g(std::random_device{}());
+        return urls[g() % 3];
+    }
+    if (topic.find("crypto") != std::string::npos)
+        return "https://arxiv.org/list/cs.CR/recent";
+    if (topic.find("AI") != std::string::npos)
+        return "https://arxiv.org/list/cs.AI/recent";
+    return "https://arxiv.org/list/cs.AI/recent";
+}
+
+std::vector<std::string> SynapsedEngine::extractTitles(const std::string& html) const {
+    std::vector<std::string> titles;
+
+    const std::string arxivMarker = "class=\"list-title";
+    if (html.find(arxivMarker) != std::string::npos) {
+        const std::string spanEnd = "</span>";
+        const std::string divEnd = "</div>";
+        size_t pos = 0;
+        while (titles.size() < 20) {
+            pos = html.find(arxivMarker, pos);
+            if (pos == std::string::npos) break;
+            size_t se = html.find(spanEnd, pos);
+            if (se == std::string::npos) break;
+            se += spanEnd.size();
+            size_t de = html.find(divEnd, se);
+            if (de == std::string::npos) break;
+            std::string t = trim(html.substr(se, de - se));
+            if (!t.empty() && t.size() > 5) titles.push_back(t);
+            pos = de + divEnd.size();
+        }
+        if (!titles.empty()) return titles;
+    }
+
+    for (const auto& tag : {"<h1>", "<h2>", "<h1 "}) {
+        std::string open = tag;
+        std::string closeTag = (open[1] == 'h' && open[2] == '1') ? "</h1>" : "</h2>";
+        size_t pos = 0;
+        while (titles.size() < 20) {
+            pos = html.find(open, pos);
+            if (pos == std::string::npos) break;
+            size_t gt = html.find('>', pos);
+            if (gt == std::string::npos) break;
+            size_t ce = html.find(closeTag, gt + 1);
+            if (ce == std::string::npos) { ce = html.find("</h", gt + 1); }
+            if (ce == std::string::npos) break;
+            std::string raw = html.substr(gt + 1, ce - gt - 1);
+            std::string clean;
+            bool inTag = false;
+            for (char c : raw) {
+                if (c == '<') inTag = true;
+                else if (c == '>') inTag = false;
+                else if (!inTag) clean += c;
+            }
+            std::string t = trim(clean);
+            if (!t.empty() && t.size() > 3) titles.push_back(t);
+            pos = ce + 1;
+        }
+        if (!titles.empty()) return titles;
+    }
+
+    {
+        size_t pos = 0;
+        while (titles.size() < 20) {
+            pos = html.find("<a href=\"/news/", pos);
+            if (pos == std::string::npos) break;
+            size_t gt = html.find('>', pos);
+            if (gt == std::string::npos) break;
+            size_t ce = html.find("</a>", gt + 1);
+            if (ce == std::string::npos) break;
+            std::string raw = html.substr(gt + 1, ce - gt - 1);
+            std::string clean;
+            bool inTag = false;
+            for (char c : raw) {
+                if (c == '<') inTag = true;
+                else if (c == '>') inTag = false;
+                else if (!inTag) clean += c;
+            }
+            std::string t = trim(clean);
+            if (!t.empty() && t.size() > 10) titles.push_back(t);
+            pos = ce + 4;
+        }
+        if (!titles.empty()) return titles;
+    }
+
+    {
+        size_t ts = html.find("<title>");
+        if (ts != std::string::npos) {
+            size_t te = html.find("</title>", ts + 7);
+            if (te != std::string::npos) {
+                std::string t = trim(html.substr(ts + 7, te - ts - 7));
+                if (!t.empty()) titles.push_back(t);
+            }
+        }
+    }
+
     return titles;
+}
+
+std::string SynapsedEngine::sha256Hex(const std::string& data) const {
+    std::string tmpFile = "/tmp/synapsed_sha_" + std::to_string(nowMillis());
+    {
+        std::ofstream f(tmpFile, std::ios::binary);
+        f.write(data.c_str(), data.size());
+    }
+    std::string result = execCmd("openssl dgst -sha256 -hex " + tmpFile + " 2>/dev/null");
+    std::remove(tmpFile.c_str());
+    size_t eq = result.rfind("= ");
+    if (eq != std::string::npos) return trim(result.substr(eq + 2));
+    return trim(result);
+}
+
+void SynapsedEngine::ensureSigningKey() const {
+    std::string keyPath = dataDir_ + "/node_ed25519.pem";
+    std::ifstream check(keyPath);
+    if (check.good()) return;
+    std::string cmd = "openssl genpkey -algorithm ed25519 -out " + keyPath + " 2>/dev/null";
+    system(cmd.c_str());
+}
+
+std::string SynapsedEngine::ed25519Sign(const std::string& data) const {
+    ensureSigningKey();
+    std::string keyPath = dataDir_ + "/node_ed25519.pem";
+    std::string tmpIn = "/tmp/synapsed_sign_in_" + std::to_string(nowMillis());
+    std::string tmpOut = "/tmp/synapsed_sign_out_" + std::to_string(nowMillis());
+    {
+        std::ofstream f(tmpIn, std::ios::binary);
+        f.write(data.c_str(), data.size());
+    }
+    std::string cmd = "openssl pkeyutl -sign -rawin -inkey " + keyPath +
+                      " -in " + tmpIn + " -out " + tmpOut + " 2>/dev/null";
+    system(cmd.c_str());
+    std::ifstream sf(tmpOut, std::ios::binary);
+    std::string sig;
+    if (sf) {
+        sig = std::string((std::istreambuf_iterator<char>(sf)),
+                           std::istreambuf_iterator<char>());
+    }
+    std::remove(tmpIn.c_str());
+    std::remove(tmpOut.c_str());
+    std::string hex;
+    hex.reserve(sig.size() * 2);
+    for (unsigned char c : sig) {
+        char tmp[3];
+        snprintf(tmp, sizeof(tmp), "%02x", c);
+        hex += tmp;
+    }
+    return hex;
+}
+
+void SynapsedEngine::persistDraft(const NaanDraft& d, const std::string& hash) const {
+    std::string dir = dataDir_ + "/knowledge";
+    std::string mkd = "mkdir -p " + dir;
+    system(mkd.c_str());
+    std::string hash12 = hash.size() >= 12 ? hash.substr(0, 12) : hash;
+    std::string fname = dir + "/draft_" + std::to_string(nowMillis()) + "_" + hash12 + ".json";
+    std::ofstream f(fname);
+    if (!f) return;
+    f << "{\n"
+      << "  \"title\": \"" << jsonEscape(d.title) << "\",\n"
+      << "  \"topic\": \"" << jsonEscape(d.topic) << "\",\n"
+      << "  \"status\": \"" << d.status << "\",\n"
+      << "  \"ngt\": " << d.ngt << ",\n"
+      << "  \"sha256\": \"" << hash << "\",\n"
+      << "  \"timestamp\": " << nowMillis() << "\n"
+      << "}\n";
 }
 
 bool SynapsedEngine::validateGguf(const std::string& path) const {
@@ -382,6 +558,7 @@ std::string SynapsedEngine::naanStatus() const {
        << "\",\"submissions\":" << naanSubmissions_
        << ",\"approved\":" << naanApproved_
        << ",\"total_ngt\":" << std::fixed << naanTotalNgt_
+       << ",\"budget_remaining\":" << (naanBudgetPerEpoch_ - naanSpentThisEpoch_)
        << ",\"approval_rate\":" << (naanSubmissions_ > 0 ? (100.0 * naanApproved_ / naanSubmissions_) : 0.0)
        << ",\"log\":[";
     for (size_t i = 0; i < naanLog_.size(); i++) {
@@ -405,6 +582,7 @@ std::string SynapsedEngine::naanControl(const std::string& paramsJson) {
         paramsJson.find("\"action\":\"start\"") != std::string::npos) {
         if (!naanRunning_.load()) {
             naanStop_.store(false);
+            naanSpentThisEpoch_ = 0.0;
             naanState_ = "active";
             naanRunning_.store(true);
             naanThread_ = std::thread(&SynapsedEngine::naanLoop, this);
@@ -443,12 +621,22 @@ std::string SynapsedEngine::naanControl(const std::string& paramsJson) {
         }
         return "{\"ok\":true,\"tick\":" + std::to_string(naanTickInterval_) + "}";
     }
+    if (paramsJson.find("\"budget\"") != std::string::npos) {
+        size_t vp = paramsJson.find("\"budget\"");
+        size_t colon = paramsJson.find(':', vp);
+        if (colon != std::string::npos) {
+            double v = std::atof(paramsJson.c_str() + colon + 1);
+            if (v > 0) naanBudgetPerEpoch_ = v;
+        }
+        return "{\"ok\":true}";
+    }
     return "{\"error\":\"unknown naan action\"}";
 }
 
 void SynapsedEngine::startNaan() {
     if (naanRunning_.load()) return;
     naanStop_.store(false);
+    naanSpentThisEpoch_ = 0.0;
     naanState_ = "active";
     naanRunning_.store(true);
     naanThread_ = std::thread(&SynapsedEngine::naanLoop, this);
@@ -470,19 +658,23 @@ void SynapsedEngine::naanLoop() {
     while (!naanStop_.load()) {
         std::string topic;
         int tickSec;
+        double budgetLeft;
         {
             std::lock_guard<std::mutex> lock(mtx_);
             if (cfgTopics_.empty()) { naanState_ = "cooldown"; break; }
+            budgetLeft = naanBudgetPerEpoch_ - naanSpentThisEpoch_;
+            if (budgetLeft <= 0) { naanState_ = "budget_exhausted"; break; }
             std::uniform_int_distribution<size_t> td(0, cfgTopics_.size() - 1);
             topic = cfgTopics_[td(rng)];
             tickSec = naanTickInterval_;
         }
 
-        std::string url = "https://arxiv.org/list/" + topic + "/recent";
+        std::string url = topicToUrl(topic);
         std::string html = fetchViaTor(url);
+        std::string fetchedVia = html.empty() ? "failed" : "tor_socks5";
 
         std::vector<std::string> titles;
-        if (!html.empty()) titles = parseArxivTitles(html);
+        if (!html.empty()) titles = extractTitles(html);
 
         std::string chosenTitle;
         if (!titles.empty()) {
@@ -490,7 +682,12 @@ void SynapsedEngine::naanLoop() {
             chosenTitle = titles[pick(rng)];
         } else {
             chosenTitle = "Advances in " + topic + " (fetch failed)";
+            fetchedVia = "failed";
         }
+
+        std::string payload = topic + "|" + chosenTitle + "|" + std::to_string(nowMillis());
+        std::string hash = sha256Hex(payload);
+        std::string sig = ed25519Sign(hash);
 
         std::uniform_real_distribution<double> ngtDist(0.5, 4.8);
         std::uniform_int_distribution<int> acceptDist(1, 100);
@@ -500,14 +697,28 @@ void SynapsedEngine::naanLoop() {
 
         {
             std::lock_guard<std::mutex> lock(mtx_);
+
+            if (naanSpentThisEpoch_ + ngt > naanBudgetPerEpoch_) {
+                naanState_ = "budget_exhausted";
+                break;
+            }
+            naanSpentThisEpoch_ += ngt;
+
             naanSubmissions_++;
             if (accepted) {
                 naanApproved_++;
                 naanTotalNgt_ += ngt;
-                balance_ = std::to_string(naanTotalNgt_).substr(0, std::to_string(naanTotalNgt_).find('.') + 3);
+                std::ostringstream bs;
+                bs << std::fixed << std::setprecision(2) << naanTotalNgt_;
+                balance_ = bs.str();
             }
 
-            NaanLogEntry le{nowMillis(), "[" + topic + "] " + chosenTitle + " -> " + status};
+            NaanLogEntry le{nowMillis(),
+                "[" + topic + "] " + chosenTitle +
+                " sha256=" + hash.substr(0, 12) +
+                " sig=" + sig.substr(0, 16) +
+                " via=" + fetchedVia +
+                " -> " + status};
             naanLog_.push_back(le);
             if (naanLog_.size() > 80) naanLog_.erase(naanLog_.begin());
 
@@ -515,6 +726,7 @@ void SynapsedEngine::naanLoop() {
             naanHist_.push_back(d);
             if (naanHist_.size() > 25) naanHist_.erase(naanHist_.begin());
 
+            persistDraft(d, hash);
             naanState_ = "active";
         }
 

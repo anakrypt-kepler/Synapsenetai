@@ -555,6 +555,10 @@ target_link_libraries(synapsed PRIVATE synapsed_core)
 
 add_library(synapsed_lib SHARED src/ide/synapsed_engine.cpp src/ide/synapsed_ffi.cpp)
 target_link_libraries(synapsed_lib PRIVATE synapsed_core)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(synapsed_lib PRIVATE dl)
+    target_link_libraries(synapsed_core PUBLIC dl)
+endif()
 target_compile_definitions(synapsed_lib PRIVATE SYNAPSED_BUILDING_LIB)
 set_target_properties(synapsed_lib PROPERTIES
     OUTPUT_NAME "synapsed"
@@ -563,6 +567,8 @@ set_target_properties(synapsed_lib PROPERTIES
     C_VISIBILITY_PRESET hidden
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON
+    BUILD_RPATH_USE_ORIGIN ON
+    INSTALL_RPATH "$ORIGIN"
 )
 if(APPLE)
     set_target_properties(synapsed_lib PROPERTIES SUFFIX ".dylib")
