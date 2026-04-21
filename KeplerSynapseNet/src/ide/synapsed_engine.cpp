@@ -436,7 +436,8 @@ SynapsedEngine::CaptchaResult SynapsedEngine::detectCaptcha(const std::string& h
     }
 
     if (html.find("ancaptcha") != std::string::npos ||
-        html.find("anCaptcha") != std::string::npos) {
+        html.find("anCaptcha") != std::string::npos ||
+        html.find("anC_") != std::string::npos) {
         if (html.find("rotate") != std::string::npos ||
             html.find("Rotate") != std::string::npos) {
             r.type = "rotate";
@@ -460,6 +461,10 @@ SynapsedEngine::CaptchaResult SynapsedEngine::detectCaptcha(const std::string& h
             r.solved = !r.answer.empty();
             return r;
         }
+        r.type = "rotate";
+        r.answer = solveRotateCaptcha(html);
+        r.solved = !r.answer.empty();
+        return r;
     }
 
     if (html.find("rotate") != std::string::npos &&
@@ -1129,9 +1134,23 @@ std::string SynapsedEngine::solveRotateCaptcha(const std::string& html) const {
         std::string tag = html.substr(tagStart, tagEnd - tagStart + 1);
         pos = tagEnd + 1;
 
-        if (tag.find("captcha") == std::string::npos &&
-            tag.find("rotate") == std::string::npos &&
-            tag.find("answer") == std::string::npos) continue;
+        bool inCaptchaContext = tag.find("captcha") != std::string::npos ||
+            tag.find("rotate") != std::string::npos ||
+            tag.find("answer") != std::string::npos ||
+            tag.find("anC_") != std::string::npos;
+        if (!inCaptchaContext) {
+            size_t formCtx = html.rfind("<form", tagStart);
+            size_t divCtx = html.rfind("ancaptcha", tagStart);
+            size_t divCtx2 = html.rfind("anCaptcha", tagStart);
+            size_t divCtx3 = html.rfind("decaptcha", tagStart);
+            size_t divCtx4 = html.rfind("ddos_form", tagStart);
+            if ((formCtx == std::string::npos || tagStart - formCtx > 5000) &&
+                (divCtx == std::string::npos || tagStart - divCtx > 5000) &&
+                (divCtx2 == std::string::npos || tagStart - divCtx2 > 5000) &&
+                (divCtx3 == std::string::npos || tagStart - divCtx3 > 5000) &&
+                (divCtx4 == std::string::npos || tagStart - divCtx4 > 5000))
+                continue;
+        }
 
         std::string name, val;
         size_t nP = tag.find("name=\"");
@@ -1152,21 +1171,51 @@ std::string SynapsedEngine::solveRotateCaptcha(const std::string& html) const {
         }
         if (name.empty() || val.empty()) continue;
 
-        int degree = 0;
-        std::string searchVal = "value=\"" + val + "\"";
-        size_t cssP = html.find(searchVal);
-        while (cssP != std::string::npos) {
-            size_t rotP = html.find("rotate(", cssP);
-            if (rotP != std::string::npos && rotP < cssP + 300) {
-                rotP += 7;
-                size_t rotE = html.find("deg", rotP);
-                if (rotE == std::string::npos) rotE = html.find(")", rotP);
-                if (rotE != std::string::npos) {
-                    degree = std::atoi(html.substr(rotP, rotE - rotP).c_str());
-                    break;
+        std::string radioId;
+        size_t idP = tag.find("id=\"");
+        if (idP == std::string::npos) idP = tag.find("id='");
+        if (idP != std::string::npos) {
+            char q = tag[idP + 3];
+            idP += 4;
+            size_t idE = tag.find(q, idP);
+            if (idE != std::string::npos) radioId = tag.substr(idP, idE - idP);
+        }
+
+        int degree = -1;
+        if (!radioId.empty()) {
+            std::string cssSelector = "#" + radioId + ":checked";
+            size_t cssP = html.find(cssSelector);
+            while (cssP != std::string::npos) {
+                size_t rotP = html.find("rotate(", cssP);
+                if (rotP != std::string::npos && rotP < cssP + 300) {
+                    rotP += 7;
+                    size_t rotE = html.find("deg", rotP);
+                    if (rotE == std::string::npos) rotE = html.find(")", rotP);
+                    if (rotE != std::string::npos) {
+                        degree = std::atoi(html.substr(rotP, rotE - rotP).c_str());
+                        break;
+                    }
                 }
+                cssP = html.find(cssSelector, cssP + 1);
             }
-            cssP = html.find(searchVal, cssP + 1);
+        }
+        if (degree < 0) {
+            std::string searchVal = "value=\"" + val + "\"";
+            size_t cssP = html.find(searchVal);
+            while (cssP != std::string::npos) {
+                size_t rotP = html.find("rotate(", cssP);
+                if (rotP != std::string::npos && rotP < cssP + 300) {
+                    rotP += 7;
+                    size_t rotE = html.find("deg", rotP);
+                    if (rotE == std::string::npos) rotE = html.find(")", rotP);
+                    if (rotE != std::string::npos) {
+                        degree = std::atoi(html.substr(rotP, rotE - rotP).c_str());
+                        break;
+                    }
+                }
+                cssP = html.find(searchVal, cssP + 1);
+            }
+            if (degree < 0) degree = 0;
         }
 
         bool found = false;
@@ -1176,7 +1225,7 @@ std::string SynapsedEngine::solveRotateCaptcha(const std::string& html) const {
         if (!found) groups.push_back({name, {{val, degree}}});
     }
 
-    std::string tokenField;
+    std::string tokenField, tokenName;
     for (const auto& tok : {"ancaptcha_token", "_token", "token", "captcha_token"}) {
         std::string search = std::string("name=\"") + tok + "\"";
         size_t tokP = html.find(search);
@@ -1185,8 +1234,32 @@ std::string SynapsedEngine::solveRotateCaptcha(const std::string& html) const {
             if (valP != std::string::npos && valP < tokP + 300) {
                 valP += 7;
                 size_t valE = html.find('"', valP);
-                if (valE != std::string::npos) { tokenField = html.substr(valP, valE - valP); break; }
+                if (valE != std::string::npos) { tokenField = html.substr(valP, valE - valP); tokenName = tok; break; }
             }
+        }
+    }
+    if (tokenField.empty() && html.find("anC_") != std::string::npos) {
+        size_t hp = html.find("type=\"hidden\"");
+        while (hp != std::string::npos) {
+            size_t ts = html.rfind('<', hp);
+            size_t te = html.find('>', hp);
+            if (ts != std::string::npos && te != std::string::npos) {
+                std::string htag = html.substr(ts, te - ts + 1);
+                if (htag.find("anC_") != std::string::npos) {
+                    size_t hnp = htag.find("name=\"");
+                    size_t hvp = htag.find("value=\"");
+                    if (hnp != std::string::npos && hvp != std::string::npos) {
+                        hnp += 6; size_t hne = htag.find('"', hnp);
+                        hvp += 7; size_t hve = htag.find('"', hvp);
+                        if (hne != std::string::npos && hve != std::string::npos) {
+                            tokenName = htag.substr(hnp, hne - hnp);
+                            tokenField = htag.substr(hvp, hve - hvp);
+                            break;
+                        }
+                    }
+                }
+            }
+            hp = html.find("type=\"hidden\"", hp + 13);
         }
     }
 
@@ -1237,8 +1310,9 @@ std::string SynapsedEngine::solveRotateCaptcha(const std::string& html) const {
     }
 
     if (!tokenField.empty()) {
+        std::string tn = tokenName.empty() ? "ancaptcha_token" : tokenName;
         result = (result.empty() ? "" : "&") + result;
-        result = "ancaptcha_token=" + tokenField + result;
+        result = tn + "=" + tokenField + result;
     }
 
     std::string formAction;
