@@ -1790,7 +1790,7 @@ std::string SynapsedEngine::solveHCaptcha(const std::string& siteKey,
 
 std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetries) const {
     bool isOnion = url.find(".onion") != std::string::npos;
-    int effectiveRetries = isOnion ? std::max(maxRetries, 6) : maxRetries;
+    int effectiveRetries = isOnion ? std::max(maxRetries, 8) : maxRetries;
 
     for (int attempt = 0; attempt < effectiveRetries; attempt++) {
         std::string html;
@@ -1814,14 +1814,28 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
             continue;
         }
 
-        if (html.find("placed in a queue") != std::string::npos ||
+        bool isEndGameQueue = html.find("placed in a queue") != std::string::npos ||
             html.find("awaiting forwarding") != std::string::npos ||
-            html.find("estimated entry time") != std::string::npos ||
-            html.find("Please wait") != std::string::npos ||
+            html.find("estimated entry time") != std::string::npos;
+        bool isGenericQueue = html.find("Please wait") != std::string::npos ||
             html.find("DDoS protection") != std::string::npos ||
-            (html.find("queue") != std::string::npos && html.size() < 15000)) {
+            (html.find("queue") != std::string::npos && html.size() < 15000);
 
+        if (isEndGameQueue || isGenericQueue) {
             int waitSec = 30 + attempt * 15;
+
+            size_t metaRefresh = html.find("http-equiv=\"refresh\"");
+            if (metaRefresh == std::string::npos)
+                metaRefresh = html.find("http-equiv='refresh'");
+            if (metaRefresh != std::string::npos) {
+                size_t contentP = html.find("content=\"", metaRefresh);
+                if (contentP != std::string::npos && contentP < metaRefresh + 100) {
+                    contentP += 9;
+                    int metaWait = std::atoi(html.c_str() + contentP);
+                    if (metaWait > 0 && metaWait < 120) waitSec = metaWait + 2;
+                }
+            }
+
             size_t etaPos = html.find("estimated");
             if (etaPos != std::string::npos) {
                 size_t numP = html.find_first_of("0123456789", etaPos);
@@ -1832,7 +1846,11 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
             }
             std::this_thread::sleep_for(std::chrono::seconds(waitSec));
 
-            if (attempt > 0 && attempt % 2 == 0) {
+            if (isEndGameQueue && attempt == 0) {
+                system("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
+                       "nc 127.0.0.1 9051 2>/dev/null");
+                std::this_thread::sleep_for(std::chrono::seconds(8));
+            } else if (attempt > 0 && attempt % 2 == 0) {
                 system("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
                        "nc 127.0.0.1 9051 2>/dev/null");
                 std::this_thread::sleep_for(std::chrono::seconds(5));
