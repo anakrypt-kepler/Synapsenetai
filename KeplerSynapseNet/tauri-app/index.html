@@ -8,6 +8,24 @@
   </head>
   <body>
     <div id="app"></div>
+    <script>
+      if (!window.__TAURI_INTERNALS__) {
+        window.__TAURI_INTERNALS__ = {
+          invoke: async function(cmd, args) {
+            try {
+              var r = await fetch('http://127.0.0.1:8787', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({cmd: cmd, args: args || {}})
+              });
+              return r.json();
+            } catch(e) {
+              return {error: e.message};
+            }
+          }
+        };
+      }
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

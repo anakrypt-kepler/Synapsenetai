@@ -34,6 +34,7 @@ if(USE_LLAMA_CPP)
             llama_cpp
             GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
             GIT_TAG master
+            GIT_SHALLOW TRUE
         )
         FetchContent_MakeAvailable(llama_cpp)
         if(TARGET llama)
@@ -108,6 +109,7 @@ if(USE_SECP256K1)
             secp256k1
             GIT_REPOSITORY https://github.com/bitcoin-core/secp256k1.git
             GIT_TAG master
+            GIT_SHALLOW TRUE
         )
         FetchContent_MakeAvailable(secp256k1)
         if(TARGET secp256k1)

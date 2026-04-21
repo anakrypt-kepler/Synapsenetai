@@ -514,7 +514,7 @@ bool TransferManager::signTransaction(Transaction& tx, const crypto::PrivateKey&
     if (!signTransaction(tx, key)) {
         return false;
     }
-    if (quantumKeyPair.primarySecretKey.empty() || quantumKeyPair.secondarySecretKey.empty()) {
+    if (quantumKeyPair.classicSecretKey.empty() || quantumKeyPair.pqcSecretKey.empty()) {
         return false;
     }
     const auto& firstPubKey = tx.inputs.empty() ? crypto::PublicKey{} : tx.inputs.front().pubKey;

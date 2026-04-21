@@ -1,9 +1,11 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -11,6 +13,18 @@ namespace synapse {
 namespace ide {
 
 using EventCallback = std::function<void(const char* event_type, const char* payload_json)>;
+
+struct NaanLogEntry {
+    int64_t ts;
+    std::string text;
+};
+
+struct NaanDraft {
+    std::string title;
+    std::string topic;
+    std::string status;
+    double ngt;
+};
 
 class SynapsedEngine {
 public:
@@ -31,12 +45,63 @@ private:
     SynapsedEngine();
     ~SynapsedEngine();
 
+    // --- Tor integration ---
+    struct TorInfo {
+        std::string bootstrap;   // e.g. "100%"
+        int circuits = 0;
+        std::string version;
+        std::string exitIp;
+        bool connected = false;
+    };
+    TorInfo queryTorControl() const;
+    std::string fetchViaTor(const std::string& url) const;
+    bool isUrlSafe(const std::string& url) const;
+    void generateTorrc() const;
+
+    // --- NAAN runtime ---
+    void startNaan();
+    void stopNaan();
+    void naanLoop();
+    std::string naanStatus() const;
+    std::string naanControl(const std::string& paramsJson);
+    std::vector<std::string> parseArxivTitles(const std::string& html) const;
+
+    // --- Model ---
+    std::string modelLoad(const std::string& paramsJson);
+    std::string modelStatus() const;
+    bool validateGguf(const std::string& path) const;
+
+    // --- Core state ---
     mutable std::mutex mtx_;
     bool initialized_ = false;
     std::string configPath_;
+    std::string dataDir_;
     std::string nodeId_;
     int64_t startTime_ = 0;
     int peerCount_ = 0;
+    std::string connectionType_ = "disconnected";
+    std::string walletAddress_;
+    std::string balance_ = "0.00";
+
+    // --- Model state ---
+    bool modelLoaded_ = false;
+    std::string modelName_;
+    std::string modelPath_;
+    size_t modelSizeMb_ = 0;
+
+    // --- NAAN state ---
+    std::atomic<bool> naanRunning_{false};
+    std::atomic<bool> naanStop_{false};
+    std::thread naanThread_;
+    std::string naanState_ = "off";
+    int naanTickInterval_ = 20;
+    std::vector<std::string> cfgTopics_ = {"cs.AI", "cs.CR", "cs.DC"};
+    std::vector<NaanLogEntry> naanLog_;
+    std::vector<NaanDraft> naanHist_;
+    int naanSubmissions_ = 0;
+    int naanApproved_ = 0;
+    double naanTotalNgt_ = 0.0;
+
     std::unordered_map<std::string, std::vector<EventCallback>> subscribers_;
 };
 
