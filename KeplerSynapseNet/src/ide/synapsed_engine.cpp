@@ -417,6 +417,51 @@ SynapsedEngine::CaptchaResult SynapsedEngine::detectCaptcha(const std::string& h
         return r;
     }
 
+    if (html.find("ancaptcha") != std::string::npos ||
+        html.find("anCaptcha") != std::string::npos) {
+        if (html.find("rotate") != std::string::npos ||
+            html.find("Rotate") != std::string::npos) {
+            r.type = "rotate";
+            r.answer = solveRotateCaptcha(html);
+            r.solved = !r.answer.empty();
+            return r;
+        }
+        if (html.find("slider") != std::string::npos ||
+            html.find("Slider") != std::string::npos ||
+            html.find("slide") != std::string::npos) {
+            r.type = "slider";
+            r.answer = solveSliderCaptcha(html);
+            r.solved = !r.answer.empty();
+            return r;
+        }
+        if (html.find("pair") != std::string::npos ||
+            html.find("Pair") != std::string::npos ||
+            html.find("match") != std::string::npos) {
+            r.type = "pair";
+            r.answer = solvePairCaptcha(html);
+            r.solved = !r.answer.empty();
+            return r;
+        }
+    }
+
+    if (html.find("rotate") != std::string::npos &&
+        html.find("captcha") != std::string::npos &&
+        html.find("data-angle") != std::string::npos) {
+        r.type = "rotate";
+        r.answer = solveRotateCaptcha(html);
+        r.solved = !r.answer.empty();
+        return r;
+    }
+
+    if ((html.find("slider") != std::string::npos || html.find("slide") != std::string::npos) &&
+        html.find("captcha") != std::string::npos &&
+        (html.find("puzzle") != std::string::npos || html.find("drag") != std::string::npos)) {
+        r.type = "slider";
+        r.answer = solveSliderCaptcha(html);
+        r.solved = !r.answer.empty();
+        return r;
+    }
+
     if (html.find("<select") != std::string::npos &&
         html.find("captcha") != std::string::npos) {
         r.type = "multi_step";
@@ -919,6 +964,309 @@ std::string SynapsedEngine::solveMultiStepCaptcha(const std::string& html) const
         combined += selects[i].first + "=" + selects[i].second;
     }
     return combined;
+}
+
+double SynapsedEngine::detectImageRotation(const std::string& imgPath) const {
+    std::string script =
+        "python3 -c \""
+        "import sys;"
+        "try:\n"
+        "  import cv2, numpy as np, math;"
+        "  img = cv2.imread('" + imgPath + "');"
+        "  if img is None: print(0);sys.exit();"
+        "  gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY);"
+        "  edges = cv2.Canny(gray, 50, 150);"
+        "  lines = cv2.HoughLines(edges, 1, np.pi/180, 50);"
+        "  if lines is None: print(0);sys.exit();"
+        "  angles = [];"
+        "  for l in lines:\n"
+        "    rho, theta = l[0];"
+        "    deg = math.degrees(theta);"
+        "    angles.append(deg);"
+        "  if not angles: print(0);sys.exit();"
+        "  mean_a = sum(angles)/len(angles);"
+        "  offset = mean_a - 90.0;"
+        "  print(round(-offset, 1));"
+        "except: print(0);"
+        "\" 2>/dev/null";
+    std::string result = trim(execCmd(script));
+    if (result.empty()) return 0.0;
+    return std::atof(result.c_str());
+}
+
+int SynapsedEngine::detectSliderOffset(const std::string& bgPath,
+    const std::string& piecePath) const {
+    std::string script =
+        "python3 -c \""
+        "import sys;"
+        "try:\n"
+        "  import cv2, numpy as np;"
+        "  bg = cv2.imread('" + bgPath + "', 0);"
+        "  pc = cv2.imread('" + piecePath + "', 0);"
+        "  if bg is None or pc is None: print(0);sys.exit();"
+        "  res = cv2.matchTemplate(bg, pc, cv2.TM_CCOEFF_NORMED);"
+        "  _, _, _, max_loc = cv2.minMaxLoc(res);"
+        "  print(max_loc[0]);"
+        "except: print(0);"
+        "\" 2>/dev/null";
+    std::string result = trim(execCmd(script));
+    if (result.empty()) return 0;
+    return std::atoi(result.c_str());
+}
+
+std::string SynapsedEngine::solveRotateCaptcha(const std::string& html) const {
+    std::vector<std::string> imgUrls;
+    size_t pos = 0;
+    while (imgUrls.size() < 5) {
+        size_t imgTag = html.find("<img", pos);
+        if (imgTag == std::string::npos) break;
+        size_t tagEnd = html.find('>', imgTag);
+        if (tagEnd == std::string::npos) break;
+        std::string tag = html.substr(imgTag, tagEnd - imgTag + 1);
+        pos = tagEnd + 1;
+
+        if (tag.find("captcha") == std::string::npos &&
+            tag.find("rotate") == std::string::npos &&
+            tag.find("challenge") == std::string::npos &&
+            tag.find("data:image") == std::string::npos) continue;
+
+        size_t srcP = tag.find("src=\"");
+        if (srcP == std::string::npos) continue;
+        srcP += 5;
+        size_t srcE = tag.find('"', srcP);
+        if (srcE == std::string::npos) continue;
+        imgUrls.push_back(tag.substr(srcP, srcE - srcP));
+    }
+
+    std::string tokenField;
+    size_t tokP = html.find("name=\"ancaptcha_token\"");
+    if (tokP == std::string::npos) tokP = html.find("name=\"token\"");
+    if (tokP != std::string::npos) {
+        size_t valP = html.find("value=\"", tokP);
+        if (valP != std::string::npos && valP < tokP + 200) {
+            valP += 7;
+            size_t valE = html.find('"', valP);
+            if (valE != std::string::npos) tokenField = html.substr(valP, valE - valP);
+        }
+    }
+
+    std::string result;
+    for (size_t i = 0; i < imgUrls.size(); i++) {
+        std::string path = downloadCaptchaImage(imgUrls[i]);
+        if (path.empty()) continue;
+        double angle = detectImageRotation(path);
+        std::remove(path.c_str());
+        int correction = ((int)(-angle) % 360 + 360) % 360;
+        if (i > 0) result += "&";
+        result += "rotate_" + std::to_string(i) + "=" + std::to_string(correction);
+    }
+
+    if (!tokenField.empty()) {
+        result = "ancaptcha_token=" + tokenField + "&" + result;
+    }
+    return result;
+}
+
+std::string SynapsedEngine::solveSliderCaptcha(const std::string& html) const {
+    std::string bgUrl, pieceUrl;
+
+    size_t pos = 0;
+    while (true) {
+        size_t imgTag = html.find("<img", pos);
+        if (imgTag == std::string::npos) break;
+        size_t tagEnd = html.find('>', imgTag);
+        if (tagEnd == std::string::npos) break;
+        std::string tag = html.substr(imgTag, tagEnd - imgTag + 1);
+        pos = tagEnd + 1;
+
+        size_t srcP = tag.find("src=\"");
+        if (srcP == std::string::npos) continue;
+        srcP += 5;
+        size_t srcE = tag.find('"', srcP);
+        if (srcE == std::string::npos) continue;
+        std::string src = tag.substr(srcP, srcE - srcP);
+
+        if (tag.find("background") != std::string::npos ||
+            tag.find("slider-bg") != std::string::npos ||
+            tag.find("captcha-bg") != std::string::npos) {
+            bgUrl = src;
+        } else if (tag.find("piece") != std::string::npos ||
+                   tag.find("slider-piece") != std::string::npos ||
+                   tag.find("puzzle") != std::string::npos) {
+            pieceUrl = src;
+        } else if (bgUrl.empty()) {
+            bgUrl = src;
+        } else if (pieceUrl.empty()) {
+            pieceUrl = src;
+        }
+    }
+
+    if (bgUrl.empty()) return "";
+
+    std::string bgPath = downloadCaptchaImage(bgUrl);
+    std::string piecePath;
+    if (!pieceUrl.empty()) piecePath = downloadCaptchaImage(pieceUrl);
+
+    int offset = 0;
+    if (!piecePath.empty() && !bgPath.empty()) {
+        offset = detectSliderOffset(bgPath, piecePath);
+        std::remove(piecePath.c_str());
+    } else if (!bgPath.empty()) {
+        std::string script =
+            "python3 -c \""
+            "import sys;"
+            "try:\n"
+            "  import cv2, numpy as np;"
+            "  img = cv2.imread('" + bgPath + "', 0);"
+            "  if img is None: print(0);sys.exit();"
+            "  edges = cv2.Canny(img, 100, 200);"
+            "  contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE);"
+            "  if not contours: print(0);sys.exit();"
+            "  best = max(contours, key=cv2.contourArea);"
+            "  x, y, w, h = cv2.boundingRect(best);"
+            "  print(x);"
+            "except: print(0);"
+            "\" 2>/dev/null";
+        std::string r = trim(execCmd(script));
+        offset = std::atoi(r.c_str());
+    }
+    if (!bgPath.empty()) std::remove(bgPath.c_str());
+
+    std::string tokenField;
+    size_t tokP = html.find("name=\"ancaptcha_token\"");
+    if (tokP == std::string::npos) tokP = html.find("name=\"token\"");
+    if (tokP != std::string::npos) {
+        size_t valP = html.find("value=\"", tokP);
+        if (valP != std::string::npos && valP < tokP + 200) {
+            valP += 7;
+            size_t valE = html.find('"', valP);
+            if (valE != std::string::npos) tokenField = html.substr(valP, valE - valP);
+        }
+    }
+
+    std::string result = "slider_0=" + std::to_string(offset);
+    if (!tokenField.empty())
+        result = "ancaptcha_token=" + tokenField + "&" + result;
+    return result;
+}
+
+std::string SynapsedEngine::solvePairCaptcha(const std::string& html) const {
+    std::vector<std::pair<std::string, std::string>> images;
+    size_t pos = 0;
+    while (images.size() < 20) {
+        size_t imgTag = html.find("<img", pos);
+        if (imgTag == std::string::npos) break;
+        size_t tagEnd = html.find('>', imgTag);
+        if (tagEnd == std::string::npos) break;
+        std::string tag = html.substr(imgTag, tagEnd - imgTag + 1);
+        pos = tagEnd + 1;
+
+        size_t srcP = tag.find("src=\"");
+        if (srcP == std::string::npos) continue;
+        srcP += 5;
+        size_t srcE = tag.find('"', srcP);
+        if (srcE == std::string::npos) continue;
+        std::string src = tag.substr(srcP, srcE - srcP);
+
+        std::string id;
+        size_t idP = tag.find("data-id=\"");
+        if (idP == std::string::npos) idP = tag.find("data-value=\"");
+        if (idP == std::string::npos) idP = tag.find("name=\"");
+        if (idP != std::string::npos) {
+            size_t q = tag.find('"', idP + 5);
+            size_t q2 = tag.find('"', q + 1);
+            if (q != std::string::npos && q2 != std::string::npos)
+                id = tag.substr(q + 1, q2 - q - 1);
+        }
+        if (id.empty()) id = std::to_string(images.size());
+        images.push_back({src, id});
+    }
+
+    if (images.size() < 4) return "";
+
+    struct ImgHash { std::string id; std::string hash; };
+    std::vector<ImgHash> hashes;
+    for (const auto& img : images) {
+        std::string path = downloadCaptchaImage(img.first);
+        if (path.empty()) { hashes.push_back({img.second, "fail"}); continue; }
+
+        std::string phash = execCmd(
+            "python3 -c \""
+            "import sys;"
+            "try:\n"
+            "  import cv2, numpy as np;"
+            "  img = cv2.imread('" + path + "');"
+            "  if img is None: print('fail');sys.exit();"
+            "  small = cv2.resize(img, (8, 8));"
+            "  gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY);"
+            "  avg = gray.mean();"
+            "  bits = (gray > avg).flatten();"
+            "  h = 0;"
+            "  for b in bits: h = (h << 1) | int(b);"
+            "  print(hex(h));"
+            "except: print('fail');"
+            "\" 2>/dev/null");
+        std::remove(path.c_str());
+        hashes.push_back({img.second, trim(phash)});
+    }
+
+    std::vector<std::pair<std::string, std::string>> pairs;
+    std::vector<bool> used(hashes.size(), false);
+    for (size_t i = 0; i < hashes.size(); i++) {
+        if (used[i] || hashes[i].hash == "fail") continue;
+        for (size_t j = i + 1; j < hashes.size(); j++) {
+            if (used[j] || hashes[j].hash == "fail") continue;
+            if (hashes[i].hash == hashes[j].hash) {
+                pairs.push_back({hashes[i].id, hashes[j].id});
+                used[i] = used[j] = true;
+                break;
+            }
+        }
+    }
+
+    if (pairs.empty()) {
+        for (size_t i = 0; i < hashes.size() && pairs.empty(); i++) {
+            if (used[i] || hashes[i].hash == "fail") continue;
+            uint64_t h1 = std::strtoull(hashes[i].hash.c_str(), nullptr, 16);
+            int bestDist = 999;
+            size_t bestJ = 0;
+            for (size_t j = i + 1; j < hashes.size(); j++) {
+                if (used[j] || hashes[j].hash == "fail") continue;
+                uint64_t h2 = std::strtoull(hashes[j].hash.c_str(), nullptr, 16);
+                uint64_t diff = h1 ^ h2;
+                int dist = 0;
+                while (diff) { dist += diff & 1; diff >>= 1; }
+                if (dist < bestDist) { bestDist = dist; bestJ = j; }
+            }
+            if (bestDist < 10) {
+                pairs.push_back({hashes[i].id, hashes[bestJ].id});
+                used[i] = used[bestJ] = true;
+            }
+        }
+    }
+
+    if (pairs.empty()) return "";
+
+    std::string tokenField;
+    size_t tokP = html.find("name=\"ancaptcha_token\"");
+    if (tokP == std::string::npos) tokP = html.find("name=\"token\"");
+    if (tokP != std::string::npos) {
+        size_t valP = html.find("value=\"", tokP);
+        if (valP != std::string::npos && valP < tokP + 200) {
+            valP += 7;
+            size_t valE = html.find('"', valP);
+            if (valE != std::string::npos) tokenField = html.substr(valP, valE - valP);
+        }
+    }
+
+    std::string result;
+    if (!tokenField.empty()) result = "ancaptcha_token=" + tokenField;
+    for (size_t i = 0; i < pairs.size(); i++) {
+        if (!result.empty()) result += "&";
+        result += "pair_" + std::to_string(i) + "_0=" + pairs[i].first +
+                  "&pair_" + std::to_string(i) + "_1=" + pairs[i].second;
+    }
+    return result;
 }
 
 std::string SynapsedEngine::randomUserAgent() const {

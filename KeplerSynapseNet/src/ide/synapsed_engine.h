@@ -80,8 +80,13 @@ private:
     std::string solveClockCaptcha(const std::string& imgUrl) const;
     std::string solveHieroglyphCaptcha(const std::string& html) const;
     std::string solveMultiStepCaptcha(const std::string& html) const;
+    std::string solveRotateCaptcha(const std::string& html) const;
+    std::string solveSliderCaptcha(const std::string& html) const;
+    std::string solvePairCaptcha(const std::string& html) const;
     std::string downloadCaptchaImage(const std::string& imgUrl) const;
     std::string classifyImage(const std::string& imgPath) const;
+    double detectImageRotation(const std::string& imgPath) const;
+    int detectSliderOffset(const std::string& bgPath, const std::string& piecePath) const;
     std::string submitCaptchaAndRefetch(const std::string& url,
         const std::string& formAction, const std::string& field,
         const std::string& answer) const;
