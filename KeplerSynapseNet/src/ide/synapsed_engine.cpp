@@ -495,13 +495,35 @@ SynapsedEngine::CaptchaResult SynapsedEngine::detectCaptcha(const std::string& h
         if (c1 == 0xD1 && c2 >= 0x80 && c2 <= 0x8F) { hasCyrillic = true; break; }
     }
 
+    if (html.find("qa-captcha") != std::string::npos ||
+        html.find("data-xf-init=\"qa-captcha\"") != std::string::npos) {
+        size_t qaDiv = html.find("qa-captcha");
+        size_t mathStart = html.find_first_of("0123456789", qaDiv);
+        if (mathStart != std::string::npos && mathStart < qaDiv + 200) {
+            size_t mathEnd = mathStart;
+            while (mathEnd < html.size() && (std::isdigit(html[mathEnd]) ||
+                   html[mathEnd] == '+' || html[mathEnd] == '-' ||
+                   html[mathEnd] == '*' || html[mathEnd] == 'x' ||
+                   html[mathEnd] == ' ')) mathEnd++;
+            std::string expr = trim(html.substr(mathStart, mathEnd - mathStart));
+            if (!expr.empty()) {
+                r.type = "math";
+                r.answer = solveMathCaptcha(expr);
+                r.solved = !r.answer.empty();
+                return r;
+            }
+        }
+    }
+
     size_t imgPos = html.find("captcha");
+    if (imgPos == std::string::npos) imgPos = html.find("CAPTCHA");
     if (imgPos != std::string::npos) {
         size_t imgTag = html.rfind("<img", imgPos);
-        if (imgTag == std::string::npos) imgTag = html.find("<img", imgPos);
+        if (imgTag == std::string::npos || imgPos - imgTag > 500)
+            imgTag = html.find("<img", imgPos);
         if (imgTag != std::string::npos) {
             size_t srcPos = html.find("src=\"", imgTag);
-            if (srcPos != std::string::npos && srcPos < imgTag + 300) {
+            if (srcPos != std::string::npos && srcPos < imgTag + 500) {
                 srcPos += 5;
                 size_t srcEnd = html.find('"', srcPos);
                 if (srcEnd != std::string::npos) {
@@ -562,17 +584,54 @@ std::string SynapsedEngine::solveMathCaptcha(const std::string& expr) const {
 std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
     if (imgUrl.empty()) return "";
 
-    std::string fullUrl = imgUrl;
-    if (imgUrl[0] == '/') return "";
+    std::string ts = std::to_string(nowMillis());
+    std::string tmpImg = "/tmp/synapsed_captcha_" + ts + ".png";
+    std::string cleanImg = "/tmp/synapsed_captcha_" + ts + "_clean.png";
 
-    std::string tmpImg = "/tmp/synapsed_captcha_" + std::to_string(nowMillis()) + ".png";
-    std::string dlCmd = "curl -s --max-time 15 --socks5-hostname 127.0.0.1:9050 -L -o " +
-                        tmpImg + " \"" + fullUrl + "\" 2>/dev/null";
-    system(dlCmd.c_str());
+    if (imgUrl.find("data:image") == 0) {
+        size_t commaP = imgUrl.find(',');
+        if (commaP == std::string::npos) return "";
+        std::string b64 = imgUrl.substr(commaP + 1);
+        std::string decodeCmd = "echo '" + b64 + "' | base64 -d > " + tmpImg + " 2>/dev/null";
+        system(decodeCmd.c_str());
+    } else {
+        if (imgUrl[0] == '/') return "";
+        std::string dlCmd = "curl -s --max-time 15 --socks5-hostname 127.0.0.1:9050 -L "
+            "-c /tmp/synapsed_tor_cookies.txt -b /tmp/synapsed_tor_cookies.txt "
+            "-o " + tmpImg + " \"" + imgUrl + "\" 2>/dev/null";
+        system(dlCmd.c_str());
+    }
+
+    std::string preprocess =
+        "python3 -c \""
+        "import cv2, numpy as np;"
+        "img = cv2.imread('" + tmpImg + "', cv2.IMREAD_GRAYSCALE);"
+        "if img is None: exit(1);"
+        "h, w = img.shape;"
+        "scale = max(3, 600 // max(w, 1));"
+        "resized = cv2.resize(img, (w*scale, h*scale), interpolation=cv2.INTER_LANCZOS4);"
+        "blurred = cv2.GaussianBlur(resized, (3,3), 0);"
+        "_, th = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU);"
+        "cv2.imwrite('" + cleanImg + "', th);"
+        "\" 2>/dev/null";
+    system(preprocess.c_str());
+
+    std::ifstream checkClean(cleanImg);
+    std::string ocrTarget = checkClean.good() ? cleanImg : tmpImg;
+    checkClean.close();
 
     std::string ocrResult = execCmd(
-        "tesseract " + tmpImg + " stdout --psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 2>/dev/null");
+        "tesseract " + ocrTarget + " stdout --psm 7 "
+        "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 2>/dev/null");
+
+    if (ocrResult.empty() || ocrResult.size() < 2) {
+        ocrResult = execCmd(
+            "tesseract " + ocrTarget + " stdout --psm 8 "
+            "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 2>/dev/null");
+    }
+
     std::remove(tmpImg.c_str());
+    std::remove(cleanImg.c_str());
 
     std::string answer;
     for (char c : ocrResult) {
@@ -1663,16 +1722,70 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
 
         auto darkCap = detectCaptcha(html);
         if (darkCap.detected && darkCap.solved) {
-            std::string formField = "captcha";
-            size_t namePos = html.find("name=\"captcha");
-            if (namePos != std::string::npos) {
-                size_t q1 = html.find('"', namePos + 5);
-                size_t q2 = html.find('"', q1 + 1);
-                if (q1 != std::string::npos && q2 != std::string::npos)
-                    formField = html.substr(q1 + 1, q2 - q1 - 1);
+            std::string formAction = url;
+            size_t formTag = html.rfind("<form", html.find("captcha"));
+            if (formTag == std::string::npos) formTag = html.rfind("<form", html.find("CAPTCHA"));
+            if (formTag != std::string::npos) {
+                size_t actP = html.find("action=\"", formTag);
+                if (actP != std::string::npos && actP < formTag + 500) {
+                    actP += 8;
+                    size_t actE = html.find('"', actP);
+                    if (actE != std::string::npos) {
+                        std::string act = html.substr(actP, actE - actP);
+                        if (!act.empty() && act[0] == '/') {
+                            size_t slashP = url.find('/', url.find("://") + 3);
+                            formAction = url.substr(0, slashP) + act;
+                        } else if (!act.empty() && act.find("http") == 0) {
+                            formAction = act;
+                        }
+                    }
+                }
             }
-            std::string solved = submitCaptchaAndRefetch(url, url, formField, darkCap.answer);
-            if (!solved.empty()) return solved;
+
+            std::string postData = darkCap.answer;
+            for (const auto& tok : {"_token", "csrf", "form_token", "sid"}) {
+                std::string search = std::string("name=\"") + tok + "\"";
+                size_t tp = html.find(search);
+                if (tp != std::string::npos) {
+                    size_t vp = html.find("value=\"", tp);
+                    if (vp != std::string::npos && vp < tp + 200) {
+                        vp += 7;
+                        size_t ve = html.find('"', vp);
+                        if (ve != std::string::npos) {
+                            postData += "&" + std::string(tok) + "=" + html.substr(vp, ve - vp);
+                        }
+                    }
+                }
+            }
+
+            if (darkCap.type == "text_image" || darkCap.type == "cyrillic_text") {
+                std::string formField = "captcha";
+                size_t namePos = html.find("name=\"captcha");
+                if (namePos != std::string::npos) {
+                    size_t q1 = html.find('"', namePos + 5);
+                    size_t q2 = html.find('"', q1 + 1);
+                    if (q1 != std::string::npos && q2 != std::string::npos)
+                        formField = html.substr(q1 + 1, q2 - q1 - 1);
+                }
+                postData = formField + "=" + darkCap.answer;
+            }
+
+            std::string submitCmd = "curl -s -k --max-time 30 --socks5-hostname 127.0.0.1:9050 -L "
+                "-c /tmp/synapsed_tor_cookies.txt -b /tmp/synapsed_tor_cookies.txt "
+                "-H \"User-Agent: " + randomUserAgent() + "\" "
+                "-d \"" + postData + "\" "
+                "\"" + formAction + "\" 2>/dev/null";
+            if (!isOnion) {
+                submitCmd = "curl -s --max-time 30 -L "
+                    "-c /tmp/synapsed_clearnet_cookies.txt -b /tmp/synapsed_clearnet_cookies.txt "
+                    "-H \"User-Agent: " + randomUserAgent() + "\" "
+                    "-d \"" + postData + "\" "
+                    "\"" + formAction + "\" 2>/dev/null";
+            }
+            std::string solved = execCmd(submitCmd);
+            if (!solved.empty() && solved.find("captcha") == std::string::npos &&
+                solved.find("CAPTCHA") == std::string::npos)
+                return solved;
             continue;
         }
 
