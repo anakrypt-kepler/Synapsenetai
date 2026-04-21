@@ -9,8 +9,16 @@
 #include <deque>
 #include <array>
 #include <cstring>
-#include <sys/time.h>
 #include <optional>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <io.h>
+#pragma comment(lib, "ws2_32.lib")
+#define poll WSAPoll
+#define close closesocket
+#else
+#include <sys/time.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -18,6 +26,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
+#endif
 #include <fstream>
 #include <random>
 #include <cerrno>

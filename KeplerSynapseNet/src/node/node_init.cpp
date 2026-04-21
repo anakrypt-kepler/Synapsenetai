@@ -5,9 +5,14 @@
 #include <iostream>
 #include <thread>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#else
 #include <fcntl.h>
 #include <sys/statvfs.h>
 #include <unistd.h>
+#endif
 
 namespace synapse {
 
@@ -25,12 +30,20 @@ void ensureDirectories(const NodeConfig& config) {
 }
 
 bool checkDiskSpace(const std::string& path, uint64_t requiredBytes) {
+#ifdef _WIN32
+    ULARGE_INTEGER freeBytesAvailable;
+    if (!GetDiskFreeSpaceExA(path.c_str(), &freeBytesAvailable, nullptr, nullptr)) {
+        return false;
+    }
+    return freeBytesAvailable.QuadPart >= requiredBytes;
+#else
     struct statvfs stat {};
     if (statvfs(path.c_str(), &stat) != 0) {
         return false;
     }
     uint64_t available = stat.f_bavail * stat.f_frsize;
     return available >= requiredBytes;
+#endif
 }
 
 bool checkSystemRequirements() {

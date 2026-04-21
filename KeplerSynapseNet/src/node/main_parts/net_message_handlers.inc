@@ -1183,8 +1183,8 @@
         const uint64_t collectedFees = transfer_->collectFeePool();
         uint64_t budget = mintBudget;
         if (collectedFees > 0) {
-            uint64_t tmp = 0;
-            if (safeAddU64(budget, collectedFees, tmp)) budget = tmp;
+            if (UINT64_MAX - budget >= collectedFees) budget += collectedFees;
+            else budget = UINT64_MAX;
         }
         if (budget == 0) {
             autoPoeEpochLastRunAt_.store(now);

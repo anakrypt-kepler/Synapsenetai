@@ -13,12 +13,21 @@
 #include <iomanip>
 #include <chrono>
 #include <cstring>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <io.h>
+#pragma comment(lib, "ws2_32.lib")
+#define poll WSAPoll
+#define close closesocket
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <poll.h>
+#endif
 #include <cctype>
 #include <openssl/rand.h>
 #include "../../third_party/llama.cpp/vendor/nlohmann/json.hpp"

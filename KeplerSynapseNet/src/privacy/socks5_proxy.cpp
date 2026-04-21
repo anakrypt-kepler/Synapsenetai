@@ -1,13 +1,22 @@
 #include "privacy/privacy.h"
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <io.h>
+#pragma comment(lib, "ws2_32.lib")
+#define poll WSAPoll
+#define close closesocket
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <unistd.h>
-#include <cstring>
-#include <mutex>
 #include <poll.h>
 #include <fcntl.h>
+#endif
+#include <cstring>
+#include <mutex>
 #include <errno.h>
 
 namespace synapse {

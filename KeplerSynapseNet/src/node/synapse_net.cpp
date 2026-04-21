@@ -27,21 +27,29 @@
 #include <cctype>
 #include <cerrno>
 #include <regex>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <io.h>
+#include <direct.h>
+#include <sys/stat.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/resource.h>
 #include <sys/time.h>
-#ifndef _WIN32
 #include <sys/wait.h>
-#include <signal.h>
-#endif
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <signal.h>
 #include <getopt.h>
 #include <unistd.h>
 #include <fcntl.h>
+#endif
 
 #include "core/ledger.h"
 #include "core/knowledge.h"

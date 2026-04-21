@@ -9,11 +9,16 @@
 #include <thread>
 #include <atomic>
 #include <cmath>
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#else
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <signal.h>
 #include <fcntl.h>
+#endif
 #include <cstring>
 
 namespace synapse {

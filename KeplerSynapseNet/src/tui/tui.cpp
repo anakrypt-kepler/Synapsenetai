@@ -20,8 +20,9 @@
 #include <filesystem>
 #include <cstdio>
 #include <cstdlib>
+#ifndef _WIN32
 #include <unistd.h>
-#include <cstdlib>
+#endif
 #include <cmath>
 #include <unordered_set>
 #include "model/model_loader.h"

@@ -2,8 +2,10 @@
 #include <string>
 #include <csignal>
 #include <cstdlib>
-#include <unistd.h>
 #include <filesystem>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #include "node/synapse_net.h"
 #include "node/node_init.h"
@@ -14,14 +16,21 @@
 namespace synapse {
 
 void signalHandler(int signal) {
-    if (signal == SIGINT || signal == SIGTERM || (!g_daemonMode && signal == SIGHUP)) {
+    if (signal == SIGINT || signal == SIGTERM
+#ifndef _WIN32
+        || (!g_daemonMode && signal == SIGHUP)
+#endif
+    ) {
         if (g_shutdownSignal.load() == 0) {
             g_shutdownSignal.store(signal);
         }
         g_running = false;
-    } else if (signal == SIGHUP) {
+    }
+#ifndef _WIN32
+    else if (signal == SIGHUP) {
         g_reloadConfig = true;
     }
+#endif
 }
 
 void printBanner() {
@@ -45,8 +54,14 @@ int main(int argc, char* argv[]) {
 
     synapse::NodeConfig config;
 
+#ifdef _WIN32
+    const char* home = std::getenv("USERPROFILE");
+    if (!home) home = std::getenv("APPDATA");
+    config.dataDir = home ? std::string(home) + "/.synapsenet" : ".synapsenet";
+#else
     const char* home = std::getenv("HOME");
     config.dataDir = home ? std::string(home) + "/.synapsenet" : ".synapsenet";
+#endif
 
     if (!synapse::parseArgs(argc, argv, config)) {
         return 1;
