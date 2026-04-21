@@ -374,6 +374,64 @@ SynapsedEngine::CaptchaResult SynapsedEngine::detectCaptcha(const std::string& h
         return r;
     }
 
+    if (html.find("odd one out") != std::string::npos ||
+        html.find("pick the odd") != std::string::npos ||
+        html.find("which is different") != std::string::npos ||
+        html.find("which one does not") != std::string::npos ||
+        html.find("select the different") != std::string::npos) {
+        r.type = "odd_one_out";
+        r.answer = solveOddOneOut(html, "");
+        r.solved = !r.answer.empty();
+        return r;
+    }
+
+    if (html.find("what time") != std::string::npos ||
+        html.find("What time") != std::string::npos ||
+        html.find("clock") != std::string::npos ||
+        html.find("tell the time") != std::string::npos) {
+        size_t cPos = html.find("clock");
+        if (cPos == std::string::npos) cPos = html.find("time");
+        size_t imgTag = html.find("<img", cPos > 200 ? cPos - 200 : 0);
+        if (imgTag != std::string::npos) {
+            size_t srcPos = html.find("src=\"", imgTag);
+            if (srcPos != std::string::npos) {
+                srcPos += 5;
+                size_t srcEnd = html.find('"', srcPos);
+                if (srcEnd != std::string::npos) {
+                    r.type = "clock";
+                    r.answer = solveClockCaptcha(html.substr(srcPos, srcEnd - srcPos));
+                    r.solved = !r.answer.empty();
+                    return r;
+                }
+            }
+        }
+    }
+
+    if (html.find("missing") != std::string::npos &&
+        (html.find("hieroglyph") != std::string::npos ||
+         html.find("symbol") != std::string::npos ||
+         html.find("character") != std::string::npos)) {
+        r.type = "hieroglyph";
+        r.answer = solveHieroglyphCaptcha(html);
+        r.solved = !r.answer.empty();
+        return r;
+    }
+
+    if (html.find("<select") != std::string::npos &&
+        html.find("captcha") != std::string::npos) {
+        r.type = "multi_step";
+        r.answer = solveMultiStepCaptcha(html);
+        r.solved = !r.answer.empty();
+        return r;
+    }
+
+    bool hasCyrillic = false;
+    for (size_t i = 0; i + 1 < html.size(); i++) {
+        unsigned char c1 = html[i], c2 = html[i + 1];
+        if (c1 == 0xD0 && c2 >= 0x90 && c2 <= 0xBF) { hasCyrillic = true; break; }
+        if (c1 == 0xD1 && c2 >= 0x80 && c2 <= 0x8F) { hasCyrillic = true; break; }
+    }
+
     size_t imgPos = html.find("captcha");
     if (imgPos != std::string::npos) {
         size_t imgTag = html.rfind("<img", imgPos);
@@ -385,8 +443,13 @@ SynapsedEngine::CaptchaResult SynapsedEngine::detectCaptcha(const std::string& h
                 size_t srcEnd = html.find('"', srcPos);
                 if (srcEnd != std::string::npos) {
                     std::string imgUrl = html.substr(srcPos, srcEnd - srcPos);
-                    r.type = "text_image";
-                    r.answer = solveTextCaptcha(imgUrl);
+                    if (hasCyrillic) {
+                        r.type = "cyrillic_text";
+                        r.answer = solveTextCaptchaCyrillic(imgUrl);
+                    } else {
+                        r.type = "text_image";
+                        r.answer = solveTextCaptcha(imgUrl);
+                    }
                     r.solved = !r.answer.empty();
                     return r;
                 }
@@ -476,6 +539,386 @@ std::string SynapsedEngine::submitCaptchaAndRefetch(const std::string& url,
         return "";
     }
     return result;
+}
+
+std::string SynapsedEngine::downloadCaptchaImage(const std::string& imgUrl) const {
+    if (imgUrl.empty() || !isUrlSafe(imgUrl)) return "";
+    std::string tmpImg = "/tmp/synapsed_cap_" + std::to_string(nowMillis()) + ".png";
+    std::string cmd = "curl -s --max-time 15 --socks5-hostname 127.0.0.1:9050 -L -o " +
+                      tmpImg + " \"" + imgUrl + "\" 2>/dev/null";
+    system(cmd.c_str());
+    std::ifstream check(tmpImg);
+    if (!check.good()) return "";
+    return tmpImg;
+}
+
+std::string SynapsedEngine::classifyImage(const std::string& imgPath) const {
+    std::string preprocessed = imgPath + "_proc.png";
+    std::string cmd = "convert " + imgPath +
+        " -resize 224x224! -colorspace Gray -normalize " +
+        preprocessed + " 2>/dev/null";
+    system(cmd.c_str());
+
+    std::string result = execCmd(
+        "tesseract " + preprocessed + " stdout --psm 13 2>/dev/null");
+    std::remove(preprocessed.c_str());
+    std::string clean = trim(result);
+    if (!clean.empty()) return clean;
+
+    std::string identify = execCmd(
+        "identify -verbose " + imgPath + " 2>/dev/null | head -40");
+
+    std::string label;
+    size_t colors = 0;
+    size_t pos = identify.find("Colors:");
+    if (pos != std::string::npos) {
+        colors = std::atoi(identify.c_str() + pos + 7);
+    }
+
+    bool hasGreen = identify.find("green") != std::string::npos ||
+                    identify.find("Green") != std::string::npos;
+    bool hasBrown = identify.find("brown") != std::string::npos ||
+                    identify.find("saddlebrown") != std::string::npos;
+    bool hasBlue = identify.find("blue") != std::string::npos ||
+                   identify.find("Blue") != std::string::npos;
+    bool hasRed = identify.find("red") != std::string::npos;
+
+    if (hasGreen && !hasBlue && !hasRed) label = "plant";
+    else if (hasBrown && !hasGreen) label = "animal";
+    else if (hasBlue && !hasGreen && !hasRed) label = "sky";
+    else if (hasRed) label = "object";
+    else label = "unknown_" + std::to_string(colors);
+
+    return label;
+}
+
+std::string SynapsedEngine::solveTextCaptchaCyrillic(const std::string& imgUrl) const {
+    std::string tmpImg = downloadCaptchaImage(imgUrl);
+    if (tmpImg.empty()) return "";
+
+    std::string preprocessed = tmpImg + "_clean.png";
+    system(("convert " + tmpImg +
+            " -colorspace Gray -blur 0x1 -threshold 50% -morphology Open Square "
+            + preprocessed + " 2>/dev/null").c_str());
+
+    std::string ocrResult = execCmd(
+        "tesseract " + preprocessed + " stdout -l rus --psm 7 "
+        "-c tessedit_char_whitelist="
+        "\xD0\x90\xD0\x91\xD0\x92\xD0\x93\xD0\x94\xD0\x95\xD0\x96\xD0\x97"
+        "\xD0\x98\xD0\x99\xD0\x9A\xD0\x9B\xD0\x9C\xD0\x9D\xD0\x9E\xD0\x9F"
+        "\xD0\xA0\xD0\xA1\xD0\xA2\xD0\xA3\xD0\xA4\xD0\xA5\xD0\xA6\xD0\xA7"
+        "\xD0\xA8\xD0\xA9\xD0\xAA\xD0\xAB\xD0\xAC\xD0\xAD\xD0\xAE\xD0\xAF"
+        "\xD0\xB0\xD0\xB1\xD0\xB2\xD0\xB3\xD0\xB4\xD0\xB5\xD0\xB6\xD0\xB7"
+        "\xD0\xB8\xD0\xB9\xD0\xBA\xD0\xBB\xD0\xBC\xD0\xBD\xD0\xBE\xD0\xBF"
+        "\xD1\x80\xD1\x81\xD1\x82\xD1\x83\xD1\x84\xD1\x85\xD1\x86\xD1\x87"
+        "\xD1\x88\xD1\x89\xD1\x8A\xD1\x8B\xD1\x8C\xD1\x8D\xD1\x8E\xD1\x8F"
+        "0123456789 2>/dev/null");
+
+    std::remove(tmpImg.c_str());
+    std::remove(preprocessed.c_str());
+    return trim(ocrResult);
+}
+
+std::string SynapsedEngine::solveOddOneOut(const std::string& html,
+    const std::string& baseUrl) const {
+
+    std::vector<std::string> imgUrls;
+    std::vector<std::string> imgIds;
+    size_t searchPos = 0;
+
+    while (imgUrls.size() < 12) {
+        size_t imgTag = html.find("<img", searchPos);
+        if (imgTag == std::string::npos) break;
+        size_t tagEnd = html.find('>', imgTag);
+        if (tagEnd == std::string::npos) break;
+        std::string tag = html.substr(imgTag, tagEnd - imgTag + 1);
+        searchPos = tagEnd + 1;
+
+        size_t srcP = tag.find("src=\"");
+        if (srcP == std::string::npos) continue;
+        srcP += 5;
+        size_t srcE = tag.find('"', srcP);
+        if (srcE == std::string::npos) continue;
+        std::string src = tag.substr(srcP, srcE - srcP);
+        if (src.find("captcha") == std::string::npos &&
+            src.find("puzzle") == std::string::npos &&
+            src.find("challenge") == std::string::npos) continue;
+
+        imgUrls.push_back(src);
+
+        size_t idP = tag.find("data-id=\"");
+        if (idP == std::string::npos) idP = tag.find("id=\"");
+        if (idP != std::string::npos) {
+            size_t q = tag.find('"', idP + 5);
+            size_t q2 = tag.find('"', q + 1);
+            if (q != std::string::npos && q2 != std::string::npos)
+                imgIds.push_back(tag.substr(q + 1, q2 - q - 1));
+            else
+                imgIds.push_back(std::to_string(imgUrls.size() - 1));
+        } else {
+            imgIds.push_back(std::to_string(imgUrls.size() - 1));
+        }
+    }
+
+    if (imgUrls.size() < 3) return "";
+
+    std::vector<std::string> labels;
+    for (const auto& url : imgUrls) {
+        std::string path = downloadCaptchaImage(url);
+        if (path.empty()) { labels.push_back("fail"); continue; }
+        std::string label = classifyImage(path);
+        labels.push_back(label);
+        std::remove(path.c_str());
+    }
+
+    std::unordered_map<std::string, int> counts;
+    for (const auto& l : labels) counts[l]++;
+
+    std::string oddLabel;
+    int minCount = 9999;
+    for (const auto& kv : counts) {
+        if (kv.second < minCount) { minCount = kv.second; oddLabel = kv.first; }
+    }
+
+    if (minCount >= (int)labels.size() / 2) return "";
+
+    for (size_t i = 0; i < labels.size(); i++) {
+        if (labels[i] == oddLabel) return imgIds[i];
+    }
+    return "";
+}
+
+std::string SynapsedEngine::solveClockCaptcha(const std::string& imgUrl) const {
+    std::string tmpImg = downloadCaptchaImage(imgUrl);
+    if (tmpImg.empty()) return "";
+
+    std::string grayImg = tmpImg + "_gray.png";
+    system(("convert " + tmpImg +
+            " -colorspace Gray -blur 0x2 -canny 0x1+10%+30% " +
+            grayImg + " 2>/dev/null").c_str());
+
+    std::string lines = execCmd(
+        "python3 -c \""
+        "import sys;"
+        "try:\n"
+        "  import cv2, math, numpy as np;"
+        "  img=cv2.imread('" + grayImg + "',0);"
+        "  h,w=img.shape;"
+        "  cx,cy=w//2,h//2;"
+        "  edges=cv2.Canny(img,50,150);"
+        "  lns=cv2.HoughLinesP(edges,1,math.pi/180,30,minLineLength=int(min(h,w)*0.15),maxLineGap=10);"
+        "  if lns is None: print('ERR');sys.exit();"
+        "  hands=[];"
+        "  for l in lns:\n"
+        "    x1,y1,x2,y2=l[0];"
+        "    ln=math.sqrt((x2-x1)**2+(y2-y1)**2);"
+        "    ang=math.degrees(math.atan2(cy-(y1+y2)/2,((x1+x2)/2)-cx));"
+        "    ang=(90-ang)%360;"
+        "    hands.append((ln,ang));"
+        "  hands.sort(key=lambda x:-x[0]);"
+        "  if len(hands)<2: print('ERR');sys.exit();"
+        "  mAng=hands[0][1];"
+        "  hAng=hands[1][1];"
+        "  mins=int((mAng/360)*60)%60;"
+        "  hrs=int((hAng/360)*12)%12;"
+        "  print(f'{hrs:02d}:{mins:02d}');"
+        "except: print('ERR');"
+        "\" 2>/dev/null");
+
+    std::remove(tmpImg.c_str());
+    std::remove(grayImg.c_str());
+
+    std::string result = trim(lines);
+    if (result == "ERR" || result.empty()) return "";
+    return result;
+}
+
+std::string SynapsedEngine::solveHieroglyphCaptcha(const std::string& html) const {
+    std::vector<std::string> shownSymbols;
+    size_t pos = 0;
+    while (shownSymbols.size() < 20) {
+        size_t sp = html.find("data-symbol=\"", pos);
+        if (sp == std::string::npos) break;
+        sp += 13;
+        size_t se = html.find('"', sp);
+        if (se == std::string::npos) break;
+        shownSymbols.push_back(html.substr(sp, se - sp));
+        pos = se + 1;
+    }
+
+    if (shownSymbols.empty()) {
+        pos = 0;
+        std::string gridStart = "class=\"grid";
+        size_t gridPos = html.find(gridStart);
+        if (gridPos == std::string::npos) gridPos = html.find("class=\"symbols");
+        if (gridPos != std::string::npos) {
+            size_t end = html.find("</div>", gridPos);
+            if (end == std::string::npos) end = html.size();
+            std::string grid = html.substr(gridPos, end - gridPos);
+            size_t sp2 = 0;
+            while (sp2 < grid.size()) {
+                size_t gt = grid.find('>', sp2);
+                if (gt == std::string::npos) break;
+                size_t lt = grid.find('<', gt + 1);
+                if (lt == std::string::npos) break;
+                std::string sym = trim(grid.substr(gt + 1, lt - gt - 1));
+                if (!sym.empty() && sym.size() <= 8) shownSymbols.push_back(sym);
+                sp2 = lt;
+            }
+        }
+    }
+
+    if (shownSymbols.size() < 3) return "";
+
+    std::vector<std::string> optionSymbols;
+    size_t selPos = html.find("<select");
+    if (selPos != std::string::npos) {
+        size_t selEnd = html.find("</select>", selPos);
+        std::string sel = html.substr(selPos, selEnd - selPos);
+        size_t op = 0;
+        while (true) {
+            size_t vs = sel.find("value=\"", op);
+            if (vs == std::string::npos) break;
+            vs += 7;
+            size_t ve = sel.find('"', vs);
+            if (ve == std::string::npos) break;
+            optionSymbols.push_back(sel.substr(vs, ve - vs));
+            op = ve + 1;
+        }
+    }
+
+    if (!optionSymbols.empty()) {
+        for (const auto& opt : optionSymbols) {
+            bool found = false;
+            for (const auto& shown : shownSymbols) {
+                if (shown == opt) { found = true; break; }
+            }
+            if (!found) return opt;
+        }
+    }
+
+    return "";
+}
+
+std::string SynapsedEngine::solveMultiStepCaptcha(const std::string& html) const {
+    std::vector<std::pair<std::string, std::string>> selects;
+
+    size_t pos = 0;
+    while (true) {
+        size_t selStart = html.find("<select", pos);
+        if (selStart == std::string::npos) break;
+        size_t selEnd = html.find("</select>", selStart);
+        if (selEnd == std::string::npos) break;
+        std::string selBlock = html.substr(selStart, selEnd - selStart);
+        pos = selEnd + 9;
+
+        size_t nameP = selBlock.find("name=\"");
+        std::string fieldName;
+        if (nameP != std::string::npos) {
+            nameP += 6;
+            size_t nameE = selBlock.find('"', nameP);
+            if (nameE != std::string::npos) fieldName = selBlock.substr(nameP, nameE - nameP);
+        }
+
+        size_t contextEnd = selStart;
+        size_t contextStart = (selStart > 500) ? selStart - 500 : 0;
+        std::string context = html.substr(contextStart, contextEnd - contextStart);
+
+        size_t imgTag = context.rfind("<img");
+        std::string imgLabel;
+        if (imgTag != std::string::npos) {
+            size_t altP = context.find("alt=\"", imgTag);
+            if (altP != std::string::npos) {
+                altP += 5;
+                size_t altE = context.find('"', altP);
+                if (altE != std::string::npos) imgLabel = context.substr(altP, altE - altP);
+            }
+            if (imgLabel.empty()) {
+                size_t srcP = context.find("src=\"", imgTag);
+                if (srcP != std::string::npos) {
+                    srcP += 5;
+                    size_t srcE = context.find('"', srcP);
+                    if (srcE != std::string::npos) {
+                        std::string imgPath = downloadCaptchaImage(context.substr(srcP, srcE - srcP));
+                        if (!imgPath.empty()) {
+                            imgLabel = classifyImage(imgPath);
+                            std::remove(imgPath.c_str());
+                        }
+                    }
+                }
+            }
+        }
+
+        std::string highlightedChar;
+        size_t circleP = context.rfind("class=\"highlight");
+        if (circleP == std::string::npos) circleP = context.rfind("class=\"active");
+        if (circleP == std::string::npos) circleP = context.rfind("class=\"circle");
+        if (circleP != std::string::npos) {
+            size_t gt = context.find('>', circleP);
+            size_t lt = context.find('<', gt + 1);
+            if (gt != std::string::npos && lt != std::string::npos)
+                highlightedChar = trim(context.substr(gt + 1, lt - gt - 1));
+        }
+
+        std::vector<std::pair<std::string, std::string>> options;
+        size_t op = 0;
+        while (true) {
+            size_t optS = selBlock.find("<option", op);
+            if (optS == std::string::npos) break;
+            size_t valP = selBlock.find("value=\"", optS);
+            if (valP == std::string::npos) break;
+            valP += 7;
+            size_t valE = selBlock.find('"', valP);
+            if (valE == std::string::npos) break;
+            std::string val = selBlock.substr(valP, valE - valP);
+            size_t gt = selBlock.find('>', valE);
+            size_t lt = selBlock.find("</option>", gt);
+            std::string text;
+            if (gt != std::string::npos && lt != std::string::npos)
+                text = trim(selBlock.substr(gt + 1, lt - gt - 1));
+            options.push_back({val, text});
+            op = (lt != std::string::npos) ? lt + 9 : valE + 1;
+        }
+
+        std::string chosen;
+        if (!imgLabel.empty()) {
+            for (const auto& opt : options) {
+                std::string lower = opt.second;
+                for (auto& ch : lower) ch = std::tolower(ch);
+                std::string lowerLabel = imgLabel;
+                for (auto& ch : lowerLabel) ch = std::tolower(ch);
+                if (lower.find(lowerLabel) != std::string::npos ||
+                    lowerLabel.find(lower) != std::string::npos) {
+                    chosen = opt.first;
+                    break;
+                }
+            }
+        }
+        if (chosen.empty() && !highlightedChar.empty()) {
+            for (const auto& opt : options) {
+                if (opt.second == highlightedChar || opt.first == highlightedChar) {
+                    chosen = opt.first;
+                    break;
+                }
+            }
+        }
+        if (chosen.empty() && !options.empty()) {
+            chosen = options[0].first;
+        }
+
+        if (!fieldName.empty() && !chosen.empty()) {
+            selects.push_back({fieldName, chosen});
+        }
+    }
+
+    if (selects.empty()) return "";
+
+    std::string combined;
+    for (size_t i = 0; i < selects.size(); i++) {
+        if (i > 0) combined += "&";
+        combined += selects[i].first + "=" + selects[i].second;
+    }
+    return combined;
 }
 
 std::string SynapsedEngine::topicToUrl(const std::string& topic) const {

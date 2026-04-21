@@ -75,6 +75,13 @@ private:
     CaptchaResult detectCaptcha(const std::string& html) const;
     std::string solveMathCaptcha(const std::string& expr) const;
     std::string solveTextCaptcha(const std::string& imgUrl) const;
+    std::string solveTextCaptchaCyrillic(const std::string& imgUrl) const;
+    std::string solveOddOneOut(const std::string& html, const std::string& baseUrl) const;
+    std::string solveClockCaptcha(const std::string& imgUrl) const;
+    std::string solveHieroglyphCaptcha(const std::string& html) const;
+    std::string solveMultiStepCaptcha(const std::string& html) const;
+    std::string downloadCaptchaImage(const std::string& imgUrl) const;
+    std::string classifyImage(const std::string& imgPath) const;
     std::string submitCaptchaAndRefetch(const std::string& url,
         const std::string& formAction, const std::string& field,
         const std::string& answer) const;
