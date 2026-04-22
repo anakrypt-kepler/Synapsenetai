@@ -1,7 +1,9 @@
 #include "quantum/quantum_security.h"
 #include "crypto/crypto.h"
 #include "pqc_backend_oqs.h"
+#ifdef USE_LIBOQS
 #include <oqs/oqs.h>
+#endif
 #include <mutex>
 #include <cstring>
 #include <cstdio>
@@ -21,6 +23,7 @@ KyberKeyPair Kyber::generateKeyPair() {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     
     KyberKeyPair kp;
+#ifdef USE_LIBOQS
     OQS_KEM* kem = detail::newPreferredKyberKem();
     if (!kem) {
         std::fprintf(stderr, "FATAL: Kyber/ML-KEM-768 algorithm unavailable in liboqs\n");
@@ -38,6 +41,10 @@ KyberKeyPair Kyber::generateKeyPair() {
     std::memcpy(kp.publicKey.data(), pub.data(), copyPub);
     std::memcpy(kp.secretKey.data(), priv.data(), copyPriv);
     OQS_KEM_free(kem);
+#else
+    std::fprintf(stderr, "FATAL: Kyber requires liboqs (build with -DSYNAPSE_FETCH_LIBOQS=ON)\n");
+    std::abort();
+#endif
     return kp;
 }
 
@@ -45,6 +52,7 @@ EncapsulationResult Kyber::encapsulate(const KyberPublicKey& publicKey) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     
     EncapsulationResult result;
+#ifdef USE_LIBOQS
     OQS_KEM* kem = detail::newPreferredKyberKem();
     if (!kem) {
         std::fprintf(stderr, "FATAL: Kyber/ML-KEM-768 algorithm unavailable in liboqs\n");
@@ -66,12 +74,18 @@ EncapsulationResult Kyber::encapsulate(const KyberPublicKey& publicKey) {
     result.sharedSecret = std::move(ss);
     result.success = true;
     OQS_KEM_free(kem);
+#else
+    (void)publicKey;
+    std::fprintf(stderr, "FATAL: Kyber requires liboqs\n");
+    std::abort();
+#endif
     return result;
 }
 
 std::vector<uint8_t> Kyber::decapsulate(const KyberCiphertext& ciphertext,
                                          const KyberSecretKey& secretKey) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
+#ifdef USE_LIBOQS
     OQS_KEM* kem = detail::newPreferredKyberKem();
     if (!kem) {
         std::fprintf(stderr, "FATAL: Kyber/ML-KEM-768 algorithm unavailable in liboqs\n");
@@ -88,6 +102,10 @@ std::vector<uint8_t> Kyber::decapsulate(const KyberCiphertext& ciphertext,
     }
     OQS_KEM_free(kem);
     return ss;
+#else
+    (void)ciphertext; (void)secretKey;
+    return {};
+#endif
 }
 
 bool Kyber::validatePublicKey(const KyberPublicKey& publicKey) {

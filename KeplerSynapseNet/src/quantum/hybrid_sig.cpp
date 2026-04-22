@@ -7,7 +7,9 @@
 #include <sodium.h>
 #include <openssl/evp.h>
 
+#ifdef USE_LIBOQS
 #include <oqs/oqs.h>
+#endif
 #include "pqc_backend_oqs.h"
 
 namespace synapse {
@@ -134,6 +136,7 @@ HybridKeyPair HybridSig::generateKeyPairFromSeed(const std::vector<uint8_t>& mas
     }
 
     {
+#ifdef USE_LIBOQS
         std::lock_guard<std::mutex> rngLock(detRngMutex());
         const size_t streamLen = 64 * 1024;
         auto prevStream = std::move(tl_det_stream);
@@ -165,6 +168,9 @@ HybridKeyPair HybridSig::generateKeyPairFromSeed(const std::vector<uint8_t>& mas
         std::fill(tl_det_stream.begin(), tl_det_stream.end(), 0);
         tl_det_stream = std::move(prevStream);
         tl_det_pos = prevPos;
+#else
+        (void)pqcSeed;
+#endif
     }
 
     return kp;

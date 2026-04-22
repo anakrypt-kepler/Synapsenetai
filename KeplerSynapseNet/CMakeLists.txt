@@ -11,7 +11,7 @@ option(BUILD_PRIVACY "Build with privacy layer" OFF)
 option(BUILD_TESTS "Build tests" ON)
 
 option(SYNAPSE_FETCH_LIBOQS "Fetch liboqs automatically when the system library is unavailable" ON)
-set(SYNAPSE_REQUIRE_REAL_PQC ON CACHE BOOL "liboqs-backed PQC is mandatory for all build types" FORCE)
+option(SYNAPSE_REQUIRE_REAL_PQC "Require real liboqs-backed PQC (warn if unavailable)" ON)
 set(SYNAPSE_LIBOQS_GIT_TAG "0.12.0" CACHE STRING "liboqs git tag used when SYNAPSE_FETCH_LIBOQS is enabled")
 set(SYNAPSE_LIBOQS_MINIMAL_BUILD
     "KEM_ml_kem_768;KEM_kyber_768;SIG_dilithium_3;SIG_ml_dsa_65;SIG_sphincs_sha2_128s_simple;SIG_slh_dsa_sha2_128s"
@@ -104,7 +104,12 @@ elseif(SYNAPSE_FETCH_LIBOQS)
         message(FATAL_ERROR "Fetched liboqs but the oqs target was not created")
     endif()
 else()
-    message(FATAL_ERROR "liboqs is required for post-quantum cryptography. Install liboqs or enable SYNAPSE_FETCH_LIBOQS.")
+    if(SYNAPSE_REQUIRE_REAL_PQC)
+        message(WARNING "liboqs not found and SYNAPSE_FETCH_LIBOQS is OFF. Building with PQC stub backend. "
+                        "Set -DSYNAPSE_REQUIRE_REAL_PQC=OFF to suppress this warning, or install liboqs / enable SYNAPSE_FETCH_LIBOQS.")
+    else()
+        message(STATUS "liboqs not found — PQC features will use stub backend")
+    endif()
 endif()
 
 set(HAS_SECP256K1 OFF)

@@ -1,7 +1,9 @@
 #include "quantum/quantum_security.h"
 #include "crypto/crypto.h"
 #include "pqc_backend_oqs.h"
+#ifdef USE_LIBOQS
 #include <oqs/oqs.h>
+#endif
 #include <mutex>
 #include <cstring>
 #include <cstdio>
@@ -22,6 +24,7 @@ DilithiumKeyPair Dilithium::generateKeyPair() {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     
     DilithiumKeyPair kp;
+#ifdef USE_LIBOQS
     OQS_SIG* sig = detail::newPreferredDilithiumSig();
     if (!sig) {
         std::fprintf(stderr, "FATAL: Dilithium/ML-DSA-65 algorithm unavailable in liboqs\n");
@@ -39,6 +42,10 @@ DilithiumKeyPair Dilithium::generateKeyPair() {
     std::memcpy(kp.publicKey.data(), pub.data(), copyPub);
     std::memcpy(kp.secretKey.data(), priv.data(), copyPriv);
     OQS_SIG_free(sig);
+#else
+    std::fprintf(stderr, "FATAL: Dilithium requires liboqs (build with -DSYNAPSE_FETCH_LIBOQS=ON)\n");
+    std::abort();
+#endif
     return kp;
 }
 
@@ -47,6 +54,7 @@ SignatureResult Dilithium::sign(const std::vector<uint8_t>& message,
     std::lock_guard<std::mutex> lock(impl_->mtx);
     
     SignatureResult result;
+#ifdef USE_LIBOQS
     OQS_SIG* sig = detail::newPreferredDilithiumSig();
     if (!sig) {
         std::fprintf(stderr, "FATAL: Dilithium/ML-DSA-65 algorithm unavailable in liboqs\n");
@@ -67,6 +75,11 @@ SignatureResult Dilithium::sign(const std::vector<uint8_t>& message,
     OQS_SIG_free(sig);
     std::fprintf(stderr, "FATAL: Dilithium signing failed\n");
     std::abort();
+#else
+    (void)message; (void)secretKey;
+    std::fprintf(stderr, "FATAL: Dilithium requires liboqs\n");
+    std::abort();
+#endif
 }
 
 bool Dilithium::verify(const std::vector<uint8_t>& message,
@@ -75,6 +88,7 @@ bool Dilithium::verify(const std::vector<uint8_t>& message,
     std::lock_guard<std::mutex> lock(impl_->mtx);
     
     if (!validatePublicKey(publicKey)) return false;
+#ifdef USE_LIBOQS
     OQS_SIG* sig = detail::newPreferredDilithiumSig();
     if (!sig) {
         std::fprintf(stderr, "FATAL: Dilithium/ML-DSA-65 algorithm unavailable in liboqs\n");
@@ -85,6 +99,10 @@ bool Dilithium::verify(const std::vector<uint8_t>& message,
                               signature.data(), verifyLen, publicKey.data()) == OQS_SUCCESS;
     OQS_SIG_free(sig);
     return ok;
+#else
+    (void)message; (void)signature;
+    return false;
+#endif
 }
 
 bool Dilithium::validatePublicKey(const DilithiumPublicKey& publicKey) {
