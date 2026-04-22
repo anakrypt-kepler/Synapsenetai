@@ -115,6 +115,7 @@ private:
 
     static void testKyberEncapDecapSymmetry() {
         std::cout << "  Testing Kyber encapsulate/decapsulate symmetry... ";
+#ifdef USE_LIBOQS
         synapse::quantum::Kyber kem;
         auto kp = kem.generateKeyPair();
         auto enc = kem.encapsulate(kp.publicKey);
@@ -123,10 +124,12 @@ private:
         size_t copyLen = std::min(enc.ciphertext.size(), ct.size());
         std::memcpy(ct.data(), enc.ciphertext.data(), copyLen);
         std::vector<uint8_t> dec = kem.decapsulate(ct, kp.secretKey);
-        // enc.sharedSecret and dec should match
         assert(enc.sharedSecret.size() == dec.size());
         assert(enc.sharedSecret == dec);
         std::cout << "PASSED\n";
+#else
+        std::cout << "SKIPPED (no liboqs)\n";
+#endif
     }
     
     static void testDilithiumKeyGeneration() {
@@ -566,7 +569,7 @@ private:
 
     static void testQuantumRuntimePolicySurface() {
         std::cout << "  Testing Quantum Runtime Policy Surface... ";
-
+#ifdef USE_LIBOQS
         synapse::quantum::QuantumManager manager;
         assert(manager.init(synapse::quantum::SecurityLevel::HIGH));
 
@@ -598,6 +601,9 @@ private:
 
         manager.shutdown();
         std::cout << "PASSED\n";
+#else
+        std::cout << "SKIPPED (no liboqs)\n";
+#endif
     }
 };
 

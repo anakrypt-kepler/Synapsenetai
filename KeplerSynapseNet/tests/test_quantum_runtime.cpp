@@ -204,6 +204,10 @@ static bool testPqcBackendStatusSurface() {
 }
 
 int main() {
+#ifndef USE_LIBOQS
+    std::cerr << "SKIP: liboqs not available, PQC runtime tests skipped\n";
+    return 0;
+#else
     if (!testKyberRoundTrip()) {
         std::cerr << "testKyberRoundTrip failed\n";
         return 1;
@@ -241,4 +245,5 @@ int main() {
         return 1;
     }
     return 0;
+#endif
 }

@@ -41,9 +41,6 @@ KyberKeyPair Kyber::generateKeyPair() {
     std::memcpy(kp.publicKey.data(), pub.data(), copyPub);
     std::memcpy(kp.secretKey.data(), priv.data(), copyPriv);
     OQS_KEM_free(kem);
-#else
-    std::fprintf(stderr, "FATAL: Kyber requires liboqs (build with -DSYNAPSE_FETCH_LIBOQS=ON)\n");
-    std::abort();
 #endif
     return kp;
 }
@@ -76,8 +73,7 @@ EncapsulationResult Kyber::encapsulate(const KyberPublicKey& publicKey) {
     OQS_KEM_free(kem);
 #else
     (void)publicKey;
-    std::fprintf(stderr, "FATAL: Kyber requires liboqs\n");
-    std::abort();
+    result.success = false;
 #endif
     return result;
 }

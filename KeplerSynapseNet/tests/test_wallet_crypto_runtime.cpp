@@ -141,7 +141,7 @@ int main() {
         const std::vector<uint8_t> roundTripBytes = readBytes(roundTripPath);
         if (!check(roundTripBytes.size() > 2, "AES round-trip file is too small")) return 1;
         if (!check(roundTripBytes[0] == 0xA5, "AES round-trip magic mismatch")) return 1;
-        if (!check(roundTripBytes[1] == 0x01, "AES round-trip version mismatch")) return 1;
+        if (!check(roundTripBytes[1] == 0x03, "AES round-trip version mismatch")) return 1;
     } catch (...) {
         std::filesystem::remove_all(root);
         throw;

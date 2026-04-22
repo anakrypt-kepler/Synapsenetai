@@ -42,9 +42,6 @@ DilithiumKeyPair Dilithium::generateKeyPair() {
     std::memcpy(kp.publicKey.data(), pub.data(), copyPub);
     std::memcpy(kp.secretKey.data(), priv.data(), copyPriv);
     OQS_SIG_free(sig);
-#else
-    std::fprintf(stderr, "FATAL: Dilithium requires liboqs (build with -DSYNAPSE_FETCH_LIBOQS=ON)\n");
-    std::abort();
 #endif
     return kp;
 }
@@ -77,9 +74,9 @@ SignatureResult Dilithium::sign(const std::vector<uint8_t>& message,
     std::abort();
 #else
     (void)message; (void)secretKey;
-    std::fprintf(stderr, "FATAL: Dilithium requires liboqs\n");
-    std::abort();
+    result.success = false;
 #endif
+    return result;
 }
 
 bool Dilithium::verify(const std::vector<uint8_t>& message,

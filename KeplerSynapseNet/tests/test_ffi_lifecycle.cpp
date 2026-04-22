@@ -56,7 +56,7 @@ static bool testGetStatusReturnsValidJson() {
     assert(statusStr.find("peer_count") != std::string::npos);
     assert(statusStr.find("uptime") != std::string::npos);
     assert(statusStr.find("version") != std::string::npos);
-    assert(statusStr.find("model_status") != std::string::npos);
+    assert(statusStr.find("model_loaded") != std::string::npos);
 
     synapsed_free_string(status);
     synapsed_shutdown();

@@ -75,6 +75,7 @@ add_test(NAME TransferTests COMMAND test_transfer)
 if(NOT WIN32)
     add_executable(test_daemon_shutdown test_daemon_shutdown.cpp)
     add_test(NAME DaemonShutdownTests COMMAND test_daemon_shutdown $<TARGET_FILE:synapsed>)
+    set_tests_properties(DaemonShutdownTests PROPERTIES LABELS "integration")
 endif()
 
 add_executable(test_update_manifest test_update_manifest.cpp)

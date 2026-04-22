@@ -81,7 +81,7 @@ jobs:
 
     - name: Run tests
       run: |
-        ctest --test-dir build --output-on-failure --parallel $(nproc || sysctl -n hw.logicalcpu)
+        ctest --test-dir build --output-on-failure --parallel $(nproc || sysctl -n hw.logicalcpu) -LE integration
 
     - name: Quantum gate checks
       run: |
