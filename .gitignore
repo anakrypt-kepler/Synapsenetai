@@ -55,6 +55,12 @@ compile_commands.json
 .qodo/
 .idea/
 
+# Python
+__pycache__/
+*.pyc
+*.pt
+captcha_dataset/
+
 # macOS
 .DS_Store
 ._*

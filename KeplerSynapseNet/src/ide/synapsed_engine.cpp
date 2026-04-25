@@ -665,6 +665,27 @@ std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
         system(dlCmd.c_str());
     }
 
+    std::string cnnModel = dataDir_ + "/captcha_cnn_model.pt";
+    {
+        std::ifstream cnnCheck(cnnModel);
+        if (cnnCheck.good()) {
+            std::string cnnCmd = "python3 " + dataDir_ +
+                "/../tools/captcha_cnn/infer.py --model " + cnnModel +
+                " " + tmpImg + " 2>/dev/null";
+            std::string cnnResult = trim(execCmd(cnnCmd));
+            if (cnnResult.size() >= 3 && cnnResult.size() <= 8) {
+                std::string cnnAnswer;
+                for (char c : cnnResult)
+                    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+                        cnnAnswer += c;
+                if (cnnAnswer.size() >= 3) {
+                    std::remove(tmpImg.c_str());
+                    return cnnAnswer;
+                }
+            }
+        }
+    }
+
     std::string mlScript =
         "python3 -c \""
         "import sys, os\\n"
