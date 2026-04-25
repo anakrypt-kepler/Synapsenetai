@@ -7,12 +7,12 @@ import cv2
 import numpy as np
 import torch
 
-from model import IMG_H, IMG_W, CaptchaCNN, decode_prediction
+from model import IMG_H, IMG_W, CaptchaCRNN, decode_prediction
 
 
 def load_model(model_path):
     checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
-    model = CaptchaCNN()
+    model = CaptchaCRNN()
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return model
@@ -40,7 +40,7 @@ def infer_single(model, image_path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("image")
-    parser.add_argument("--model", default="captcha_cnn_model.pt")
+    parser.add_argument("--model", default="captcha_crnn_v6.pt")
     args = parser.parse_args()
 
     if not os.path.exists(args.model):

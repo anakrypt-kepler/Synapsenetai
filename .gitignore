@@ -59,6 +59,7 @@ compile_commands.json
 __pycache__/
 *.pyc
 *.pt
+!KeplerSynapseNet/tools/captcha_cnn/captcha_crnn_v6.pt
 captcha_dataset/
 
 # macOS
