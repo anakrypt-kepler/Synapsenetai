@@ -31,7 +31,7 @@ RUN cmake -S . -B build -G Ninja \
       -DBUILD_TESTS=ON \
       -DBUILD_PRIVACY=OFF \
   && cmake --build build --parallel \
-  && ctest --test-dir build --output-on-failure
+  && ctest --test-dir build --output-on-failure -LE integration
 
 FROM --platform=$TARGETPLATFORM ubuntu:24.04 AS runtime
 

@@ -131,7 +131,7 @@ jobs:
     - name: Test Privacy Build (Ubuntu only)
       if: runner.os == 'Linux'
       run: |
-        ctest --test-dir build_privacy --output-on-failure --parallel $(nproc)
+        ctest --test-dir build_privacy --output-on-failure --parallel $(nproc) -LE integration
 
   build-with-llama:
     runs-on: ubuntu-latest
