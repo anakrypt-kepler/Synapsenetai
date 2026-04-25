@@ -1895,6 +1895,146 @@ std::string SynapsedEngine::solveHCaptcha(const std::string& siteKey,
     return trim(execCmd(script));
 }
 
+SynapsedEngine::EndGameV3Challenge SynapsedEngine::detectEndGameV3(
+    const std::string& html, const std::string& baseUrl) const {
+    EndGameV3Challenge ch;
+
+    bool hasPoW = html.find("proof-of-work") != std::string::npos ||
+        html.find("proof_of_work") != std::string::npos ||
+        html.find("hashcash") != std::string::npos ||
+        html.find("pow_challenge") != std::string::npos ||
+        html.find("endgame_pow") != std::string::npos ||
+        html.find("work_challenge") != std::string::npos ||
+        (html.find("challenge") != std::string::npos &&
+         html.find("nonce") != std::string::npos &&
+         html.find("difficulty") != std::string::npos);
+
+    if (!hasPoW) return ch;
+
+    ch.detected = true;
+
+    for (const auto& pat : {"data-challenge=\"", "challenge=\"",
+        "\"challenge\":\"", "name=\"challenge\" value=\"",
+        "id=\"challenge\" value=\"", "pow_challenge=\""}) {
+        size_t p = html.find(pat);
+        if (p != std::string::npos) {
+            p += strlen(pat);
+            size_t e = html.find('"', p);
+            if (e == std::string::npos) e = html.find('\'', p);
+            if (e != std::string::npos && e - p < 128) {
+                ch.challenge = html.substr(p, e - p);
+                break;
+            }
+        }
+    }
+
+    if (ch.challenge.empty()) {
+        size_t jsChall = html.find("challenge");
+        if (jsChall != std::string::npos) {
+            size_t colon = html.find_first_of(":=", jsChall + 9);
+            if (colon != std::string::npos && colon < jsChall + 30) {
+                size_t qs = html.find_first_of("\"'", colon + 1);
+                if (qs != std::string::npos && qs < colon + 10) {
+                    size_t qe = html.find(html[qs], qs + 1);
+                    if (qe != std::string::npos && qe - qs < 128)
+                        ch.challenge = html.substr(qs + 1, qe - qs - 1);
+                }
+            }
+        }
+    }
+
+    for (const auto& pat : {"data-difficulty=\"", "difficulty=\"",
+        "\"difficulty\":", "name=\"difficulty\" value=\""}) {
+        size_t p = html.find(pat);
+        if (p != std::string::npos) {
+            p += strlen(pat);
+            ch.difficulty = std::atoi(html.c_str() + p);
+            break;
+        }
+    }
+
+    if (ch.difficulty <= 0 || ch.difficulty > 32) ch.difficulty = 20;
+
+    size_t formTag = html.find("<form");
+    if (formTag != std::string::npos) {
+        size_t actP = html.find("action=\"", formTag);
+        if (actP != std::string::npos && actP < formTag + 500) {
+            actP += 8;
+            size_t actE = html.find('"', actP);
+            if (actE != std::string::npos) {
+                std::string act = html.substr(actP, actE - actP);
+                if (!act.empty() && act[0] == '/') {
+                    size_t slashP = baseUrl.find('/', baseUrl.find("://") + 3);
+                    ch.submitUrl = baseUrl.substr(0, slashP) + act;
+                } else if (!act.empty() && act.find("http") == 0) {
+                    ch.submitUrl = act;
+                } else {
+                    ch.submitUrl = baseUrl;
+                }
+            }
+        }
+    }
+    if (ch.submitUrl.empty()) ch.submitUrl = baseUrl;
+
+    for (const auto& tok : {"_token", "csrf", "form_token", "sid",
+        "endgame_token", "pow_token", "session_id"}) {
+        std::string search = std::string("name=\"") + tok + "\"";
+        size_t tp = html.find(search);
+        if (tp != std::string::npos) {
+            size_t vp = html.find("value=\"", tp);
+            if (vp != std::string::npos && vp < tp + 200) {
+                vp += 7;
+                size_t ve = html.find('"', vp);
+                if (ve != std::string::npos) {
+                    if (!ch.extraFields.empty()) ch.extraFields += "&";
+                    ch.extraFields += std::string(tok) + "=" + html.substr(vp, ve - vp);
+                }
+            }
+        }
+    }
+
+    return ch;
+}
+
+std::string SynapsedEngine::solveEndGamePoW(const std::string& challenge,
+    int difficulty) const {
+    if (challenge.empty() || difficulty <= 0) return "";
+
+    std::string script = "python3 -c \""
+        "import hashlib,sys\\n"
+        "c='" + challenge + "'\\n"
+        "d=" + std::to_string(difficulty) + "\\n"
+        "target=d\\n"
+        "for n in range(100000000):\\n"
+        "  h=hashlib.sha256((c+str(n)).encode()).hexdigest()\\n"
+        "  val=int(h[:8],16)\\n"
+        "  bits=32-val.bit_length() if val>0 else 32\\n"
+        "  if bits>=target:\\n"
+        "    print(n)\\n"
+        "    sys.exit()\\n"
+        "print('')\\n"
+        "\" 2>/dev/null";
+    std::string result = trim(execCmd(script));
+    return result;
+}
+
+std::string SynapsedEngine::submitEndGamePoW(const EndGameV3Challenge& ch,
+    const std::string& nonce) const {
+    if (!isUrlSafe(ch.submitUrl) || nonce.empty()) return "";
+
+    std::string postData = "challenge=" + ch.challenge +
+        "&nonce=" + nonce + "&pow_nonce=" + nonce;
+    if (!ch.extraFields.empty())
+        postData += "&" + ch.extraFields;
+
+    std::string cmd = "curl -s -k --max-time 45 --socks5-hostname 127.0.0.1:9050 -L "
+        "-c " + dataDir_ + "/tor_cookies.txt -b " + dataDir_ + "/tor_cookies.txt "
+        "-H \"User-Agent: " + randomUserAgent() + "\" "
+        "-d \"" + postData + "\" "
+        "\"" + ch.submitUrl + "\" 2>/dev/null";
+    return execCmd(cmd);
+}
+
 std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetries) const {
     bool isOnion = url.find(".onion") != std::string::npos;
     int effectiveRetries = isOnion ? std::max(maxRetries, 8) : maxRetries;
@@ -1962,6 +2102,24 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                        "nc 127.0.0.1 9051 2>/dev/null");
                 std::this_thread::sleep_for(std::chrono::seconds(5));
             }
+            continue;
+        }
+
+        auto powChallenge = detectEndGameV3(html, url);
+        if (powChallenge.detected && !powChallenge.challenge.empty()) {
+            std::string nonce = solveEndGamePoW(powChallenge.challenge,
+                powChallenge.difficulty);
+            if (!nonce.empty()) {
+                std::string powResult = submitEndGamePoW(powChallenge, nonce);
+                if (!powResult.empty() &&
+                    powResult.find("proof-of-work") == std::string::npos &&
+                    powResult.find("pow_challenge") == std::string::npos &&
+                    powResult.find("hashcash") == std::string::npos) {
+                    auto recheck = detectEndGameV3(powResult, url);
+                    if (!recheck.detected) return powResult;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::seconds(3));
             continue;
         }
 

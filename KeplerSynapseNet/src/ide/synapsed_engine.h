@@ -111,6 +111,19 @@ private:
     std::string randomUserAgent() const;
     std::string fetchWithRetry(const std::string& url, int maxRetries) const;
 
+    struct EndGameV3Challenge {
+        bool detected = false;
+        std::string challenge;
+        int difficulty = 0;
+        std::string submitUrl;
+        std::string extraFields;
+    };
+    EndGameV3Challenge detectEndGameV3(const std::string& html,
+        const std::string& baseUrl) const;
+    std::string solveEndGamePoW(const std::string& challenge, int difficulty) const;
+    std::string submitEndGamePoW(const EndGameV3Challenge& ch,
+        const std::string& nonce) const;
+
     std::string ed25519Sign(const std::string& data) const;
     void ensureSigningKey() const;
     void persistDraft(const NaanDraft& d, const std::string& hash) const;

@@ -319,8 +319,8 @@ The model file `captcha_crnn_v6.pt` (2.7 MB) is included in this repository. The
 
 ## What's Next
 
-- V5.2 -- EndGame V3 hashcash-style Proof-of-Work bypass
-- V6 -- Full NAAN agent integration testing across 50+ darknet services with automated success rate reporting
+- [V5.2](https://github.com/anakrypt-kepler/Synapsenetai/tree/main/RELEASES/0.1.0-alphaV5.2) -- EndGame V3 hashcash-style Proof-of-Work bypass
+- [V6](https://github.com/anakrypt-kepler/Synapsenetai/tree/main/RELEASES/0.1.0-alphaV6) -- Full NAAN agent integration testing across 50+ darknet services with automated success rate reporting
 
 ---
 
