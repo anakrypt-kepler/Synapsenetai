@@ -2294,9 +2294,12 @@ std::string SynapsedEngine::topicToUrl(const std::string& topic) const {
             "http://zqktlwiuavvvqqt4ybvgvi7tyo4hjl5xgfuvpdf6otjiycgwqbym2qad.onion/",
             "http://piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion/search.php?q=",
             "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/search?q=",
+            "http://haystak5njsmn2hqkewecpaxetahtwhsbsa64jom2k22z5afxhnpxfid.onion/?q=",
+            "http://phobosxilamwcg75xt22id7aywkzol6q6rfl2flipcqoc4e4ahima5id.onion/search?query=",
+            "http://search7tdrcvri22rieiqgi5hmcb7ubxg2l5xebfyre2zdxqgtd4hqid.onion/search?q=",
         };
         std::mt19937 g(std::random_device{}());
-        size_t idx = g() % 13;
+        size_t idx = g() % 16;
         if (idx == 9 || idx == 10) return engines[idx];
         return engines[idx] + q;
     }

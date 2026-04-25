@@ -32,6 +32,8 @@ SERVICES = [
     {"name": "Excavator Search", "url": "http://3bbad7fauom4d6sgppalyqddsqbf5u5p56b5k5uk2zxsy3d6ey2jobad.onion/", "type": "onion", "protection": "none", "category": "search"},
     {"name": "Haystak Search", "url": "http://haystak5njsmn2hqkewecpaxetahtwhsbsa64jom2k22z5afxhnpxfid.onion/", "type": "onion", "protection": "none", "category": "search"},
     {"name": "OnionLand Search", "url": "http://3bbaaaccczcbdddeeef3picks7gnhb4gwjo4vkovn5nz6v6hjduhmyid.onion/", "type": "onion", "protection": "none", "category": "search"},
+    {"name": "Phobos Search", "url": "http://phobosxilamwcg75xt22id7aywkzol6q6rfl2flipcqoc4e4ahima5id.onion/", "type": "onion", "protection": "none", "category": "search"},
+    {"name": "Deep Search", "url": "http://search7tdrcvri22rieiqgi5hmcb7ubxg2l5xebfyre2zdxqgtd4hqid.onion/", "type": "onion", "protection": "none", "category": "search"},
     {"name": "SecureDrop (Guardian)", "url": "http://xp44cagis447k3lpb4wwhcqukix6cgqokbuys24vmrou2otv7y6zcqyd.onion/", "type": "onion", "protection": "none", "category": "whistleblower"},
     {"name": "SecureDrop (WaPo)", "url": "http://vfnmxpa6fo4jdpyq3yneqhglluweax2uclvxkytfpmpkp5rsvpmqdqid.onion/", "type": "onion", "protection": "none", "category": "whistleblower"},
     {"name": "Pirate Bay Tor", "url": "http://piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion/", "type": "onion", "protection": "none", "category": "torrent"},

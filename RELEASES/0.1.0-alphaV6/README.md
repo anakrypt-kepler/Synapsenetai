@@ -1,10 +1,10 @@
 <h1 align="center">SynapseNet 0.1.0-alphaV6</h1>
 
-<p align="center"><strong>NAAN Agent Integration Testing -- 54 Services, Automated Reporting</strong></p>
+<p align="center"><strong>NAAN Agent Integration Testing -- 56 Services, Automated Reporting</strong></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Version-0.1.0--alphaV6-000000?style=for-the-badge&labelColor=000000" alt="Version" />
-  <img src="https://img.shields.io/badge/Services_Tested-54-000000?style=for-the-badge&labelColor=000000" alt="Services" />
+  <img src="https://img.shields.io/badge/Services_Tested-56-000000?style=for-the-badge&labelColor=000000" alt="Services" />
   <img src="https://img.shields.io/badge/Clearnet-16%2F18_Passed-000000?style=for-the-badge&labelColor=000000" alt="Clearnet" />
   <img src="https://img.shields.io/badge/PoW-7%2F7_Solved-000000?style=for-the-badge&labelColor=000000" alt="PoW" />
 </p>
@@ -18,17 +18,17 @@
 
 ---
 
-> V6 introduces a comprehensive integration test harness that validates the NAAN agent's ability to fetch, bypass protections, and extract content from 54 real-world services -- 36 onion (.onion) and 18 clearnet. The test harness covers all protection types encountered in the wild: EndGame V2/V3 queues, hashcash PoW, text/math/rotate/slider CAPTCHAs, Cloudflare, reCAPTCHA, hCaptcha, and rate limiting. Every test produces a structured report with per-service status, response times, protection detection, and aggregate success rates. This is the first release where the full NAAN pipeline -- from Tor fetch through protection bypass to content extraction -- is tested end-to-end against live services.
+> V6 introduces a comprehensive integration test harness that validates the NAAN agent's ability to fetch, bypass protections, and extract content from 56 real-world services -- 38 onion (.onion) and 18 clearnet. The test harness covers all protection types encountered in the wild: EndGame V2/V3 queues, hashcash PoW, text/math/rotate/slider CAPTCHAs, Cloudflare, reCAPTCHA, hCaptcha, and rate limiting. Every test produces a structured report with per-service status, response times, protection detection, and aggregate success rates. This is the first release where the full NAAN pipeline -- from Tor fetch through protection bypass to content extraction -- is tested end-to-end against live services.
 
 ---
 
 ## Test Harness
 
-### Service Catalog (54 Services)
+### Service Catalog (56 Services)
 
 | Category | Count | Examples |
 |----------|-------|---------|
-| Search engines | 8 | DuckDuckGo, Torch, Ahmia, Tordex, Tor66, DarkSearch, Excavator, Haystak |
+| Search engines | 12 | DuckDuckGo, Torch, Ahmia, Tordex, Tor66, DarkSearch, Excavator, Haystak, Phobos, Deep Search, OnionLand, OnionDir |
 | Forums | 5 | Dread, Pitch, Bizzle, Altenens, DWF |
 | News | 8 | BBC Tor, Krebs, Hacker News, BleepingComputer, Dark Reading, Ars Technica, Wired |
 | Research | 8 | arxiv CS.CR, arxiv CS.AI, MITRE CVE, NVD, Exploit-DB, Packet Storm, Full Disclosure, IACR |
@@ -68,7 +68,7 @@ naan_integration_test.py
   │
   ├─ Check Tor connectivity (torproject.org API)
   │
-  ├─ For each of 54 services:
+  ├─ For each of 56 services:
   │   ├─ Fetch URL (Tor SOCKS5 for onion, direct for clearnet)
   │   ├─ Record HTTP code, response size, response time
   │   ├─ Detect protections in response HTML
@@ -220,7 +220,7 @@ python3 tools/naan_integration_test.py --max-services 10
 | Base64 inline CAPTCHA decode | V5 | Working |
 | CSRF token extraction | V5 | Working |
 | EndGame V3 hashcash PoW solver | V5.2 | Working |
-| **Integration test harness (54 services)** | **V6** | **New** |
+| **Integration test harness (56 services)** | **V6** | **New** |
 | **Automated success rate reporting** | **V6** | **New** |
 | **CSV/JSON export** | **V6** | **New** |
 
@@ -230,7 +230,7 @@ python3 tools/naan_integration_test.py --max-services 10
 
 | File | Change | Description |
 |------|--------|-------------|
-| `tools/naan_integration_test.py` | New (+290) | Full integration test harness: 54 services, protection detection, reporting |
+| `tools/naan_integration_test.py` | New (+295) | Full integration test harness: 56 services (incl. Haystak, Phobos, Deep Search), protection detection, reporting |
 | `tools/test_pow_solver.py` | New (+65) | PoW solver unit tests (7 difficulty levels) |
 
 ---
