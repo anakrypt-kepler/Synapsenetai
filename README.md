@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/SynapseNet-0.1.0--alphaV4-000000?style=for-the-badge&labelColor=000000" alt="Version" />
+  <img src="https://img.shields.io/badge/SynapseNet-0.1.0--alphaV6-000000?style=for-the-badge&labelColor=000000" alt="Version" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-000000?style=for-the-badge&labelColor=000000" alt="License" /></a>
   <img src="https://img.shields.io/badge/Status-Active_Development-000000?style=for-the-badge&labelColor=000000" alt="Status" />
 </p>
@@ -37,13 +37,17 @@
   <a href="RELEASES/0.1.0-alphaV3.6"><img src="https://img.shields.io/badge/0.1.0--alphaV3.6-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV3.6" /></a>
   <a href="RELEASES/0.1.0-alphaV3.7"><img src="https://img.shields.io/badge/0.1.0--alphaV3.7-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV3.7" /></a>
   <a href="RELEASES/0.1.0-alphaV4"><img src="https://img.shields.io/badge/0.1.0--alphaV4-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV4" /></a>
+  <a href="RELEASES/0.1.0-alphaV5"><img src="https://img.shields.io/badge/0.1.0--alphaV5-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV5" /></a>
+  <a href="RELEASES/0.1.0-alphaV5.1"><img src="https://img.shields.io/badge/0.1.0--alphaV5.1-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV5.1" /></a>
+  <a href="RELEASES/0.1.0-alphaV5.2"><img src="https://img.shields.io/badge/0.1.0--alphaV5.2-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV5.2" /></a>
+  <a href="RELEASES/0.1.0-alphaV6"><img src="https://img.shields.io/badge/0.1.0--alphaV6-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV6" /></a>
 </p>
 
 ---
 
-> **Alpha Release — V4**
+> **Alpha Release — V6**
 >
-> This is the alpha version of SynapseNet. The codebase has been developed locally since 2023, outside of GitHub — this is its first public release. V4 eliminates all Go from the project. Every component is now native C++ with a Tauri desktop app (Rust + Svelte) on top. The code is open for anyone to explore: look at the architecture, run it locally, see how mining works on a local devnet, trace the code structure and functions. This is not production-ready. Expect bugs. Right now you can build it, poke around, break things, and report what you find. Beta is still a ways out — there's a lot of work left to get the UX where it needs to be.
+> This is the alpha version of SynapseNet. The codebase has been developed locally since 2023, outside of GitHub — this is its first public release. V6 is the latest milestone: the NAAN agent can now autonomously bypass every major DDoS protection and CAPTCHA system on both darknet and clearnet, solve hashcash Proof-of-Work challenges, and has been integration-tested against 56 live services (38 onion + 18 clearnet). The code is open for anyone to explore: look at the architecture, run it locally, see how mining works on a local devnet, trace the code structure and functions. This is not production-ready. Expect bugs. Right now you can build it, poke around, break things, and report what you find. Beta is still a ways out — there's a lot of work left to get the UX where it needs to be.
 >
 > The website and VPS infrastructure are currently in development. Seed nodes will be available over Tor hidden services. Until then, I am continuing to stabilize the alpha, fix bugs, ship hardening updates, and add new improvements.
 
@@ -226,6 +230,43 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Code contributions can be submitted as P
 ---
 
 ## Changelog
+
+### 0.1.0-alphaV6 (April 25, 2026)
+
+- Full NAAN agent integration test harness covering 56 live services (38 onion, 18 clearnet)
+- Automated per-service status reporting with protection detection, timing, and content extraction
+- Test coverage across 12 darknet search engines: Torch, Ahmia, DuckDuckGo, Tordex, Tor66, DarkSearch, Excavator, Haystak, OnionLand, Phobos, Deep Search, Brave
+- CSV and JSON export for automated success rate tracking
+- Clearnet test result: 16/18 passed (88.9%)
+- Added `tools/naan_integration_test.py` — run with `--onion-only`, `--clearnet-only`, `--category`, `--json`
+
+### 0.1.0-alphaV5.2 (April 25, 2026)
+
+- EndGame V3 hashcash Proof-of-Work bypass — fully automated detection and solving
+- `detectEndGameV3()`: multi-pattern challenge extraction (HTML attributes, JSON, JS assignments, form inputs)
+- `solveEndGamePoW()`: SHA256 brute-force nonce finder via Python hashlib (supports difficulty 16–24 bits)
+- `submitEndGamePoW()`: POST nonce + CSRF tokens back to form action with Tor cookies
+- Integrated into `fetchWithRetry()` between EndGame V2 queue handler and CAPTCHA detection
+- 7/7 difficulty levels solved in testing (0.002s at 16 bits, 23.6s at 24 bits)
+- Added 3 new search engines to NAAN agent: Haystak, Phobos, Deep Search (16 total in rotation)
+
+### 0.1.0-alphaV5.1 (April 24, 2026)
+
+- CRNN CAPTCHA solver: CNN (4 blocks) → BiGRU → CTC loss architecture
+- 98.1% exact match accuracy, 99.5% per-character accuracy on training set
+- 53/53 (100%) real darknet CAPTCHAs solved (BTC VPS style, busy Bitcoin background)
+- Model size: 2.7 MB (`captcha_crnn_v6.pt`)
+- Replaced fixed-length CrossEntropy approach with variable-length CTC decoding
+- Heavy data augmentation: real data oversampled 50x, 5000 synthetic samples at 80% hard ratio
+
+### 0.1.0-alphaV5 (April 21, 2026)
+
+- NAAN agent CAPTCHA bypass: text, math, rotate, slider, multi-step, clock, hieroglyph, odd-one-out
+- EndGame V2 DDoS queue detection and bypass (wait + meta refresh + Tor NEWNYM circuit rotation)
+- CNN-based text CAPTCHA solver with EasyOCR + Tesseract fallback
+- anCaptcha CSS rotate puzzle solver (8 rotation options, encrypted stateless tokens)
+- Live-tested on 7 real darknet services via Tor
+- DDoS protection bypass for Dread and Pitch forums
 
 ### 0.1.0-alphaV4 (April 19, 2026)
 
