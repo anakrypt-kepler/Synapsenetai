@@ -318,7 +318,7 @@ struct CookiePool {
 | arxiv | None | NAAN-CVE-2026-0010 | Direct | 100% |
 | NVD NIST | CF (passive) | NAAN-CVE-2026-0004 | Yes | 80% |
 
-### Onion Service LIVE Test (April 30, 2026 — Snowflake bridge, verified Tor IP: 192.42.116.112)
+### Onion Service LIVE Test (April 30, 2026 — Snowflake bridge, Tor exit verified)
 
 | Service | HTTP | Size | Time | Protection | CVE | Result |
 |---------|------|------|------|-----------|-----|--------|
