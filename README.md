@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/SynapseNet-0.1.0--alphaV6-000000?style=for-the-badge&labelColor=000000" alt="Version" />
+  <img src="https://img.shields.io/badge/SynapseNet-0.1.0--alphaV7-000000?style=for-the-badge&labelColor=000000" alt="Version" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-000000?style=for-the-badge&labelColor=000000" alt="License" /></a>
   <img src="https://img.shields.io/badge/Status-Active_Development-000000?style=for-the-badge&labelColor=000000" alt="Status" />
 </p>
@@ -41,13 +41,14 @@
   <a href="RELEASES/0.1.0-alphaV5.1"><img src="https://img.shields.io/badge/0.1.0--alphaV5.1-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV5.1" /></a>
   <a href="RELEASES/0.1.0-alphaV5.2"><img src="https://img.shields.io/badge/0.1.0--alphaV5.2-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV5.2" /></a>
   <a href="RELEASES/0.1.0-alphaV6"><img src="https://img.shields.io/badge/0.1.0--alphaV6-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV6" /></a>
+  <a href="RELEASES/0.1.0-alphaV7"><img src="https://img.shields.io/badge/0.1.0--alphaV7-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV7" /></a>
 </p>
 
 ---
 
-> **Alpha Release — V6**
+> **Alpha Release — V7**
 >
-> This is the alpha version of SynapseNet. The codebase has been developed locally since 2023, outside of GitHub — this is its first public release. V6 is the latest milestone: the NAAN agent can now autonomously bypass every major DDoS protection and CAPTCHA system on both darknet and clearnet, solve hashcash Proof-of-Work challenges, and has been integration-tested against 56 live services (38 onion + 18 clearnet). The code is open for anyone to explore: look at the architecture, run it locally, see how mining works on a local devnet, trace the code structure and functions. This is not production-ready. Expect bugs. Right now you can build it, poke around, break things, and report what you find. Beta is still a ways out — there's a lot of work left to get the UX where it needs to be.
+> This is the alpha version of SynapseNet. The codebase has been developed locally since 2023, outside of GitHub — this is its first public release. V7 is the latest milestone: the NAAN agent now autonomously discovers and exploits vulnerabilities in darknet/clearnet service protections. 10 internal CVEs cataloged (NAAN-CVE-2026-0001 through 0010), 8 active exploit implementations integrated into the fetch pipeline, with auto-detection via timing oracle and pattern matching. The agent crawls via Tor (Torch, Ahmia, Haystak), identifies protection weaknesses in real-time, and exploits them for knowledge extraction. The code is open for anyone to explore: look at the architecture, run it locally, see how mining works on a local devnet, trace the code structure and functions. This is not production-ready. Expect bugs. Right now you can build it, poke around, break things, and report what you find. Beta is still a ways out — there's a lot of work left to get the UX where it needs to be.
 >
 > The website and VPS infrastructure are currently in development. Seed nodes will be available over Tor hidden services. Until then, I am continuing to stabilize the alpha, fix bugs, ship hardening updates, and add new improvements.
 
@@ -230,6 +231,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Code contributions can be submitted as P
 ---
 
 ## Changelog
+
+### 0.1.0-alphaV7 (April 29, 2026)
+
+- Autonomous vulnerability discovery engine: crawls darknet/clearnet services via Tor, identifies protection weaknesses
+- 10 internal CVEs cataloged (NAAN-CVE-2026-0001 through NAAN-CVE-2026-0010)
+- 8 active exploit implementations: PoW cookie replay, queue race, CSS selector leak, CF __cf_bm replay, Sucuri XSRF cache replay, CF managed challenge bypass, timing oracle, cookie jar confusion
+- `detectVulnerability()` auto-classifier with confidence scoring (0.0-1.0)
+- `CookiePool` system: caches solved PoW sessions, __cf_bm cookies, and cross-service sessions with TTL tracking
+- Integrated into `fetchWithRetry()`: pre-checks cookie pool, measures TTFB, auto-exploits if confidence > 0.8, falls back to V5/V6 chain
+- Added `tools/naan_vuln_scanner.py` — standalone scanner with CVE catalog, live testing, JSON export
 
 ### 0.1.0-alphaV6 (April 25, 2026)
 

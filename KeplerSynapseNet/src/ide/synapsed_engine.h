@@ -124,6 +124,35 @@ private:
     std::string submitEndGamePoW(const EndGameV3Challenge& ch,
         const std::string& nonce) const;
 
+    struct VulnDetectionResult {
+        std::string cveId;
+        std::string protectionType;
+        std::string bypassMethod;
+        bool exploitable = false;
+        double confidence = 0.0;
+    };
+    VulnDetectionResult detectVulnerability(const std::string& html,
+        const std::string& url, int httpCode, double ttfbMs) const;
+    std::string exploitCVE0001_PowCookieReplay(const std::string& url) const;
+    std::string exploitCVE0002_QueueRace(const std::string& url) const;
+    std::string exploitCVE0003_CssSelectorLeak(const std::string& html,
+        const std::string& url) const;
+    std::string exploitCVE0004_CfBmReplay(const std::string& url) const;
+    std::string exploitCVE0005_SucuriXsrfReplay(const std::string& url) const;
+    std::string exploitCVE0007_CfManagedBypass(const std::string& html,
+        const std::string& url, int httpCode) const;
+    std::string exploitCVE0008_TimingOracle(const std::string& url) const;
+    std::string exploitCVE0009_CookieConfusion(const std::string& url) const;
+
+    struct CookiePool {
+        std::unordered_map<std::string, std::string> powCookies;
+        std::unordered_map<std::string, int64_t> powExpiry;
+        std::unordered_map<std::string, std::string> cfBmCookies;
+        std::unordered_map<std::string, int64_t> cfBmExpiry;
+        std::unordered_map<std::string, std::string> sessionCookies;
+    };
+    mutable CookiePool cookiePool_;
+
     std::string ed25519Sign(const std::string& data) const;
     void ensureSigningKey() const;
     void persistDraft(const NaanDraft& d, const std::string& hash) const;

