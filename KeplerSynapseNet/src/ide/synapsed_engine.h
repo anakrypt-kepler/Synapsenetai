@@ -153,6 +153,27 @@ private:
     };
     mutable CookiePool cookiePool_;
 
+    struct BypassReport {
+        std::string cveId;
+        std::string protectionType;
+        std::string bypassMethod;
+        std::string transport;
+        double ttfbMs = 0.0;
+        int httpCode = 0;
+        size_t bytes = 0;
+        int64_t ts = 0;
+    };
+    mutable std::mutex bypassMtx_;
+    mutable BypassReport lastBypass_;
+    mutable std::unordered_map<std::string, int> bypassCounters_;
+    mutable std::atomic<bool> jarPrimed_{false};
+
+    void recordBypass(const std::string& cveId, const std::string& protection,
+        const std::string& method, const std::string& transport,
+        double ttfbMs, int httpCode, size_t bytes) const;
+    void primeCookieJar() const;
+    void emitEvent(const std::string& eventType, const std::string& payloadJson) const;
+
     std::string ed25519Sign(const std::string& data) const;
     void ensureSigningKey() const;
     void persistDraft(const NaanDraft& d, const std::string& hash) const;

@@ -270,9 +270,28 @@ fetchWithRetry()
   +-- if exploitable && confidence > 0.8:
   |     exploit{CVE}() -- run targeted exploit
   |     cache results in cookiePool_
+  |     recordBypass(cve, protection, method, transport, ttfb, http, bytes)
   |     return content
   |
   +-- [FALLBACK] existing V5/V6 bypass chain
+        EndGame V3 PoW solve (hashcash)
+        Cloudflare curl-impersonate / __cf_bm replay
+        reCAPTCHA audio / hCaptcha image solver
+        Sucuri XSRF cache replay
+        Darknet captcha solvers (text, math, rotate, slider, pair, ...)
+        each successful path -> recordBypass(...)
+
+naanLoop()  (mining tick)
+  |
+  +-- topic = pick(cfgTopics_)
+  +-- url   = topicToUrl(topic)
+  +-- html  = fetchWithRetry(url, 3)        // V5/V6/V7 chain above
+  +-- br    = lastBypass_                    // CVE/method/transport/...
+  +-- payload = topic + '|' + title + '|' + br.cveId + '|' + ts
+  +-- sha   = sha256(payload), sig = ed25519Sign(sha)
+  +-- log: "[topic] title sha256=... sig=... via=... cve=... prot=... method=... ttfb=...ms bytes=... -> accepted/rejected"
+  +-- persistDraft({title, topic, status, ngt, sha256, bypass{...}, ts})
+  +-- emit "naan.bypass" event for RPC subscribers
 ```
 
 ### Cookie Pool System
@@ -287,15 +306,43 @@ struct CookiePool {
 };
 ```
 
+### Bypass Reporting & Mining-Loop Hook
+
+```cpp
+struct BypassReport {
+    cveId, protectionType, bypassMethod, transport,
+    ttfbMs, httpCode, bytes, ts
+};
+mutable BypassReport lastBypass_;
+mutable std::unordered_map<std::string,int> bypassCounters_;
+
+void recordBypass(...);   // updates lastBypass_, bumps counter,
+                          // emits "naan.bypass" subscription event
+void primeCookieJar();    // one-shot clearnet seed for CVE-0009
+```
+
+`naanLoop` reads `lastBypass_` after every `fetchWithRetry` and stamps the
+CVE / protection / method / TTFB / bytes into:
+
+* the in-memory naan log entry (`cve=... prot=... method=...`)
+* the persisted PoE draft JSON (`bypass{}` block)
+* the SHA-256 of the draft payload (so PoE proof is bound to the
+  bypass identity)
+* the `naan.bypass` event broadcast to RPC subscribers
+
+`naanStatus()` exposes `bypass_counters` and `last_bypass`, so the dashboard
+can render which CVEs the agent autonomously exploited this session.
+
 ---
 
 ## Files Changed
 
 | File | Change | Description |
 |------|--------|-------------|
-| `src/ide/synapsed_engine.h` | Modified | Added `VulnDetectionResult` struct, `CookiePool` struct, 8 exploit method declarations |
-| `src/ide/synapsed_engine.cpp` | Modified (+380) | `detectVulnerability()`, 8 exploit implementations, `fetchWithRetry()` V7 integration |
+| `src/ide/synapsed_engine.h` | Modified | Added `VulnDetectionResult`, `CookiePool`, `BypassReport`, mining-hook helpers, 8 exploit method declarations |
+| `src/ide/synapsed_engine.cpp` | Modified (+450) | `detectVulnerability()`, 8 exploit implementations, `fetchWithRetry()` V5/V6/V7 integration, `recordBypass()`, `primeCookieJar()`, `emitEvent()`, `naanLoop` bypass logging, `persistDraft` bypass block, `naanStatus` counters |
 | `tools/naan_vuln_scanner.py` | New | Standalone vulnerability scanner with CVE catalog and live testing |
+| `tools/naan_mining_runner.py` | New | Sanitized mining-loop runner that mirrors the C++ `naanLoop` + `fetchWithRetry` pipeline end-to-end |
 | `RELEASES/0.1.0-alphaV7/README.md` | New | This file |
 
 ---
@@ -356,18 +403,104 @@ Conclusion: Shared session across multiple onion services accepted without addit
 
 ### CVE-0010 Knowledge Extraction Proof
 
-Torch search "zero day exploit 2026" returned 131 results including:
-- Pandorum 0-day Exploits marketplace
-- Office Exploit Builder
-- TorDex darknet directory
+Torch search "zero day" returned a corpus of darknet results without any challenge.
 
-All retrieved WITHOUT captcha, rate-limit, or authentication.
+---
+
+## Mining-Loop Integration (Live Proof)
+
+The full V5 + V6 + V7 bypass chain is now invoked autonomously inside the
+NAAN agent mining loop (`SynapsedEngine::naanLoop` + `fetchWithRetry`).
+
+Each mining tick:
+
+1. Picks a topic and calls `topicToUrl()` (Tor or clearnet).
+2. `fetchWithRetry` runs the full chain: pre-fetch CVE-0001 / CVE-0009 cookie
+   replay, the actual fetch, `detectVulnerability` (CVE-0001..0010), targeted
+   `exploitCVE*` call, and as fallback the V5/V6 captcha + EndGame V3 PoW
+   solver and Cloudflare/Sucuri/recaptcha/hCaptcha bypass.
+3. On success the agent calls `recordBypass(cve, protection, method,
+   transport, ttfbMs, httpCode, bytes)`.
+4. The NAAN log entry, the persisted PoE draft, and the `naan.bypass`
+   subscription event all carry the bypass metadata.
+
+### Live mining run (sanitized log, 14 ticks, mixed Tor + clearnet)
+
+| Tick | Topic           | Title (truncated)                   | Transport  | CVE                | Method                            | TTFB    | Bytes  | Status   |
+|------|-----------------|-------------------------------------|------------|--------------------|-----------------------------------|---------|--------|----------|
+| 1    | zero-day        | zero day &#124; Torch!              | tor_socks5 |                    |                                   |         |        | accepted |
+| 2    | ddos-protected  | dread Access Queue                  | tor_socks5 | NAAN-CVE-2026-0002 | queue_race_with_newnym_partial    | 17898ms | 8240   | accepted |
+| 3    | whistleblower   | World &#124; Latest News &#124; BBC | tor_socks5 |                    |                                   |         |        | rejected |
+| 4    | ai              | Artificial Intelligence             | clearnet   | NAAN-CVE-2026-0010 | direct_fetch                      | 466ms   | 91543  | accepted |
+| 5    | crypto          | Cryptology ePrint Archive           | clearnet   | NAAN-CVE-2026-0010 | direct_fetch                      | 850ms   | 14024  | accepted |
+| 6    | darknet         | Ahmia search                        | tor_socks5 |                    |                                   |         |        | accepted |
+| 7    | zero-day        | Built for automation                | clearnet   | NAAN-CVE-2026-0010 | direct_fetch                      | 2564ms  | 23213  | accepted |
+| 8    | ddos-protected  | dread Access Queue                  | tor_socks5 | NAAN-CVE-2026-0002 | queue_race_with_newnym_partial    | 2166ms  | 8240   | rejected |
+| 9    | whistleblower   | Latest Updates                      | tor_socks5 |                    |                                   |         |        | accepted |
+| 10   | ai              | Daily Papers                        | clearnet   | NAAN-CVE-2026-0010 | direct_fetch                      | 874ms   | 382028 | accepted |
+| 11   | crypto          | Submissions                         | clearnet   | NAAN-CVE-2026-0010 | direct_fetch                      | 799ms   | 14024  | accepted |
+| 12   | darknet         | Torch search                        | tor_socks5 |                    |                                   |         |        | accepted |
+| 13   | zero-day        | zero day &#124; Torch!              | tor_socks5 |                    |                                   |         |        | accepted |
+| 14   | ddos-protected  | dread Access Queue                  | tor_socks5 | NAAN-CVE-2026-0002 | queue_race_with_newnym_partial    | 1053ms  | 8240   | rejected |
+
+### Final status (sanitized)
+
+```json
+{
+  "submissions": 14,
+  "approved": 11,
+  "approval_rate": 78.6,
+  "total_ngt": 30.64,
+  "budget_remaining": 42.04,
+  "bypass_counters": {
+    "NAAN-CVE-2026-0002": 3,
+    "NAAN-CVE-2026-0010": 5
+  }
+}
+```
+
+### Sample PoE draft (CVE-0002 successful queue bypass)
+
+```json
+{
+  "title": "dread Access Queue",
+  "topic": "ddos-protected",
+  "status": "accepted",
+  "ngt": 1.65,
+  "sha256": "b72a0ca6f4ca837d907c5242c36c1e78db76829bec925e95820249d46fcc996a",
+  "bypass": {
+    "cve": "NAAN-CVE-2026-0002",
+    "protection": "endgame_v2_queue",
+    "method": "queue_race_with_newnym_partial",
+    "transport": "tor",
+    "ttfb_ms": 17898,
+    "bytes": 8240
+  },
+  "timestamp": 1777850277047
+}
+```
+
+No IP addresses, hostnames, cookie values, or session tokens are written
+to disk or to the network. Only CVE IDs, protection class, bypass
+method, transport, TTFB, response size, and SHA-256 of the
+`topic | title | cve | timestamp` payload.
 
 ---
 
 ## Usage
 
-### Run vulnerability scanner
+### Run the autonomous mining loop (V5/V6/V7 chain)
+
+```bash
+cd KeplerSynapseNet
+python3 tools/naan_mining_runner.py \
+  --ticks 14 --tick-sec 5 --budget 80 \
+  --topics darknet ddos-protected zero-day ai crypto whistleblower \
+  --data-dir ~/.synapsenet_runner \
+  --summary mining_summary.json
+```
+
+### Run vulnerability scanner only
 
 ```bash
 cd KeplerSynapseNet

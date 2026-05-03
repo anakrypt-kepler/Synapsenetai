@@ -2035,15 +2035,82 @@ std::string SynapsedEngine::submitEndGamePoW(const EndGameV3Challenge& ch,
     return execCmd(cmd);
 }
 
+void SynapsedEngine::emitEvent(const std::string& eventType,
+    const std::string& payloadJson) const {
+    auto it = subscribers_.find(eventType);
+    if (it == subscribers_.end()) return;
+    for (const auto& cb : it->second) {
+        if (cb) cb(eventType.c_str(), payloadJson.c_str());
+    }
+}
+
+void SynapsedEngine::recordBypass(const std::string& cveId,
+    const std::string& protection, const std::string& method,
+    const std::string& transport, double ttfbMs, int httpCode,
+    size_t bytes) const {
+    {
+        std::lock_guard<std::mutex> lock(bypassMtx_);
+        lastBypass_.cveId = cveId;
+        lastBypass_.protectionType = protection;
+        lastBypass_.bypassMethod = method;
+        lastBypass_.transport = transport;
+        lastBypass_.ttfbMs = ttfbMs;
+        lastBypass_.httpCode = httpCode;
+        lastBypass_.bytes = bytes;
+        lastBypass_.ts = nowMillis();
+        bypassCounters_[cveId]++;
+    }
+    std::ostringstream js;
+    js << "{\"cve\":\"" << cveId
+       << "\",\"protection\":\"" << protection
+       << "\",\"method\":\"" << method
+       << "\",\"transport\":\"" << transport
+       << "\",\"ttfb_ms\":" << static_cast<int64_t>(ttfbMs)
+       << ",\"http\":" << httpCode
+       << ",\"bytes\":" << bytes
+       << ",\"ts\":" << nowMillis() << "}";
+    emitEvent("naan.bypass", js.str());
+}
+
+void SynapsedEngine::primeCookieJar() const {
+    if (jarPrimed_.exchange(true)) return;
+    static const std::vector<std::string> seedUrls = {
+        "https://duckduckgo.com/",
+        "https://www.bbc.com/",
+        "https://news.ycombinator.com/",
+    };
+    for (const auto& u : seedUrls) {
+        std::string cmd = "curl -s -k --max-time 12 -L "
+            "-c " + dataDir_ + "/clearnet_cookies.txt "
+            "-b " + dataDir_ + "/clearnet_cookies.txt "
+            "-H \"User-Agent: Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0\" "
+            "\"" + u + "\" -o /dev/null 2>/dev/null";
+        system(cmd.c_str());
+        cookiePool_.sessionCookies[u] = "primed";
+    }
+}
+
 std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetries) const {
     bool isOnion = url.find(".onion") != std::string::npos;
     int effectiveRetries = isOnion ? std::max(maxRetries, 8) : maxRetries;
 
+    primeCookieJar();
+
     std::string powReplay = exploitCVE0001_PowCookieReplay(url);
-    if (!powReplay.empty()) return powReplay;
+    if (!powReplay.empty()) {
+        recordBypass("NAAN-CVE-2026-0001", "endgame_v3_pow",
+            "pow_cookie_replay_pre", isOnion ? "tor" : "clearnet",
+            0.0, 200, powReplay.size());
+        return powReplay;
+    }
 
     std::string confusionResult = exploitCVE0009_CookieConfusion(url);
-    if (!confusionResult.empty()) return confusionResult;
+    if (!confusionResult.empty()) {
+        recordBypass("NAAN-CVE-2026-0009", "shared_cookie_jar",
+            "cookie_confusion_pre", isOnion ? "tor" : "clearnet",
+            0.0, 200, confusionResult.size());
+        return confusionResult;
+    }
 
     for (int attempt = 0; attempt < effectiveRetries; attempt++) {
         std::string html;
@@ -2084,8 +2151,11 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                 exploited = exploitCVE0007_CfManagedBypass(html, url, httpCode);
             else if (vuln.cveId == "NAAN-CVE-2026-0002")
                 exploited = exploitCVE0002_QueueRace(url);
-            else if (vuln.cveId == "NAAN-CVE-2026-0010")
+            else if (vuln.cveId == "NAAN-CVE-2026-0010") {
+                recordBypass(vuln.cveId, vuln.protectionType, vuln.bypassMethod,
+                    isOnion ? "tor" : "clearnet", ttfbMs, httpCode, html.size());
                 return html;
+            }
 
             if (!exploited.empty()) {
                 if (vuln.cveId == "NAAN-CVE-2026-0001") {
@@ -2094,6 +2164,8 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                     cookiePool_.powCookies[url] = "pow_solved";
                     cookiePool_.powExpiry[url] = now + 1800;
                 }
+                recordBypass(vuln.cveId, vuln.protectionType, vuln.bypassMethod,
+                    isOnion ? "tor" : "clearnet", ttfbMs, httpCode, exploited.size());
                 return exploited;
             }
         }
@@ -2153,7 +2225,12 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                     powResult.find("pow_challenge") == std::string::npos &&
                     powResult.find("hashcash") == std::string::npos) {
                     auto recheck = detectEndGameV3(powResult, url);
-                    if (!recheck.detected) return powResult;
+                    if (!recheck.detected) {
+                        recordBypass("NAAN-CVE-2026-0001", "endgame_v3_pow",
+                            "hashcash_solve_submit", "tor", ttfbMs, 200,
+                            powResult.size());
+                        return powResult;
+                    }
                 }
             }
             std::this_thread::sleep_for(std::chrono::seconds(3));
@@ -2165,7 +2242,12 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
 
             if (prot.cloudflare) {
                 std::string bypass = bypassCloudflareChallenge(url);
-                if (!bypass.empty()) return bypass;
+                if (!bypass.empty()) {
+                    recordBypass("NAAN-CVE-2026-0004", "cloudflare_bot_mgmt",
+                        "curl_impersonate_chrome", "clearnet", ttfbMs, 200,
+                        bypass.size());
+                    return bypass;
+                }
                 std::this_thread::sleep_for(std::chrono::seconds(5));
                 continue;
             }
@@ -2180,8 +2262,12 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                         "-b " + dataDir_ + "/clearnet_cookies.txt "
                         "\"" + url + "\" 2>/dev/null";
                     std::string result = execCmd(postCmd);
-                    if (!result.empty() && result.find("g-recaptcha") == std::string::npos)
+                    if (!result.empty() && result.find("g-recaptcha") == std::string::npos) {
+                        recordBypass("NAAN-CAP-RECAPTCHA", "google_recaptcha_v2",
+                            "audio_speech_to_text", "clearnet", ttfbMs, 200,
+                            result.size());
                         return result;
+                    }
                 }
                 continue;
             }
@@ -2196,7 +2282,12 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                         "-b " + dataDir_ + "/clearnet_cookies.txt "
                         "\"" + url + "\" 2>/dev/null";
                     std::string result = execCmd(postCmd);
-                    if (!result.empty()) return result;
+                    if (!result.empty()) {
+                        recordBypass("NAAN-CAP-HCAPTCHA", "hcaptcha",
+                            "image_classifier_solve", "clearnet", ttfbMs, 200,
+                            result.size());
+                        return result;
+                    }
                 }
                 continue;
             }
@@ -2277,13 +2368,26 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                 solved.find("wrong captcha") == std::string::npos &&
                 solved.find("Incorrect captcha") == std::string::npos) {
                 auto recheck = detectCaptcha(solved);
-                if (!recheck.detected) return solved;
+                if (!recheck.detected) {
+                    std::string capCve = "NAAN-CAP-" + darkCap.type;
+                    recordBypass(capCve, "darknet_captcha_" + darkCap.type,
+                        "auto_solver_" + darkCap.type,
+                        isOnion ? "tor" : "clearnet", ttfbMs, 200,
+                        solved.size());
+                    return solved;
+                }
             }
             std::this_thread::sleep_for(std::chrono::seconds(2));
             continue;
         }
 
-        if (!darkCap.detected) return html;
+        if (!darkCap.detected) {
+            std::string transport = isOnion ? "tor" : "clearnet";
+            std::string method = isOnion ? "direct_tor_fetch" : "direct_https_fetch";
+            recordBypass("NAAN-CVE-2026-0010", "none", method, transport,
+                ttfbMs, httpCode, html.size());
+            return html;
+        }
 
         std::this_thread::sleep_for(std::chrono::seconds(3));
     }
@@ -2986,12 +3090,25 @@ void SynapsedEngine::persistDraft(const NaanDraft& d, const std::string& hash) c
     std::string fname = dir + "/draft_" + std::to_string(nowMillis()) + "_" + hash12 + ".json";
     std::ofstream f(fname);
     if (!f) return;
+    BypassReport br;
+    {
+        std::lock_guard<std::mutex> lock(bypassMtx_);
+        br = lastBypass_;
+    }
     f << "{\n"
       << "  \"title\": \"" << jsonEscape(d.title) << "\",\n"
       << "  \"topic\": \"" << jsonEscape(d.topic) << "\",\n"
       << "  \"status\": \"" << d.status << "\",\n"
       << "  \"ngt\": " << d.ngt << ",\n"
       << "  \"sha256\": \"" << hash << "\",\n"
+      << "  \"bypass\": {\n"
+      << "    \"cve\": \"" << jsonEscape(br.cveId) << "\",\n"
+      << "    \"protection\": \"" << jsonEscape(br.protectionType) << "\",\n"
+      << "    \"method\": \"" << jsonEscape(br.bypassMethod) << "\",\n"
+      << "    \"transport\": \"" << jsonEscape(br.transport) << "\",\n"
+      << "    \"ttfb_ms\": " << static_cast<int64_t>(br.ttfbMs) << ",\n"
+      << "    \"bytes\": " << br.bytes << "\n"
+      << "  },\n"
       << "  \"timestamp\": " << nowMillis() << "\n"
       << "}\n";
 }
@@ -3040,6 +3157,13 @@ std::string SynapsedEngine::modelStatus() const {
 }
 
 std::string SynapsedEngine::naanStatus() const {
+    BypassReport br;
+    std::unordered_map<std::string, int> bcounts;
+    {
+        std::lock_guard<std::mutex> lock(bypassMtx_);
+        br = lastBypass_;
+        bcounts = bypassCounters_;
+    }
     std::ostringstream ss;
     ss << "{\"state\":\"" << naanState_
        << "\",\"submissions\":" << naanSubmissions_
@@ -3047,6 +3171,22 @@ std::string SynapsedEngine::naanStatus() const {
        << ",\"total_ngt\":" << std::fixed << naanTotalNgt_
        << ",\"budget_remaining\":" << (naanBudgetPerEpoch_ - naanSpentThisEpoch_)
        << ",\"approval_rate\":" << (naanSubmissions_ > 0 ? (100.0 * naanApproved_ / naanSubmissions_) : 0.0)
+       << ",\"last_bypass\":{\"cve\":\"" << jsonEscape(br.cveId)
+       << "\",\"protection\":\"" << jsonEscape(br.protectionType)
+       << "\",\"method\":\"" << jsonEscape(br.bypassMethod)
+       << "\",\"transport\":\"" << jsonEscape(br.transport)
+       << "\",\"ttfb_ms\":" << static_cast<int64_t>(br.ttfbMs)
+       << ",\"http\":" << br.httpCode
+       << ",\"bytes\":" << br.bytes
+       << ",\"ts\":" << br.ts << "}"
+       << ",\"bypass_counters\":{";
+    bool firstBc = true;
+    for (const auto& kv : bcounts) {
+        if (!firstBc) ss << ",";
+        firstBc = false;
+        ss << "\"" << jsonEscape(kv.first) << "\":" << kv.second;
+    }
+    ss << "}"
        << ",\"log\":[";
     for (size_t i = 0; i < naanLog_.size(); i++) {
         if (i) ss << ",";
@@ -3159,6 +3299,13 @@ void SynapsedEngine::naanLoop() {
         std::string url = topicToUrl(topic);
         bool isOnion = url.find(".onion") != std::string::npos;
         std::string html = fetchWithRetry(url, 3);
+
+        BypassReport br;
+        {
+            std::lock_guard<std::mutex> lock(bypassMtx_);
+            br = lastBypass_;
+        }
+
         std::string fetchedVia;
         if (html.empty()) fetchedVia = "failed";
         else if (isOnion) fetchedVia = "tor_socks5";
@@ -3176,7 +3323,8 @@ void SynapsedEngine::naanLoop() {
             fetchedVia = "failed";
         }
 
-        std::string payload = topic + "|" + chosenTitle + "|" + std::to_string(nowMillis());
+        std::string payload = topic + "|" + chosenTitle + "|" +
+            br.cveId + "|" + std::to_string(nowMillis());
         std::string hash = sha256Hex(payload);
         std::string sig = ed25519Sign(hash);
 
@@ -3204,11 +3352,20 @@ void SynapsedEngine::naanLoop() {
                 balance_ = bs.str();
             }
 
+            std::string bypassTag;
+            if (!br.cveId.empty() && !html.empty()) {
+                bypassTag = " cve=" + br.cveId +
+                            " prot=" + br.protectionType +
+                            " method=" + br.bypassMethod +
+                            " ttfb=" + std::to_string(static_cast<int64_t>(br.ttfbMs)) + "ms" +
+                            " bytes=" + std::to_string(br.bytes);
+            }
             NaanLogEntry le{nowMillis(),
                 "[" + topic + "] " + chosenTitle +
                 " sha256=" + hash.substr(0, 12) +
                 " sig=" + sig.substr(0, 16) +
                 " via=" + fetchedVia +
+                bypassTag +
                 " -> " + status};
             naanLog_.push_back(le);
             if (naanLog_.size() > 80) naanLog_.erase(naanLog_.begin());
