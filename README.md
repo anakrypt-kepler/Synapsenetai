@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/SynapseNet-0.1.0--alphaV8-000000?style=for-the-badge&labelColor=000000" alt="Version" />
+  <img src="https://img.shields.io/badge/SynapseNet-0.1.0--alphaV9-000000?style=for-the-badge&labelColor=000000" alt="Version" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-000000?style=for-the-badge&labelColor=000000" alt="License" /></a>
   <img src="https://img.shields.io/badge/Status-Active_Development-000000?style=for-the-badge&labelColor=000000" alt="Status" />
 </p>
@@ -43,13 +43,14 @@
   <a href="RELEASES/0.1.0-alphaV6"><img src="https://img.shields.io/badge/0.1.0--alphaV6-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV6" /></a>
   <a href="RELEASES/0.1.0-alphaV7"><img src="https://img.shields.io/badge/0.1.0--alphaV7-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV7" /></a>
   <a href="RELEASES/0.1.0-alphaV8"><img src="https://img.shields.io/badge/0.1.0--alphaV8-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV8" /></a>
+  <a href="RELEASES/0.1.0-alphaV9"><img src="https://img.shields.io/badge/0.1.0--alphaV9-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alphaV9" /></a>
 </p>
 
 ---
 
-> **Alpha Release — V8**
+> **Alpha Release — V9**
 >
-> This is the alpha version of SynapseNet. The codebase has been developed locally since 2023, outside of GitHub — this is its first public release. V8 is the latest milestone: 14 internal CVEs cataloged (NAAN-CVE-2026-0001 through 0014), 12 active exploit implementations in the fetch pipeline, a knowledge harvester that extracts files/images/text and scans them against VirusTotal, a HARVEST tab in both the desktop app and terminal UI, and an LLM captcha fallback solver that feeds unsolved challenges to the local GGUF model as a last resort. The agent crawls via Tor (Torch, Ahmia, Haystak), identifies protection weaknesses in real-time, and exploits them for knowledge extraction. The code is open for anyone to explore: look at the architecture, run it locally, see how mining works on a local devnet, trace the code structure and functions. This is not production-ready. Expect bugs. Right now you can build it, poke around, break things, and report what you find. Beta is still a ways out — there's a lot of work left to get the UX where it needs to be.
+> This is the alpha version of SynapseNet. The codebase has been developed locally since 2023, outside of GitHub — this is its first public release. V9 is the latest milestone: distributed exploit intelligence sharing across the NAAN network. When one node discovers a working CVE bypass during mining, it publishes the exploit to a shared chain that every other node receives immediately. 14+ CVEs cataloged, 12 active exploit implementations, knowledge harvester with VirusTotal scanning, LLM captcha fallback, HARVEST and EXPLOITS tabs in both desktop and terminal UI. The more nodes mine, the faster the network learns to bypass new protections — one vendor on one side, thousands of autonomous nodes sharing intelligence on the other. The code is open for anyone to explore: look at the architecture, run it locally, see how mining works on a local devnet, trace the code structure and functions. This is not production-ready. Expect bugs. Right now you can build it, poke around, break things, and report what you find. Beta is still a ways out — there's a lot of work left to get the UX where it needs to be.
 >
 > The website and VPS infrastructure are currently in development. Seed nodes will be available over Tor hidden services. Until then, I am continuing to stabilize the alpha, fix bugs, ship hardening updates, and add new improvements.
 
