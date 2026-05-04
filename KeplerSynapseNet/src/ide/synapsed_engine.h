@@ -143,6 +143,15 @@ private:
         const std::string& url, int httpCode) const;
     std::string exploitCVE0008_TimingOracle(const std::string& url) const;
     std::string exploitCVE0009_CookieConfusion(const std::string& url) const;
+    std::string exploitCVE0011_QueueRefreshBypass(const std::string& url) const;
+    std::string exploitCVE0012_QueueCookieTTL(const std::string& url) const;
+    std::string exploitCVE0013_QueueNewnym(const std::string& url) const;
+    std::string exploitCVE0014_CaptchaTokenReplay(const std::string& html,
+        const std::string& url) const;
+    std::string solveCaptchaViaLLM(const std::string& html,
+        const std::string& imgPath, const std::string& url) const;
+
+    mutable std::unordered_map<std::string, std::string> captchaTokenCache_;
 
     struct CookiePool {
         std::unordered_map<std::string, std::string> powCookies;

