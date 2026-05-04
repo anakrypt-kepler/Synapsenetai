@@ -43,6 +43,7 @@ enum class Screen {
     SECURITY,
     ATTACHED_AGENT,
     OBSERVATORY,
+    HARVEST,
     HELP
 };
 
@@ -326,6 +327,19 @@ struct AgentEventInfo {
     std::string message;
 };
 
+struct HarvestEntrySummary {
+    std::string draftSha256;
+    std::string topic;
+    std::string title;
+    std::string cveId;
+    std::string bypassMethod;
+    std::string transport;
+    int assetCount = 0;
+    std::string vtStatus;
+    std::string textPreview;
+    uint64_t timestamp = 0;
+};
+
 class StartupScreen {
 public:
     StartupScreen();
@@ -410,6 +424,7 @@ public:
     void updateAttachedAgentStatus(const AttachedAgentStatusInfo& info);
     void updateObservatoryFeed(const std::vector<ObservatoryArtifactInfo>& items);
     void updateAgentEvents(const std::vector<AgentEventInfo>& events);
+    void updateHarvestEntries(const std::vector<HarvestEntrySummary>& entries);
     void appendChatMessage(const std::string& role, const std::string& content);
     
     std::string prompt(const std::string& message);

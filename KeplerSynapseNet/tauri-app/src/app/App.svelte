@@ -12,6 +12,7 @@
   import Transfers from "./routes/Transfers.svelte";
   import Knowledge from "./routes/Knowledge.svelte";
   import NaanAgent from "./routes/NaanAgent.svelte";
+  import Harvest from "./routes/Harvest.svelte";
   import Messages from "./routes/Messages.svelte";
   import Ide from "./routes/Ide.svelte";
   import Network from "./routes/Network.svelte";
@@ -68,6 +69,8 @@
           <Knowledge />
         {:else if $activeTab === "naan"}
           <NaanAgent />
+        {:else if $activeTab === "harvest"}
+          <Harvest />
         {:else if $activeTab === "messages"}
           <Messages />
         {:else if $activeTab === "ide"}

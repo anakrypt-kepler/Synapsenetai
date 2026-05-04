@@ -204,6 +204,31 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         return ss.str();
     }
 
+    if (method == "harvest.list") {
+        int offset = 0, limit = 50;
+        size_t offP = paramsJson.find("\"offset\"");
+        if (offP != std::string::npos) {
+            size_t colon = paramsJson.find(':', offP);
+            if (colon != std::string::npos) offset = std::atoi(paramsJson.c_str() + colon + 1);
+        }
+        size_t limP = paramsJson.find("\"limit\"");
+        if (limP != std::string::npos) {
+            size_t colon = paramsJson.find(':', limP);
+            if (colon != std::string::npos) limit = std::atoi(paramsJson.c_str() + colon + 1);
+        }
+        if (limit <= 0) limit = 50;
+        if (limit > 200) limit = 200;
+        return harvestList(offset, limit);
+    }
+    if (method == "harvest.get") {
+        size_t q1 = paramsJson.find("\"sha256\"");
+        if (q1 == std::string::npos) return "{\"error\":\"missing sha256\"}";
+        size_t vs = paramsJson.find('"', q1 + 8);
+        size_t ve = paramsJson.find('"', vs + 1);
+        if (vs == std::string::npos || ve == std::string::npos) return "{\"error\":\"bad json\"}";
+        return harvestGet(paramsJson.substr(vs + 1, ve - vs - 1));
+    }
+
     (void)paramsJson;
     return "{\"error\":\"unknown method\",\"method\":\"" + method + "\"}";
 }
@@ -3113,6 +3138,445 @@ void SynapsedEngine::persistDraft(const NaanDraft& d, const std::string& hash) c
       << "}\n";
 }
 
+std::string SynapsedEngine::stripHtmlToText(const std::string& html) const {
+    std::string out;
+    out.reserve(html.size());
+    bool inTag = false;
+    bool inScript = false;
+    bool inStyle = false;
+    for (size_t i = 0; i < html.size(); i++) {
+        if (!inTag && html[i] == '<') {
+            inTag = true;
+            std::string peek;
+            for (size_t j = i + 1; j < html.size() && j < i + 12; j++) {
+                peek += static_cast<char>(std::tolower(html[j]));
+            }
+            if (peek.find("script") == 0) inScript = true;
+            else if (peek.find("/script") == 0) inScript = false;
+            else if (peek.find("style") == 0) inStyle = true;
+            else if (peek.find("/style") == 0) inStyle = false;
+            continue;
+        }
+        if (inTag) {
+            if (html[i] == '>') inTag = false;
+            continue;
+        }
+        if (inScript || inStyle) continue;
+        if (html[i] == '&') {
+            size_t semi = html.find(';', i);
+            if (semi != std::string::npos && semi < i + 10) {
+                std::string ent = html.substr(i, semi - i + 1);
+                if (ent == "&amp;") out += '&';
+                else if (ent == "&lt;") out += '<';
+                else if (ent == "&gt;") out += '>';
+                else if (ent == "&quot;") out += '"';
+                else if (ent == "&nbsp;") out += ' ';
+                else if (ent == "&#39;") out += '\'';
+                else out += ' ';
+                i = semi;
+                continue;
+            }
+        }
+        out += html[i];
+    }
+    size_t maxLen = 50000;
+    if (out.size() > maxLen) out.resize(maxLen);
+    std::string cleaned;
+    cleaned.reserve(out.size());
+    int blanks = 0;
+    for (char c : out) {
+        if (c == '\n' || c == '\r') {
+            blanks++;
+            if (blanks <= 2) cleaned += '\n';
+        } else if (c == '\t') {
+            cleaned += ' ';
+            blanks = 0;
+        } else {
+            blanks = 0;
+            cleaned += c;
+        }
+    }
+    return cleaned;
+}
+
+SynapsedEngine::HarvestPayload SynapsedEngine::extractAssets(
+    const std::string& html, const std::string& baseUrl) const {
+    HarvestPayload payload;
+    payload.text = stripHtmlToText(html);
+
+    auto resolveUrl = [&](const std::string& raw) -> std::string {
+        if (raw.empty()) return "";
+        if (raw.find("http://") == 0 || raw.find("https://") == 0) return raw;
+        if (raw.find("//") == 0) return "http:" + raw;
+        if (raw[0] == '/') {
+            size_t slashP = baseUrl.find('/', baseUrl.find("://") + 3);
+            if (slashP != std::string::npos) return baseUrl.substr(0, slashP) + raw;
+            return baseUrl + raw;
+        }
+        size_t lastSlash = baseUrl.rfind('/');
+        if (lastSlash != std::string::npos && lastSlash > 8)
+            return baseUrl.substr(0, lastSlash + 1) + raw;
+        return baseUrl + "/" + raw;
+    };
+
+    auto extractAttr = [](const std::string& tag, const std::string& attr) -> std::string {
+        std::string search = attr + "=\"";
+        size_t p = tag.find(search);
+        if (p == std::string::npos) {
+            search = attr + "='";
+            p = tag.find(search);
+        }
+        if (p == std::string::npos) return "";
+        p += search.size();
+        char delim = search.back();
+        size_t e = tag.find(delim, p);
+        if (e == std::string::npos) return "";
+        return tag.substr(p, e - p);
+    };
+
+    std::vector<std::string> urls;
+    static const std::vector<std::string> fileExts = {
+        ".pdf", ".doc", ".docx", ".zip", ".csv", ".txt",
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"
+    };
+
+    for (size_t i = 0; i < html.size(); i++) {
+        if (html[i] != '<') continue;
+        size_t tagEnd = html.find('>', i);
+        if (tagEnd == std::string::npos) break;
+        std::string tag = html.substr(i, tagEnd - i + 1);
+        std::string tagLow;
+        tagLow.reserve(tag.size());
+        for (char c : tag) tagLow += static_cast<char>(std::tolower(c));
+
+        if (tagLow.find("<img") == 0) {
+            std::string src = extractAttr(tag, "src");
+            if (!src.empty() && src.find("data:") != 0) {
+                urls.push_back(resolveUrl(src));
+            }
+        }
+        if (tagLow.find("<meta") != std::string::npos &&
+            (tagLow.find("og:image") != std::string::npos ||
+             tagLow.find("twitter:image") != std::string::npos)) {
+            std::string content = extractAttr(tag, "content");
+            if (!content.empty()) urls.push_back(resolveUrl(content));
+        }
+        if (tagLow.find("<a") == 0) {
+            std::string href = extractAttr(tag, "href");
+            if (!href.empty()) {
+                std::string hrefLow;
+                for (char c : href) hrefLow += static_cast<char>(std::tolower(c));
+                for (const auto& ext : fileExts) {
+                    if (hrefLow.size() >= ext.size() &&
+                        hrefLow.substr(hrefLow.size() - ext.size()) == ext) {
+                        urls.push_back(resolveUrl(href));
+                        break;
+                    }
+                }
+            }
+        }
+        i = tagEnd;
+    }
+
+    std::vector<std::string> unique;
+    std::unordered_map<std::string, bool> seen;
+    for (const auto& u : urls) {
+        if (!seen[u] && unique.size() < 10) {
+            seen[u] = true;
+            unique.push_back(u);
+        }
+    }
+
+    std::string assetsDir = dataDir_ + "/knowledge/assets";
+    system(("mkdir -p " + assetsDir).c_str());
+    bool isOnion = baseUrl.find(".onion") != std::string::npos;
+    int downloaded = 0;
+
+    for (const auto& u : unique) {
+        if (downloaded >= 5) break;
+        std::string localPath = downloadAsset(u, isOnion, assetsDir);
+        if (localPath.empty()) continue;
+        downloaded++;
+
+        std::ifstream check(localPath, std::ios::binary | std::ios::ate);
+        if (!check.good()) continue;
+        size_t fsize = check.tellg();
+        check.seekg(0);
+        std::string content((std::istreambuf_iterator<char>(check)),
+                            std::istreambuf_iterator<char>());
+
+        std::string sha = sha256Hex(content);
+
+        std::string ext;
+        size_t dotP = localPath.rfind('.');
+        if (dotP != std::string::npos) ext = localPath.substr(dotP);
+
+        std::string finalPath = assetsDir + "/" + sha + ext;
+        if (localPath != finalPath) {
+            std::rename(localPath.c_str(), finalPath.c_str());
+        }
+
+        std::string mime = "application/octet-stream";
+        if (ext == ".png") mime = "image/png";
+        else if (ext == ".jpg" || ext == ".jpeg") mime = "image/jpeg";
+        else if (ext == ".gif") mime = "image/gif";
+        else if (ext == ".webp") mime = "image/webp";
+        else if (ext == ".svg") mime = "image/svg+xml";
+        else if (ext == ".pdf") mime = "application/pdf";
+        else if (ext == ".zip") mime = "application/zip";
+        else if (ext == ".csv") mime = "text/csv";
+        else if (ext == ".txt") mime = "text/plain";
+
+        std::string verdict = vtScanFile(sha, finalPath);
+
+        if (verdict.find("malicious") != std::string::npos) {
+            std::string quarDir = dataDir_ + "/knowledge/quarantine";
+            system(("mkdir -p " + quarDir).c_str());
+            std::rename(finalPath.c_str(), (quarDir + "/" + sha + ext).c_str());
+            finalPath = quarDir + "/" + sha + ext;
+        }
+
+        HarvestAsset asset;
+        asset.localPath = finalPath;
+        asset.sha256 = sha;
+        asset.mimeGuess = mime;
+        asset.bytes = fsize;
+        asset.vtVerdict = verdict;
+        payload.assets.push_back(asset);
+    }
+
+    return payload;
+}
+
+std::string SynapsedEngine::downloadAsset(const std::string& url, bool isOnion,
+    const std::string& assetsDir) const {
+    if (url.empty() || !isUrlSafe(url)) return "";
+
+    std::string ext;
+    size_t qPos = url.rfind('?');
+    std::string cleanUrl = qPos != std::string::npos ? url.substr(0, qPos) : url;
+    size_t dotPos = cleanUrl.rfind('.');
+    size_t slashPos = cleanUrl.rfind('/');
+    if (dotPos != std::string::npos && (slashPos == std::string::npos || dotPos > slashPos)) {
+        ext = cleanUrl.substr(dotPos);
+        if (ext.size() > 6) ext = ".bin";
+    } else {
+        ext = ".bin";
+    }
+
+    std::string tmpPath = assetsDir + "/dl_" + std::to_string(nowMillis()) + ext;
+    std::string cmd;
+    if (isOnion) {
+        cmd = "curl -s -k --max-time 30 --max-filesize 10485760 "
+              "--socks5-hostname 127.0.0.1:9050 -L -o \"" + tmpPath + "\" "
+              "\"" + url + "\" 2>/dev/null";
+    } else {
+        cmd = "curl -s -k --max-time 20 --max-filesize 10485760 -L "
+              "-H \"User-Agent: " + randomUserAgent() + "\" "
+              "-o \"" + tmpPath + "\" \"" + url + "\" 2>/dev/null";
+    }
+    system(cmd.c_str());
+
+    std::ifstream check(tmpPath, std::ios::binary | std::ios::ate);
+    if (!check.good() || check.tellg() == 0) {
+        std::remove(tmpPath.c_str());
+        return "";
+    }
+    size_t fileSize = check.tellg();
+    check.close();
+
+    if (fileSize > 10 * 1024 * 1024) {
+        std::remove(tmpPath.c_str());
+        return "";
+    }
+
+    if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" ||
+        ext == ".gif" || ext == ".webp") {
+        std::fstream img(tmpPath, std::ios::in | std::ios::out | std::ios::binary);
+        if (img.good()) {
+            char header[12];
+            img.read(header, 12);
+            if (img.gcount() >= 12) {
+                bool hasExif = (header[0] == '\xFF' && header[1] == '\xD8' &&
+                               header[2] == '\xFF' && header[3] == '\xE1');
+                if (hasExif) {
+                    img.seekp(2);
+                    char blank[2] = {'\xFF', '\xE0'};
+                    img.write(blank, 2);
+                }
+            }
+            img.close();
+        }
+    }
+
+    return tmpPath;
+}
+
+std::string SynapsedEngine::vtScanFile(const std::string& sha256,
+    const std::string& filePath) const {
+    if (!vtApiKeyLoaded_) {
+        std::string cfgPath = dataDir_ + "/config.toml";
+        std::ifstream cfg(cfgPath);
+        if (cfg.good()) {
+            std::string line;
+            while (std::getline(cfg, line)) {
+                size_t p = line.find("vt_api_key");
+                if (p != std::string::npos) {
+                    size_t eq = line.find('=', p);
+                    if (eq != std::string::npos) {
+                        std::string val = line.substr(eq + 1);
+                        size_t q1 = val.find('"');
+                        size_t q2 = val.rfind('"');
+                        if (q1 != std::string::npos && q2 > q1) {
+                            vtApiKey_ = val.substr(q1 + 1, q2 - q1 - 1);
+                        } else {
+                            size_t start = val.find_first_not_of(" \t");
+                            size_t end = val.find_last_not_of(" \t\n\r");
+                            if (start != std::string::npos)
+                                vtApiKey_ = val.substr(start, end - start + 1);
+                        }
+                    }
+                }
+            }
+        }
+        vtApiKeyLoaded_ = true;
+    }
+
+    if (vtApiKey_.empty()) return "unchecked";
+
+    std::string cmd = "curl -s --max-time 10 "
+        "-H \"x-apikey: " + vtApiKey_ + "\" "
+        "\"https://www.virustotal.com/api/v3/files/" + sha256 + "\" 2>/dev/null";
+    std::string resp = execCmd(cmd);
+
+    if (resp.empty()) return "unchecked";
+
+    if (resp.find("\"NotFoundError\"") != std::string::npos) return "unknown";
+
+    size_t malP = resp.find("\"malicious\"");
+    if (malP != std::string::npos) {
+        size_t colon = resp.find(':', malP);
+        if (colon != std::string::npos) {
+            int count = std::atoi(resp.c_str() + colon + 1);
+            if (count > 0) return "malicious:" + std::to_string(count);
+            return "clean";
+        }
+    }
+
+    return "unchecked";
+}
+
+void SynapsedEngine::persistHarvest(const NaanDraft& d, const std::string& hash,
+    const HarvestPayload& payload) const {
+    std::string dir = dataDir_ + "/knowledge";
+    system(("mkdir -p " + dir).c_str());
+    std::string hash12 = hash.size() >= 12 ? hash.substr(0, 12) : hash;
+    std::string fname = dir + "/harvest_" + std::to_string(nowMillis()) + "_" + hash12 + ".json";
+    std::ofstream f(fname);
+    if (!f) return;
+
+    BypassReport br;
+    {
+        std::lock_guard<std::mutex> lock(bypassMtx_);
+        br = lastBypass_;
+    }
+
+    std::string nodeHash = sha256Hex(nodeId_);
+
+    f << "{\n"
+      << "  \"draft_sha256\": \"" << hash << "\",\n"
+      << "  \"topic\": \"" << jsonEscape(d.topic) << "\",\n"
+      << "  \"title\": \"" << jsonEscape(d.title) << "\",\n"
+      << "  \"text\": \"" << jsonEscape(payload.text.substr(0, 50000)) << "\",\n"
+      << "  \"bypass\": {\n"
+      << "    \"cve\": \"" << jsonEscape(br.cveId) << "\",\n"
+      << "    \"protection\": \"" << jsonEscape(br.protectionType) << "\",\n"
+      << "    \"method\": \"" << jsonEscape(br.bypassMethod) << "\",\n"
+      << "    \"transport\": \"" << jsonEscape(br.transport) << "\",\n"
+      << "    \"ttfb_ms\": " << static_cast<int64_t>(br.ttfbMs) << ",\n"
+      << "    \"bytes\": " << br.bytes << "\n"
+      << "  },\n"
+      << "  \"assets\": [\n";
+    for (size_t i = 0; i < payload.assets.size(); i++) {
+        const auto& a = payload.assets[i];
+        f << "    {\"sha256\":\"" << a.sha256
+          << "\",\"mime\":\"" << jsonEscape(a.mimeGuess)
+          << "\",\"bytes\":" << a.bytes
+          << ",\"vt\":\"" << jsonEscape(a.vtVerdict)
+          << "\",\"file\":\"" << jsonEscape(a.localPath) << "\"}";
+        if (i + 1 < payload.assets.size()) f << ",";
+        f << "\n";
+    }
+    f << "  ],\n"
+      << "  \"node_id_hash\": \"" << nodeHash << "\",\n"
+      << "  \"timestamp\": " << nowMillis() << "\n"
+      << "}\n";
+}
+
+std::string SynapsedEngine::harvestList(int offset, int limit) const {
+    std::string dir = dataDir_ + "/knowledge";
+    std::string cmd = "ls -1t " + dir + "/harvest_*.json 2>/dev/null";
+    std::string listing = execCmd(cmd);
+    if (listing.empty()) return "[]";
+
+    std::vector<std::string> files;
+    std::istringstream iss(listing);
+    std::string line;
+    while (std::getline(iss, line)) {
+        if (!line.empty()) files.push_back(line);
+    }
+
+    std::ostringstream out;
+    out << "[";
+    int written = 0;
+    for (int i = offset; i < static_cast<int>(files.size()) && written < limit; i++) {
+        std::ifstream f(files[i]);
+        if (!f.good()) continue;
+        std::string content((std::istreambuf_iterator<char>(f)),
+                            std::istreambuf_iterator<char>());
+        size_t textKey = content.find("\"text\"");
+        if (textKey != std::string::npos) {
+            size_t textStart = content.find('"', textKey + 6);
+            if (textStart != std::string::npos) {
+                size_t textEnd = textStart + 1;
+                bool escaped = false;
+                while (textEnd < content.size()) {
+                    if (escaped) { escaped = false; textEnd++; continue; }
+                    if (content[textEnd] == '\\') { escaped = true; textEnd++; continue; }
+                    if (content[textEnd] == '"') break;
+                    textEnd++;
+                }
+                std::string before = content.substr(0, textStart + 1);
+                std::string text = content.substr(textStart + 1, textEnd - textStart - 1);
+                std::string after = content.substr(textEnd);
+                if (text.size() > 200) text = text.substr(0, 200) + "...";
+                content = before + text + after;
+            }
+        }
+        if (written > 0) out << ",";
+        out << content;
+        written++;
+    }
+    out << "]";
+    return out.str();
+}
+
+std::string SynapsedEngine::harvestGet(const std::string& sha256) const {
+    std::string dir = dataDir_ + "/knowledge";
+    std::string pattern = "harvest_*" + sha256.substr(0, 12) + ".json";
+    std::string cmd = "ls -1 " + dir + "/" + pattern + " 2>/dev/null | head -1";
+    std::string path = execCmd(cmd);
+    while (!path.empty() && (path.back() == '\n' || path.back() == '\r'))
+        path.pop_back();
+    if (path.empty()) return "{\"error\":\"not found\"}";
+
+    std::ifstream f(path);
+    if (!f.good()) return "{\"error\":\"read failed\"}";
+    std::string content((std::istreambuf_iterator<char>(f)),
+                        std::istreambuf_iterator<char>());
+    return content;
+}
+
 bool SynapsedEngine::validateGguf(const std::string& path) const {
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
@@ -3376,6 +3840,12 @@ void SynapsedEngine::naanLoop() {
 
             persistDraft(d, hash);
             naanState_ = "active";
+        }
+
+        if (!html.empty()) {
+            auto harvest = extractAssets(html, url);
+            NaanDraft hd{chosenTitle, topic, status, accepted ? ngt : 0.0};
+            persistHarvest(hd, hash, harvest);
         }
 
         for (int w = 0; w < tickSec && !naanStop_.load(); w++) {

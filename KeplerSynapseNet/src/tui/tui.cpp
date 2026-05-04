@@ -458,6 +458,11 @@ struct LocalAppState {
     AttachedAgentStatusInfo attachedAgent;
     std::vector<ObservatoryArtifactInfo> observatoryFeed;
     std::mutex naanMutex;
+
+    std::vector<HarvestEntrySummary> harvestEntries;
+    std::mutex harvestMutex;
+    int harvestScroll = 0;
+    int harvestSelected = -1;
 };
 
 static void pushAgentEvent(LocalAppState& state,
@@ -568,6 +573,7 @@ struct TUI::Impl {
     void drawMining();
     void drawAttachedAgent();
     void drawObservatory();
+    void drawHarvest();
     void drawModelLoader();
     void drawSendNGT();
     void drawReceiveNGT();
@@ -3458,6 +3464,126 @@ void TUI::Impl::drawAIChat() {
     ::refresh();
 }
 
+void TUI::Impl::drawHarvest() {
+    clear();
+    int row = 1;
+
+    attron(COLOR_PAIR(4) | A_BOLD);
+    centerText(row++, "KNOWLEDGE HARVEST");
+    attroff(COLOR_PAIR(4) | A_BOLD);
+
+    std::vector<HarvestEntrySummary> entries;
+    {
+        std::lock_guard<std::mutex> lock(state.harvestMutex);
+        entries = state.harvestEntries;
+    }
+
+    int boxW = 78;
+    int boxX = (COLS - boxW) / 2;
+    if (boxX < 0) boxX = 0;
+    row += 1;
+
+    int usableH = LINES - row - 3;
+    if (usableH < 15) usableH = 15;
+
+    if (entries.empty()) {
+        drawBox(row, boxX, 5, boxW, "Harvest");
+        printClippedLine(row + 2, boxX + 3, boxW - 6,
+            "No harvests yet. Start NAAN agent to begin mining.");
+        drawStatusBar();
+        ::refresh();
+        return;
+    }
+
+    int listH = std::min(14, std::max(8, usableH * 2 / 3));
+    int detailsH = usableH - listH;
+    if (detailsH < 6) { detailsH = 6; listH = usableH - detailsH; }
+
+    drawBox(row, boxX, listH, boxW, "Harvested Knowledge");
+    int dataRows = listH - 3;
+    if (dataRows < 1) dataRows = 1;
+
+    int maxScroll = 0;
+    if (static_cast<int>(entries.size()) > dataRows)
+        maxScroll = static_cast<int>(entries.size()) - dataRows;
+    if (state.harvestScroll < 0) state.harvestScroll = 0;
+    if (state.harvestScroll > maxScroll) state.harvestScroll = maxScroll;
+    if (state.harvestSelected < 0) state.harvestSelected = 0;
+    if (state.harvestSelected >= static_cast<int>(entries.size()))
+        state.harvestSelected = static_cast<int>(entries.size()) - 1;
+
+    int innerW = boxW - 6;
+    printClippedLine(row + 1, boxX + 3, innerW,
+        "TIME          TOPIC        CVE       ASSETS VT  TITLE");
+
+    for (int i = 0; i < dataRows; ++i) {
+        int idx = state.harvestScroll + i;
+        int y = row + 2 + i;
+        if (idx >= static_cast<int>(entries.size())) {
+            mvhline(y, boxX + 3, ' ', innerW);
+            continue;
+        }
+        const auto& e = entries[idx];
+
+        std::string ts = formatUnixTime(e.timestamp);
+        std::string line = truncEnd(ts, 14);
+        while (line.size() < 14) line.push_back(' ');
+        line += truncEnd(e.topic, 12);
+        while (line.size() < 27) line.push_back(' ');
+        std::string cve = e.cveId.empty() ? "-" :
+            e.cveId.substr(e.cveId.rfind('-') + 1);
+        line += truncEnd(cve, 9);
+        while (line.size() < 37) line.push_back(' ');
+        line += std::to_string(e.assetCount);
+        while (line.size() < 44) line.push_back(' ');
+        line += truncEnd(e.vtStatus, 3);
+        while (line.size() < 48) line.push_back(' ');
+        line += truncEnd(e.title, innerW - 48);
+
+        if (idx == state.harvestSelected) {
+            attron(A_REVERSE);
+            printClippedLine(y, boxX + 3, innerW, line);
+            attroff(A_REVERSE);
+        } else {
+            printClippedLine(y, boxX + 3, innerW, line);
+        }
+    }
+
+    if (state.harvestScroll > 0) mvaddch(row + 1, boxX + boxW - 2, '^');
+    if (state.harvestScroll < maxScroll) mvaddch(row + listH - 2, boxX + boxW - 2, 'v');
+
+    int detailsY = row + listH + 1;
+    drawBox(detailsY, boxX, detailsH, boxW, "Detail");
+
+    if (state.harvestSelected >= 0 &&
+        state.harvestSelected < static_cast<int>(entries.size())) {
+        const auto& sel = entries[state.harvestSelected];
+        int dy = detailsY + 1;
+        int dw = boxW - 6;
+        int dx = boxX + 3;
+
+        printClippedLine(dy++, dx, dw,
+            "Title: " + truncEnd(sel.title, dw - 7));
+        printClippedLine(dy++, dx, dw,
+            "Topic: " + sel.topic +
+            "  CVE: " + (sel.cveId.empty() ? "none" : sel.cveId) +
+            "  Method: " + (sel.bypassMethod.empty() ? "direct" : sel.bypassMethod));
+        printClippedLine(dy++, dx, dw,
+            "Transport: " + sel.transport +
+            "  Assets: " + std::to_string(sel.assetCount) +
+            "  VT: " + sel.vtStatus);
+        printClippedLine(dy++, dx, dw,
+            "Draft: " + truncEnd(sel.draftSha256, 24) + "...");
+        if (!sel.textPreview.empty() && dy < detailsY + detailsH - 1) {
+            printClippedLine(dy++, dx, dw,
+                "Text: " + truncEnd(sel.textPreview, dw - 6));
+        }
+    }
+
+    drawStatusBar();
+    ::refresh();
+}
+
 void TUI::Impl::drawSecurity() {
     clear();
     int row = 1;
@@ -3966,6 +4092,9 @@ void TUI::run() {
                 break;
             case Screen::OBSERVATORY:
                 impl_->drawObservatory();
+                break;
+            case Screen::HARVEST:
+                impl_->drawHarvest();
                 break;
             default:
                 impl_->drawDashboard();
@@ -5024,6 +5153,41 @@ void TUI::run() {
                     if (impl_->observatoryScroll < 0) impl_->observatoryScroll = 0;
                     if (impl_->observatoryScroll > maxScroll) impl_->observatoryScroll = maxScroll;
                 }
+            } else if (impl_->screen == Screen::HARVEST) {
+                int itemCount = 0;
+                {
+                    std::lock_guard<std::mutex> lock(impl_->state.harvestMutex);
+                    itemCount = static_cast<int>(impl_->state.harvestEntries.size());
+                }
+                int page = std::max(1, LINES / 3);
+                if (ch == KEY_UP) {
+                    impl_->state.harvestSelected--;
+                } else if (ch == KEY_DOWN) {
+                    impl_->state.harvestSelected++;
+                } else if (ch == KEY_PPAGE) {
+                    impl_->state.harvestSelected -= page;
+                } else if (ch == KEY_NPAGE) {
+                    impl_->state.harvestSelected += page;
+                } else if (ch == 'b' || ch == 'B' || ch == 27) {
+                    impl_->screen = Screen::DASHBOARD;
+                } else if (ch == 'a' || ch == 'A') {
+                    impl_->screen = Screen::ATTACHED_AGENT;
+                }
+                if (itemCount <= 0) {
+                    impl_->state.harvestSelected = 0;
+                    impl_->state.harvestScroll = 0;
+                } else {
+                    if (impl_->state.harvestSelected < 0) impl_->state.harvestSelected = 0;
+                    if (impl_->state.harvestSelected >= itemCount) impl_->state.harvestSelected = itemCount - 1;
+                    int maxScroll = std::max(0, itemCount - page);
+                    if (impl_->state.harvestSelected < impl_->state.harvestScroll) {
+                        impl_->state.harvestScroll = impl_->state.harvestSelected;
+                    } else if (impl_->state.harvestSelected >= impl_->state.harvestScroll + page) {
+                        impl_->state.harvestScroll = impl_->state.harvestSelected - page + 1;
+                    }
+                    if (impl_->state.harvestScroll < 0) impl_->state.harvestScroll = 0;
+                    if (impl_->state.harvestScroll > maxScroll) impl_->state.harvestScroll = maxScroll;
+                }
             } else {
                 primary_ui::DashboardRoute dashboardRoute = primary_ui::DashboardRoute::NONE;
                 if (impl_->screen == Screen::DASHBOARD) {
@@ -5090,6 +5254,13 @@ void TUI::run() {
                     case 'A':
                         if (impl_->screen == Screen::DASHBOARD) {
                             impl_->screen = Screen::ATTACHED_AGENT;
+                        }
+                        break;
+                    case 'h':
+                    case 'H':
+                        if (impl_->screen == Screen::DASHBOARD ||
+                            impl_->screen == Screen::ATTACHED_AGENT) {
+                            impl_->screen = Screen::HARVEST;
                         }
                         break;
                     case 'y':
@@ -5473,6 +5644,12 @@ void TUI::updateAgentEvents(const std::vector<AgentEventInfo>& events) {
             impl_->state.agentEvents.begin(),
             impl_->state.agentEvents.end() - 512);
     }
+}
+
+void TUI::updateHarvestEntries(const std::vector<HarvestEntrySummary>& entries) {
+    std::lock_guard<std::recursive_mutex> uiLock(impl_->uiStateMtx);
+    std::lock_guard<std::mutex> lock(impl_->state.harvestMutex);
+    impl_->state.harvestEntries = entries;
 }
 
 void TUI::appendChatMessage(const std::string& role, const std::string& content) {

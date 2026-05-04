@@ -56,6 +56,14 @@ export async function searchKnowledge(query: string): Promise<string> {
   return invoke<string>("search_knowledge", { query });
 }
 
+export async function harvestList(offset: number = 0, limit: number = 50): Promise<string> {
+  return rpcCall("harvest.list", JSON.stringify({ offset, limit }));
+}
+
+export async function harvestGet(sha256: string): Promise<string> {
+  return rpcCall("harvest.get", JSON.stringify({ sha256 }));
+}
+
 export async function naanControl(action: string): Promise<string> {
   return invoke<string>("naan_control", { action });
 }

@@ -277,7 +277,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Code contributions can be submitted as P
 
 ## Changelog
 
-### 0.1.0-alphaV7 (April 29 – May 3, 2026)
+### 0.1.0-alphaV7 (April 29 – May 4, 2026)
 
 - Autonomous vulnerability discovery engine: crawls darknet/clearnet services via Tor, identifies protection weaknesses
 - 10 internal CVEs cataloged (NAAN-CVE-2026-0001 through NAAN-CVE-2026-0010)
@@ -290,6 +290,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Code contributions can be submitted as P
 - Added `BypassReport` struct, `primeCookieJar()` (one-shot clearnet seeding for CVE-0009), and `emitEvent()` event dispatcher
 - Added `tools/naan_mining_runner.py` — sanitized end-to-end mining-loop runner that mirrors the C++ pipeline (topic → `topicToUrl` → `fetchWithRetry` → `detectVulnerability` → `exploitCVE*` → `recordBypass` → `persistDraft`); writes drafts containing only CVE id, protection class, method, transport, TTFB, and bytes — no IPs, hostnames, cookies, or session tokens
 - Live test results: 14 mining ticks, 11 accepted (78.6% approval), CVE-0002 (EndGame V2 queue with NEWNYM rotation) triggered 3×, CVE-0010 (zero-protection direct extraction) triggered 5×
+- **Knowledge Harvester**: NAAN agent now extracts images, files, and readable text from every page it visits during mining. `extractAssets()` parses `<img>`, `<meta og:image>`, and `<a href>` for downloadable assets (`.pdf`, `.doc`, `.zip`, `.png`, `.jpg`, etc.). `downloadAsset()` saves to `knowledge/assets/<sha256>.<ext>` via Tor SOCKS5 or clearnet (10 MB cap per file, 5 files per tick, EXIF stripped from images). `vtScanFile()` checks every downloaded file against VirusTotal v3 API by SHA-256 hash — clean files are kept, flagged files are moved to `knowledge/quarantine/`. `persistHarvest()` writes a full harvest JSON with anonymized metadata (no URLs, hostnames, IPs, cookies — only CVE, method, transport, TTFB, bytes, and `sha256(nodeId)`).
+- New **HARVEST** tab in Tauri Desktop App: scrollable list of harvested entries with topic badges, CVE indicators, asset counts, and VirusTotal status dots. Detail view shows readable text, image grid (thumbnails from local paths via `convertFileSrc`), file list with VT verdicts, bypass metadata card, and anonymized node/draft hashes.
+- New **HARVEST** screen in ncurses TUI (`H` key from Dashboard or NAAN agent): scrollable table with timestamp, topic, title, CVE, asset count, and VT status. Detail panel shows bypass metadata and text preview. Harvest file scanner in `tui_runtime.cpp` reads `knowledge/harvest_*.json` every 5 seconds.
+- RPC: added `harvest.list` (paginated, newest first, text truncated to 200 chars) and `harvest.get` (full harvest JSON by SHA-256)
 
 ### 0.1.0-alphaV6 (April 25, 2026)
 

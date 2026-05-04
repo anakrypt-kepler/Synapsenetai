@@ -174,6 +174,33 @@ private:
     void primeCookieJar() const;
     void emitEvent(const std::string& eventType, const std::string& payloadJson) const;
 
+    struct HarvestAsset {
+        std::string localPath;
+        std::string sha256;
+        std::string mimeGuess;
+        size_t bytes = 0;
+        std::string vtVerdict;
+    };
+    struct HarvestPayload {
+        std::string text;
+        std::vector<HarvestAsset> assets;
+    };
+
+    HarvestPayload extractAssets(const std::string& html,
+        const std::string& baseUrl) const;
+    std::string downloadAsset(const std::string& url, bool isOnion,
+        const std::string& assetsDir) const;
+    std::string vtScanFile(const std::string& sha256,
+        const std::string& filePath) const;
+    void persistHarvest(const NaanDraft& d, const std::string& hash,
+        const HarvestPayload& payload) const;
+    std::string harvestList(int offset, int limit) const;
+    std::string harvestGet(const std::string& sha256) const;
+    std::string stripHtmlToText(const std::string& html) const;
+
+    mutable std::string vtApiKey_;
+    mutable bool vtApiKeyLoaded_ = false;
+
     std::string ed25519Sign(const std::string& data) const;
     void ensureSigningKey() const;
     void persistDraft(const NaanDraft& d, const std::string& hash) const;
