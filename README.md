@@ -90,6 +90,51 @@ Web1 was read. Web2 was read-write. Web3 was read-write-own. **Web4 is read-writ
 
 ---
 
+## Where the NAAN Agent Goes and What It Takes
+
+Starting in V5 and finalized in V7, the NAAN agent is no longer a passive crawler. During every mining tick it autonomously walks a target list that mixes clearnet research sources and `.onion` services, and it carries a full V5 + V6 + V7 bypass chain wired directly into `fetchWithRetry`.
+
+**What the agent reaches for:**
+
+- **Open clearnet research** — arXiv, IACR ePrint, Schneier on Security, Krebs on Security, PacketStorm, GitHub trending, Hugging Face papers feed, BBC, ProPublica, Wikileaks
+- **Cloudflare-fronted security press** — Dark Reading, BleepingComputer, The Hacker News, NVD/NIST. Detected via `__cf_bm`, `cf-mitigated`, `challenge-platform`, handled by curl-impersonate, `__cf_bm` 30-minute replay, and the no-JS POST clearance flow
+- **Sucuri / CloudProxy origins** — Exploit-DB, handled by XSRF token cache replay
+- **Darknet search engines via Tor** — Torch, Ahmia, Haystak, Tordex, Tor66, DarkSearch, Excavator, OnionLand, Phobos, Deep Search, Brave Tor
+- **EndGame V2 + V3 protected forums** — Dread, Pitch, and similar. Handled by hashcash PoW solver, queue race with NEWNYM circuit rotation, and PoW cookie replay
+- **anCaptcha / image / math / rotate / slider / pair / multi-step CAPTCHA pages** — handled by CRNN solver (98.1% exact match on real darknet samples), CSS-selector leak, EasyOCR + Tesseract + TrOCR fallbacks
+- **High-value reference sites on Tor** — DuckDuckGo `.onion`, BBC `.onion`, ProtonMail `.onion`, Dark.fail, OnionDir
+
+**What it takes back to the network:**
+
+- Page titles, headlines, and short content snippets it can extract via the local model
+- A SHA-256 digest of `topic | title | cve | timestamp` so the PoE draft is bound to the bypass identity that produced it
+- A signed Ed25519 attestation of the draft
+- A `bypass{}` block on every persisted draft: CVE id, protection class, method, transport, TTFB, response size — never the URL, hostname, IP, cookie, or session token
+
+This is the line: **the agent extracts knowledge, not identity.** It does not exfiltrate user data, credentials, private content, or anything that belongs to a person. It walks the public surface of services that already publish information to anyone who can solve their challenge, and it brings that public information back into a knowledge chain anyone can read.
+
+### Why this is not a contradiction with bypassing protections
+
+Bypass research and free knowledge are the same project, not opposite ones.
+
+Every protection layer described in [`RELEASES/0.1.0-alphaV7/README.md`](RELEASES/0.1.0-alphaV7/README.md) — Cloudflare bot management, Sucuri, EndGame V2/V3, anCaptcha, CF managed challenges, cross-service cookie isolation — exists for one reason: to convert public information into rented information. The page is still public. The article is still indexable. The forum thread still describes the world. The protection only filters who is allowed to read it cheaply at scale.
+
+I do not accept that filter.
+
+The position behind SynapseNet is simple:
+
+> **Knowledge should be available to everyone. That is exactly why these techniques are invented.**
+
+If a model can plan, then the model can plan the route around the gatekeeper. If an SDK can solve a CAPTCHA, then the SDK can be used to lift the same CAPTCHA off a research mirror. If a cloud API can rewrite code, then the cloud API can rewrite the code that walks past its own throttles. The corporations gave us the tools. We use those tools to make sure the knowledge they sit on top of stays public, mirrored, and reachable from a node that a single takedown notice cannot turn off.
+
+The arms race is real. CAPTCHA vendors will rotate. EndGame will ship V4. Cloudflare will tighten `__cf_bm`. Sucuri will rebind XSRF. Each of those moves becomes a new NAAN-CVE entry, a new exploit method in `synapsed_engine.cpp`, and a new line in the next release notes.
+
+**The arms race will be on our side, because every node that joins the network is a new pair of eyes, a new circuit, a new agent, and a new place where the next bypass can be tested in production. One vendor on one side, thousands of autonomous nodes on the other. That asymmetry is the whole point.**
+
+That is what every CVE and every exploit in the V5 → V7 chain is for. Not to deface a service. Not to steal a user. To make sure the knowledge a few companies want to gate stays open, indexed, and available to any node running this software, anywhere in the world, on any link.
+
+---
+
 ## Core Architecture
 
 ```
@@ -232,15 +277,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Code contributions can be submitted as P
 
 ## Changelog
 
-### 0.1.0-alphaV7 (April 29, 2026)
+### 0.1.0-alphaV7 (April 29 – May 3, 2026)
 
 - Autonomous vulnerability discovery engine: crawls darknet/clearnet services via Tor, identifies protection weaknesses
 - 10 internal CVEs cataloged (NAAN-CVE-2026-0001 through NAAN-CVE-2026-0010)
-- 8 active exploit implementations: PoW cookie replay, queue race, CSS selector leak, CF __cf_bm replay, Sucuri XSRF cache replay, CF managed challenge bypass, timing oracle, cookie jar confusion
-- `detectVulnerability()` auto-classifier with confidence scoring (0.0-1.0)
-- `CookiePool` system: caches solved PoW sessions, __cf_bm cookies, and cross-service sessions with TTL tracking
+- 8 active exploit implementations: PoW cookie replay, queue race, CSS selector leak, CF `__cf_bm` replay, Sucuri XSRF cache replay, CF managed challenge bypass, timing oracle, cookie jar confusion
+- `detectVulnerability()` auto-classifier with confidence scoring (0.0–1.0)
+- `CookiePool` system: caches solved PoW sessions, `__cf_bm` cookies, and cross-service sessions with TTL tracking
 - Integrated into `fetchWithRetry()`: pre-checks cookie pool, measures TTFB, auto-exploits if confidence > 0.8, falls back to V5/V6 chain
 - Added `tools/naan_vuln_scanner.py` — standalone scanner with CVE catalog, live testing, JSON export
+- **Mining-loop integration**: full V5 + V6 + V7 bypass chain is now invoked autonomously inside `SynapsedEngine::naanLoop`. Every successful bypass is reported through `recordBypass(cve, protection, method, transport, ttfbMs, httpCode, bytes)` and stamped into the in-memory log entry, the persisted PoE draft JSON (`bypass{}` block), the SHA-256 of the draft payload, and a `naan.bypass` event broadcast to RPC subscribers. `naanStatus()` exposes `bypass_counters` and `last_bypass` for dashboard rendering.
+- Added `BypassReport` struct, `primeCookieJar()` (one-shot clearnet seeding for CVE-0009), and `emitEvent()` event dispatcher
+- Added `tools/naan_mining_runner.py` — sanitized end-to-end mining-loop runner that mirrors the C++ pipeline (topic → `topicToUrl` → `fetchWithRetry` → `detectVulnerability` → `exploitCVE*` → `recordBypass` → `persistDraft`); writes drafts containing only CVE id, protection class, method, transport, TTFB, and bytes — no IPs, hostnames, cookies, or session tokens
+- Live test results: 14 mining ticks, 11 accepted (78.6% approval), CVE-0002 (EndGame V2 queue with NEWNYM rotation) triggered 3×, CVE-0010 (zero-protection direct extraction) triggered 5×
 
 ### 0.1.0-alphaV6 (April 25, 2026)
 
