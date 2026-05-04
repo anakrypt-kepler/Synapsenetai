@@ -2446,8 +2446,6 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
 
         if (darkCap.detected && !darkCap.solved && modelLoaded_) {
             std::string capImg;
-            auto imgM = std::regex_search(html, std::smatch{},
-                std::regex("<img[^>]+src=[\"']([^\"']*captcha[^\"']*)", std::regex::icase));
             std::smatch imgMatch;
             if (std::regex_search(html, imgMatch,
                 std::regex("<img[^>]+src=[\"']([^\"']*(?:captcha|cap)[^\"']*)[\"']", std::regex::icase))) {
