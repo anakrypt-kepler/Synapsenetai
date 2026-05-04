@@ -44,6 +44,7 @@ enum class Screen {
     ATTACHED_AGENT,
     OBSERVATORY,
     HARVEST,
+    EXPLOITS,
     HELP
 };
 
@@ -327,6 +328,19 @@ struct AgentEventInfo {
     std::string message;
 };
 
+struct ExploitIntelSummary {
+    std::string cveId;
+    std::string protectionType;
+    std::string bypassMethod;
+    std::string transport;
+    int confidence = 0;
+    int successCount = 0;
+    int failCount = 0;
+    int successRate = 0;
+    std::string discoveredBy;
+    uint64_t timestamp = 0;
+};
+
 struct HarvestEntrySummary {
     std::string draftSha256;
     std::string topic;
@@ -425,6 +439,7 @@ public:
     void updateObservatoryFeed(const std::vector<ObservatoryArtifactInfo>& items);
     void updateAgentEvents(const std::vector<AgentEventInfo>& events);
     void updateHarvestEntries(const std::vector<HarvestEntrySummary>& entries);
+    void updateExploitChain(const std::vector<ExploitIntelSummary>& entries);
     void appendChatMessage(const std::string& role, const std::string& content);
     
     std::string prompt(const std::string& message);

@@ -179,7 +179,7 @@ std::thread startTuiUpdateThread(TUI& ui, const TuiUpdateHooks& hooks) {
             ui.updateObservatoryFeed(hooks.getObservatoryFeed());
             ui.updateAgentEvents(hooks.getAgentEvents());
 
-            if (harvestTick % 5 == 0) {
+            if (harvestTick % 5 == 0 || harvestTick == 0) {
                 if (dataDir.empty()) {
                     const char* home = std::getenv("HOME");
                     if (home) dataDir = std::string(home) + "/.synapsenet";
@@ -187,6 +187,58 @@ std::thread startTuiUpdateThread(TUI& ui, const TuiUpdateHooks& hooks) {
                 }
                 auto entries = scanHarvestFiles(dataDir);
                 ui.updateHarvestEntries(entries);
+
+                std::string exploitPath = dataDir + "/exploit_chain.json";
+                std::vector<ExploitIntelSummary> exploits;
+                try {
+                    std::ifstream ef(exploitPath);
+                    if (ef.good()) {
+                        std::string econtent((std::istreambuf_iterator<char>(ef)),
+                                            std::istreambuf_iterator<char>());
+                        size_t epos = 0;
+                        while ((epos = econtent.find("\"cveId\"", epos)) != std::string::npos) {
+                            ExploitIntelSummary es;
+                            size_t blockStart = econtent.rfind('{', epos);
+                            size_t blockEnd = econtent.find('}', epos);
+                            if (blockStart == std::string::npos || blockEnd == std::string::npos) { epos++; continue; }
+                            std::string block = econtent.substr(blockStart, blockEnd - blockStart + 1);
+
+                            auto eGetStr = [&](const std::string& key) -> std::string {
+                                std::string s = "\"" + key + "\"";
+                                size_t p = block.find(s);
+                                if (p == std::string::npos) return "";
+                                size_t q1 = block.find('"', p + s.size() + 1);
+                                if (q1 == std::string::npos) return "";
+                                size_t q2 = block.find('"', q1 + 1);
+                                if (q2 == std::string::npos) return "";
+                                return block.substr(q1 + 1, q2 - q1 - 1);
+                            };
+                            auto eGetInt = [&](const std::string& key) -> int64_t {
+                                std::string s = "\"" + key + "\"";
+                                size_t p = block.find(s);
+                                if (p == std::string::npos) return 0;
+                                size_t colon = block.find(':', p + s.size());
+                                if (colon == std::string::npos) return 0;
+                                return std::strtoll(block.c_str() + colon + 1, nullptr, 10);
+                            };
+
+                            es.cveId = eGetStr("cveId");
+                            es.protectionType = eGetStr("protectionType");
+                            es.bypassMethod = eGetStr("bypassMethod");
+                            es.transport = eGetStr("transport");
+                            es.confidence = static_cast<int>(eGetInt("confidence"));
+                            es.successCount = static_cast<int>(eGetInt("successCount"));
+                            es.failCount = static_cast<int>(eGetInt("failCount"));
+                            es.discoveredBy = eGetStr("discoveredBy");
+                            es.timestamp = static_cast<uint64_t>(eGetInt("timestamp"));
+                            es.successRate = (es.successCount + es.failCount > 0) ?
+                                static_cast<int>(100.0 * es.successCount / (es.successCount + es.failCount)) : 0;
+                            if (!es.cveId.empty()) exploits.push_back(es);
+                            epos++;
+                        }
+                    }
+                } catch (...) {}
+                ui.updateExploitChain(exploits);
             }
             harvestTick++;
 

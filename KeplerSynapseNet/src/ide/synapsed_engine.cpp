@@ -205,6 +205,25 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         return ss.str();
     }
 
+    if (method == "exploit.list") {
+        int offset = 0, limit = 100;
+        size_t offP = paramsJson.find("\"offset\"");
+        if (offP != std::string::npos) {
+            size_t colon = paramsJson.find(':', offP);
+            if (colon != std::string::npos) offset = std::atoi(paramsJson.c_str() + colon + 1);
+        }
+        size_t limP = paramsJson.find("\"limit\"");
+        if (limP != std::string::npos) {
+            size_t colon = paramsJson.find(':', limP);
+            if (colon != std::string::npos) limit = std::atoi(paramsJson.c_str() + colon + 1);
+        }
+        return exploitChainList(offset, limit);
+    }
+    if (method == "exploit.stats") return exploitChainStats();
+    if (method == "exploit.sync") {
+        syncExploitChainFromPeers();
+        return "{\"ok\":true,\"count\":" + std::to_string(exploitChain_.size()) + "}";
+    }
     if (method == "harvest.list") {
         int offset = 0, limit = 50;
         size_t offP = paramsJson.find("\"offset\"");
@@ -3216,6 +3235,205 @@ std::string SynapsedEngine::solveCaptchaViaLLM(const std::string& html,
     return answer;
 }
 
+void SynapsedEngine::loadExploitChain() const {
+    std::string path = dataDir_ + "/exploit_chain.json";
+    std::ifstream f(path);
+    if (!f.good()) return;
+    std::string content((std::istreambuf_iterator<char>(f)),
+                        std::istreambuf_iterator<char>());
+    std::lock_guard<std::mutex> lock(exploitChainMtx_);
+    size_t pos = 0;
+    while ((pos = content.find("\"cveId\"", pos)) != std::string::npos) {
+        ExploitIntel intel;
+        auto getStr = [&](const std::string& key, size_t from) -> std::string {
+            std::string search = "\"" + key + "\"";
+            size_t p = content.find(search, from);
+            if (p == std::string::npos || p > from + 500) return "";
+            size_t q1 = content.find('"', p + search.size() + 1);
+            if (q1 == std::string::npos) return "";
+            size_t q2 = content.find('"', q1 + 1);
+            if (q2 == std::string::npos) return "";
+            return content.substr(q1 + 1, q2 - q1 - 1);
+        };
+        auto getInt = [&](const std::string& key, size_t from) -> int64_t {
+            std::string search = "\"" + key + "\"";
+            size_t p = content.find(search, from);
+            if (p == std::string::npos || p > from + 500) return 0;
+            size_t colon = content.find(':', p + search.size());
+            if (colon == std::string::npos) return 0;
+            return std::strtoll(content.c_str() + colon + 1, nullptr, 10);
+        };
+        size_t blockStart = content.rfind('{', pos);
+        if (blockStart == std::string::npos) { pos++; continue; }
+        intel.cveId = getStr("cveId", blockStart);
+        intel.protectionType = getStr("protectionType", blockStart);
+        intel.bypassMethod = getStr("bypassMethod", blockStart);
+        intel.transport = getStr("transport", blockStart);
+        intel.confidence = static_cast<double>(getInt("confidence", blockStart)) / 100.0;
+        intel.discoveredBy = getStr("discoveredBy", blockStart);
+        intel.timestamp = getInt("timestamp", blockStart);
+        intel.successCount = static_cast<int>(getInt("successCount", blockStart));
+        intel.failCount = static_cast<int>(getInt("failCount", blockStart));
+        intel.signature = getStr("signature", blockStart);
+        if (!intel.cveId.empty()) {
+            exploitChain_.push_back(intel);
+            exploitChainIndex_[intel.cveId] = intel.timestamp;
+        }
+        pos++;
+    }
+}
+
+void SynapsedEngine::persistExploitChain() const {
+    std::string path = dataDir_ + "/exploit_chain.json";
+    std::ofstream f(path);
+    if (!f) return;
+    std::lock_guard<std::mutex> lock(exploitChainMtx_);
+    f << "[\n";
+    for (size_t i = 0; i < exploitChain_.size(); i++) {
+        const auto& e = exploitChain_[i];
+        f << "  {\"cveId\":\"" << jsonEscape(e.cveId)
+          << "\",\"protectionType\":\"" << jsonEscape(e.protectionType)
+          << "\",\"bypassMethod\":\"" << jsonEscape(e.bypassMethod)
+          << "\",\"transport\":\"" << jsonEscape(e.transport)
+          << "\",\"confidence\":" << static_cast<int>(e.confidence * 100)
+          << ",\"discoveredBy\":\"" << jsonEscape(e.discoveredBy)
+          << "\",\"timestamp\":" << e.timestamp
+          << ",\"successCount\":" << e.successCount
+          << ",\"failCount\":" << e.failCount
+          << ",\"signature\":\"" << jsonEscape(e.signature) << "\"}";
+        if (i + 1 < exploitChain_.size()) f << ",";
+        f << "\n";
+    }
+    f << "]\n";
+}
+
+void SynapsedEngine::publishExploit(const ExploitIntel& intel) const {
+    {
+        std::lock_guard<std::mutex> lock(exploitChainMtx_);
+        auto it = exploitChainIndex_.find(intel.cveId);
+        if (it != exploitChainIndex_.end()) {
+            for (auto& existing : exploitChain_) {
+                if (existing.cveId == intel.cveId) {
+                    existing.successCount += intel.successCount;
+                    existing.failCount += intel.failCount;
+                    if (intel.confidence > existing.confidence) {
+                        existing.confidence = intel.confidence;
+                        existing.bypassMethod = intel.bypassMethod;
+                    }
+                    break;
+                }
+            }
+        } else {
+            exploitChain_.push_back(intel);
+            exploitChainIndex_[intel.cveId] = intel.timestamp;
+        }
+    }
+    persistExploitChain();
+
+    std::string payload = "{\"type\":\"exploit_intel\",\"cveId\":\"" + jsonEscape(intel.cveId) +
+        "\",\"protectionType\":\"" + jsonEscape(intel.protectionType) +
+        "\",\"bypassMethod\":\"" + jsonEscape(intel.bypassMethod) +
+        "\",\"transport\":\"" + jsonEscape(intel.transport) +
+        "\",\"confidence\":" + std::to_string(static_cast<int>(intel.confidence * 100)) +
+        ",\"discoveredBy\":\"" + jsonEscape(intel.discoveredBy) +
+        "\",\"timestamp\":" + std::to_string(intel.timestamp) +
+        ",\"successCount\":" + std::to_string(intel.successCount) +
+        ",\"failCount\":" + std::to_string(intel.failCount) +
+        ",\"signature\":\"" + jsonEscape(intel.signature) + "\"}";
+    emitEvent("naan.exploit_intel", payload);
+}
+
+void SynapsedEngine::ingestExploit(const ExploitIntel& intel) const {
+    if (intel.cveId.empty()) return;
+    if (intel.confidence < 0.3) return;
+    {
+        std::lock_guard<std::mutex> lock(exploitChainMtx_);
+        auto it = exploitChainIndex_.find(intel.cveId);
+        if (it != exploitChainIndex_.end()) {
+            for (auto& existing : exploitChain_) {
+                if (existing.cveId == intel.cveId) {
+                    existing.successCount += intel.successCount;
+                    existing.failCount += intel.failCount;
+                    if (intel.confidence > existing.confidence) {
+                        existing.confidence = intel.confidence;
+                        existing.bypassMethod = intel.bypassMethod;
+                        existing.transport = intel.transport;
+                    }
+                    return;
+                }
+            }
+        }
+        exploitChain_.push_back(intel);
+        exploitChainIndex_[intel.cveId] = intel.timestamp;
+    }
+    persistExploitChain();
+}
+
+SynapsedEngine::ExploitIntel SynapsedEngine::bestExploitFor(
+    const std::string& protectionType) const {
+    std::lock_guard<std::mutex> lock(exploitChainMtx_);
+    ExploitIntel best;
+    for (const auto& e : exploitChain_) {
+        if (e.protectionType == protectionType && e.confidence > best.confidence) {
+            best = e;
+        }
+    }
+    return best;
+}
+
+std::string SynapsedEngine::exploitChainList(int offset, int limit) const {
+    std::lock_guard<std::mutex> lock(exploitChainMtx_);
+    std::ostringstream ss;
+    ss << "[";
+    int written = 0;
+    for (int i = offset; i < static_cast<int>(exploitChain_.size()) && written < limit; i++) {
+        const auto& e = exploitChain_[i];
+        if (written > 0) ss << ",";
+        ss << "{\"cveId\":\"" << jsonEscape(e.cveId)
+           << "\",\"protectionType\":\"" << jsonEscape(e.protectionType)
+           << "\",\"bypassMethod\":\"" << jsonEscape(e.bypassMethod)
+           << "\",\"transport\":\"" << jsonEscape(e.transport)
+           << "\",\"confidence\":" << static_cast<int>(e.confidence * 100)
+           << ",\"discoveredBy\":\"" << jsonEscape(e.discoveredBy)
+           << "\",\"timestamp\":" << e.timestamp
+           << ",\"successCount\":" << e.successCount
+           << ",\"failCount\":" << e.failCount
+           << ",\"successRate\":" << (e.successCount + e.failCount > 0 ?
+              static_cast<int>(100.0 * e.successCount / (e.successCount + e.failCount)) : 0)
+           << "}";
+        written++;
+    }
+    ss << "]";
+    return ss.str();
+}
+
+std::string SynapsedEngine::exploitChainStats() const {
+    std::lock_guard<std::mutex> lock(exploitChainMtx_);
+    int total = static_cast<int>(exploitChain_.size());
+    int critical = 0, high = 0;
+    int totalSuccess = 0, totalFail = 0;
+    for (const auto& e : exploitChain_) {
+        if (e.confidence >= 0.9) critical++;
+        else if (e.confidence >= 0.7) high++;
+        totalSuccess += e.successCount;
+        totalFail += e.failCount;
+    }
+    std::ostringstream ss;
+    ss << "{\"total\":" << total
+       << ",\"critical\":" << critical
+       << ",\"high\":" << high
+       << ",\"total_success\":" << totalSuccess
+       << ",\"total_fail\":" << totalFail
+       << ",\"success_rate\":" << (totalSuccess + totalFail > 0 ?
+          static_cast<int>(100.0 * totalSuccess / (totalSuccess + totalFail)) : 0)
+       << "}";
+    return ss.str();
+}
+
+void SynapsedEngine::syncExploitChainFromPeers() const {
+    loadExploitChain();
+}
+
 std::string SynapsedEngine::topicToUrl(const std::string& topic) const {
     if (topic.find("whistleblower") != std::string::npos ||
         topic.find("leak") != std::string::npos) {
@@ -4051,6 +4269,8 @@ void SynapsedEngine::stopNaan() {
 void SynapsedEngine::naanLoop() {
     static std::mt19937 rng(std::random_device{}());
 
+    loadExploitChain();
+
     while (!naanStop_.load()) {
         std::string topic;
         int tickSec;
@@ -4145,6 +4365,22 @@ void SynapsedEngine::naanLoop() {
 
             persistDraft(d, hash);
             naanState_ = "active";
+
+            if (!br.cveId.empty() && !html.empty()) {
+                ExploitIntel intel;
+                intel.cveId = br.cveId;
+                intel.protectionType = br.protectionType;
+                intel.bypassMethod = br.bypassMethod;
+                intel.transport = br.transport;
+                intel.confidence = 0.85;
+                intel.discoveredBy = sha256Hex(nodeId_);
+                intel.timestamp = nowMillis();
+                intel.successCount = 1;
+                intel.failCount = 0;
+                intel.signature = sha256Hex(br.cveId + br.bypassMethod +
+                    std::to_string(intel.timestamp));
+                publishExploit(intel);
+            }
         }
 
         if (!html.empty()) {

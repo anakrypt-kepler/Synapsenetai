@@ -60,7 +60,8 @@ enum class MessageType {
     TX,
     KNOWLEDGE,
     VOTE,
-    REJECT
+    REJECT,
+    EXPLOIT_INTEL
 };
 
 struct Message {

@@ -56,6 +56,18 @@ export async function searchKnowledge(query: string): Promise<string> {
   return invoke<string>("search_knowledge", { query });
 }
 
+export async function exploitList(offset: number = 0, limit: number = 100): Promise<string> {
+  return rpcCall("exploit.list", JSON.stringify({ offset, limit }));
+}
+
+export async function exploitStats(): Promise<string> {
+  return rpcCall("exploit.stats", "{}");
+}
+
+export async function exploitSync(): Promise<string> {
+  return rpcCall("exploit.sync", "{}");
+}
+
 export async function harvestList(offset: number = 0, limit: number = 50): Promise<string> {
   return rpcCall("harvest.list", JSON.stringify({ offset, limit }));
 }

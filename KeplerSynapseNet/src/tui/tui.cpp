@@ -463,6 +463,11 @@ struct LocalAppState {
     std::mutex harvestMutex;
     int harvestScroll = 0;
     int harvestSelected = -1;
+
+    std::vector<ExploitIntelSummary> exploitChain;
+    std::mutex exploitMutex;
+    int exploitScroll = 0;
+    int exploitSelected = -1;
 };
 
 static void pushAgentEvent(LocalAppState& state,
@@ -574,6 +579,7 @@ struct TUI::Impl {
     void drawAttachedAgent();
     void drawObservatory();
     void drawHarvest();
+    void drawExploits();
     void drawModelLoader();
     void drawSendNGT();
     void drawReceiveNGT();
@@ -3584,6 +3590,120 @@ void TUI::Impl::drawHarvest() {
     ::refresh();
 }
 
+void TUI::Impl::drawExploits() {
+    clear();
+    int row = 1;
+
+    attron(COLOR_PAIR(4) | A_BOLD);
+    centerText(row++, "SHARED EXPLOIT INTELLIGENCE");
+    attroff(COLOR_PAIR(4) | A_BOLD);
+
+    std::vector<ExploitIntelSummary> entries;
+    {
+        std::lock_guard<std::mutex> lock(state.exploitMutex);
+        entries = state.exploitChain;
+    }
+
+    int boxW = 78;
+    int boxX = (COLS - boxW) / 2;
+    if (boxX < 0) boxX = 0;
+    row += 1;
+
+    int usableH = LINES - row - 3;
+    if (usableH < 15) usableH = 15;
+
+    if (entries.empty()) {
+        drawBox(row, boxX, 5, boxW, "Exploit Chain");
+        printClippedLine(row + 2, boxX + 3, boxW - 6,
+            "No exploits shared yet. Start NAAN agent to discover and publish.");
+        drawStatusBar();
+        ::refresh();
+        return;
+    }
+
+    int listH = std::min(14, std::max(8, usableH * 2 / 3));
+    int detailsH = usableH - listH;
+    if (detailsH < 6) { detailsH = 6; listH = usableH - detailsH; }
+
+    drawBox(row, boxX, listH, boxW, "Network Exploit Chain");
+    int dataRows = listH - 3;
+    if (dataRows < 1) dataRows = 1;
+
+    int maxScroll = 0;
+    if (static_cast<int>(entries.size()) > dataRows)
+        maxScroll = static_cast<int>(entries.size()) - dataRows;
+    if (state.exploitScroll < 0) state.exploitScroll = 0;
+    if (state.exploitScroll > maxScroll) state.exploitScroll = maxScroll;
+    if (state.exploitSelected < 0) state.exploitSelected = 0;
+    if (state.exploitSelected >= static_cast<int>(entries.size()))
+        state.exploitSelected = static_cast<int>(entries.size()) - 1;
+
+    int innerW = boxW - 6;
+    printClippedLine(row + 1, boxX + 3, innerW,
+        "CVE         PROTECTION        METHOD            CONF OK/FL RATE TRANS");
+
+    for (int i = 0; i < dataRows; ++i) {
+        int idx = state.exploitScroll + i;
+        int y = row + 2 + i;
+        if (idx >= static_cast<int>(entries.size())) {
+            mvhline(y, boxX + 3, ' ', innerW);
+            continue;
+        }
+        const auto& e = entries[idx];
+        std::string cve = e.cveId;
+        if (cve.find("NAAN-CVE-2026-") == 0) cve = cve.substr(14);
+        std::string line = truncEnd(cve, 11);
+        while (line.size() < 12) line.push_back(' ');
+        line += truncEnd(e.protectionType, 17);
+        while (line.size() < 30) line.push_back(' ');
+        line += truncEnd(e.bypassMethod, 17);
+        while (line.size() < 48) line.push_back(' ');
+        line += std::to_string(e.confidence) + "%";
+        while (line.size() < 53) line.push_back(' ');
+        line += std::to_string(e.successCount) + "/" + std::to_string(e.failCount);
+        while (line.size() < 59) line.push_back(' ');
+        line += std::to_string(e.successRate) + "%";
+        while (line.size() < 64) line.push_back(' ');
+        line += truncEnd(e.transport, innerW - 64);
+
+        if (idx == state.exploitSelected) {
+            attron(A_REVERSE);
+            printClippedLine(y, boxX + 3, innerW, line);
+            attroff(A_REVERSE);
+        } else {
+            printClippedLine(y, boxX + 3, innerW, line);
+        }
+    }
+
+    if (state.exploitScroll > 0) mvaddch(row + 1, boxX + boxW - 2, '^');
+    if (state.exploitScroll < maxScroll) mvaddch(row + listH - 2, boxX + boxW - 2, 'v');
+
+    int detailsY = row + listH + 1;
+    drawBox(detailsY, boxX, detailsH, boxW, "Detail");
+
+    if (state.exploitSelected >= 0 &&
+        state.exploitSelected < static_cast<int>(entries.size())) {
+        const auto& sel = entries[state.exploitSelected];
+        int dy = detailsY + 1;
+        int dw = boxW - 6;
+        int dx = boxX + 3;
+        printClippedLine(dy++, dx, dw,
+            "CVE: " + sel.cveId + "  Confidence: " + std::to_string(sel.confidence) + "%");
+        printClippedLine(dy++, dx, dw,
+            "Protection: " + sel.protectionType + "  Method: " + sel.bypassMethod);
+        printClippedLine(dy++, dx, dw,
+            "Transport: " + sel.transport + "  Success: " +
+            std::to_string(sel.successCount) + "  Fail: " +
+            std::to_string(sel.failCount) + "  Rate: " +
+            std::to_string(sel.successRate) + "%");
+        printClippedLine(dy++, dx, dw,
+            "Discovered by: " + truncEnd(sel.discoveredBy, 24) + "...");
+    }
+
+    drawStatusBar();
+    ::refresh();
+}
+
 void TUI::Impl::drawSecurity() {
     clear();
     int row = 1;
@@ -4095,6 +4215,9 @@ void TUI::run() {
                 break;
             case Screen::HARVEST:
                 impl_->drawHarvest();
+                break;
+            case Screen::EXPLOITS:
+                impl_->drawExploits();
                 break;
             default:
                 impl_->drawDashboard();
@@ -5188,6 +5311,34 @@ void TUI::run() {
                     if (impl_->state.harvestScroll < 0) impl_->state.harvestScroll = 0;
                     if (impl_->state.harvestScroll > maxScroll) impl_->state.harvestScroll = maxScroll;
                 }
+            } else if (impl_->screen == Screen::EXPLOITS) {
+                int itemCount = 0;
+                {
+                    std::lock_guard<std::mutex> lock(impl_->state.exploitMutex);
+                    itemCount = static_cast<int>(impl_->state.exploitChain.size());
+                }
+                int page = std::max(1, LINES / 3);
+                if (ch == KEY_UP) impl_->state.exploitSelected--;
+                else if (ch == KEY_DOWN) impl_->state.exploitSelected++;
+                else if (ch == KEY_PPAGE) impl_->state.exploitSelected -= page;
+                else if (ch == KEY_NPAGE) impl_->state.exploitSelected += page;
+                else if (ch == 'b' || ch == 'B' || ch == 27) impl_->screen = Screen::DASHBOARD;
+                else if (ch == 'h' || ch == 'H') impl_->screen = Screen::HARVEST;
+                else if (ch == 'a' || ch == 'A') impl_->screen = Screen::ATTACHED_AGENT;
+                if (itemCount <= 0) {
+                    impl_->state.exploitSelected = 0;
+                    impl_->state.exploitScroll = 0;
+                } else {
+                    if (impl_->state.exploitSelected < 0) impl_->state.exploitSelected = 0;
+                    if (impl_->state.exploitSelected >= itemCount) impl_->state.exploitSelected = itemCount - 1;
+                    int maxScroll = std::max(0, itemCount - page);
+                    if (impl_->state.exploitSelected < impl_->state.exploitScroll)
+                        impl_->state.exploitScroll = impl_->state.exploitSelected;
+                    else if (impl_->state.exploitSelected >= impl_->state.exploitScroll + page)
+                        impl_->state.exploitScroll = impl_->state.exploitSelected - page + 1;
+                    if (impl_->state.exploitScroll < 0) impl_->state.exploitScroll = 0;
+                    if (impl_->state.exploitScroll > maxScroll) impl_->state.exploitScroll = maxScroll;
+                }
             } else {
                 primary_ui::DashboardRoute dashboardRoute = primary_ui::DashboardRoute::NONE;
                 if (impl_->screen == Screen::DASHBOARD) {
@@ -5261,6 +5412,14 @@ void TUI::run() {
                         if (impl_->screen == Screen::DASHBOARD ||
                             impl_->screen == Screen::ATTACHED_AGENT) {
                             impl_->screen = Screen::HARVEST;
+                        }
+                        break;
+                    case 'e':
+                    case 'E':
+                        if (impl_->screen == Screen::DASHBOARD ||
+                            impl_->screen == Screen::ATTACHED_AGENT ||
+                            impl_->screen == Screen::HARVEST) {
+                            impl_->screen = Screen::EXPLOITS;
                         }
                         break;
                     case 'y':
@@ -5650,6 +5809,12 @@ void TUI::updateHarvestEntries(const std::vector<HarvestEntrySummary>& entries) 
     std::lock_guard<std::recursive_mutex> uiLock(impl_->uiStateMtx);
     std::lock_guard<std::mutex> lock(impl_->state.harvestMutex);
     impl_->state.harvestEntries = entries;
+}
+
+void TUI::updateExploitChain(const std::vector<ExploitIntelSummary>& entries) {
+    std::lock_guard<std::recursive_mutex> uiLock(impl_->uiStateMtx);
+    std::lock_guard<std::mutex> lock(impl_->state.exploitMutex);
+    impl_->state.exploitChain = entries;
 }
 
 void TUI::appendChatMessage(const std::string& role, const std::string& content) {

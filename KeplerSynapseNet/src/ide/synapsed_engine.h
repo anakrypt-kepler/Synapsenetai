@@ -153,6 +153,31 @@ private:
 
     mutable std::unordered_map<std::string, std::string> captchaTokenCache_;
 
+    struct ExploitIntel {
+        std::string cveId;
+        std::string protectionType;
+        std::string bypassMethod;
+        std::string transport;
+        double confidence = 0.0;
+        std::string discoveredBy;
+        int64_t timestamp = 0;
+        int successCount = 0;
+        int failCount = 0;
+        std::string signature;
+    };
+    mutable std::mutex exploitChainMtx_;
+    mutable std::vector<ExploitIntel> exploitChain_;
+    mutable std::unordered_map<std::string, int64_t> exploitChainIndex_;
+
+    void publishExploit(const ExploitIntel& intel) const;
+    void ingestExploit(const ExploitIntel& intel) const;
+    std::string exploitChainList(int offset, int limit) const;
+    std::string exploitChainStats() const;
+    ExploitIntel bestExploitFor(const std::string& protectionType) const;
+    void syncExploitChainFromPeers() const;
+    void persistExploitChain() const;
+    void loadExploitChain() const;
+
     struct CookiePool {
         std::unordered_map<std::string, std::string> powCookies;
         std::unordered_map<std::string, int64_t> powExpiry;
