@@ -183,19 +183,65 @@ The consensus mechanism. Unlike Proof of Work (burn electricity) or Proof of Sta
 
 ## Build
 
+### Recommended: Tauri Desktop App
+
+The desktop app is the primary interface. It bundles the Svelte frontend, Rust FFI bridge, and connects to `libsynapsed` at runtime.
+
 ```bash
-# Dependencies (Ubuntu)
-sudo apt-get install build-essential cmake libssl-dev libncurses-dev libsqlite3-dev
+# Dependencies (Ubuntu/Debian)
+sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+# Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Node.js (>= 18)
+# https://nodejs.org/
 
-# Build
-cmake -S KeplerSynapseNet -B KeplerSynapseNet/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
-cmake --build KeplerSynapseNet/build --parallel 8
+cd KeplerSynapseNet/tauri-app
+npm ci
+npm run build
+cd src-tauri && cargo build --release
+```
 
-# Test
+The built app will be in `src-tauri/target/release/`.
+
+### Terminal UI (ncurses)
+
+For headless servers, SSH, or when you prefer the terminal:
+
+```bash
+# Dependencies (Ubuntu/Debian)
+sudo apt-get install -y build-essential cmake libssl-dev libncurses-dev libsqlite3-dev libsodium-dev
+
+# Build the node daemon with TUI
+cmake -S KeplerSynapseNet -B KeplerSynapseNet/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTS=ON \
+  -DBUILD_TUI=ON
+cmake --build KeplerSynapseNet/build --parallel $(nproc)
+
+# Run the tests
 ctest --test-dir KeplerSynapseNet/build --output-on-failure
 
-# Run
+# Run the node (terminal UI)
 TERM=xterm-256color ./KeplerSynapseNet/build/synapsed
+```
+
+### macOS
+
+```bash
+brew install cmake ncurses sqlite3 libsodium openssl
+cmake -S KeplerSynapseNet -B KeplerSynapseNet/build \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
+cmake --build KeplerSynapseNet/build --parallel $(sysctl -n hw.logicalcpu)
+```
+
+### Build with llama.cpp (local LLM inference)
+
+```bash
+cmake -S KeplerSynapseNet -B KeplerSynapseNet/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DUSE_LLAMA_CPP=ON \
+  -DBUILD_TESTS=ON
+cmake --build KeplerSynapseNet/build --parallel $(nproc)
 ```
 
 ---
@@ -223,6 +269,8 @@ See [DOCKER.md](KeplerSynapseNet/DOCKER.md) for configuration.
 | `F5` | Toggle web injection |
 | `F6` | Toggle onion sources |
 | `F7` | Toggle Tor for clearnet |
+| `H` | Knowledge Harvest browser |
+| `E` | Shared Exploit Intelligence |
 | `I` | Launch Terminal IDE |
 | `F3` | Clear chat |
 | `F8` | Stop generation |

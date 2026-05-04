@@ -4,6 +4,8 @@
 #include <array>
 #include <chrono>
 #include <regex>
+
+#define SYSTEM_IGNORE(cmd) do { (void)!system(cmd); } while(0)
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -283,7 +285,7 @@ void SynapsedEngine::generateTorrc() const {
     std::string rcPath = dataDir_ + "/torrc";
 
     std::string mkd = "mkdir -p " + dataPath;
-    system(mkd.c_str());
+    SYSTEM_IGNORE(mkd.c_str());
 
     std::ofstream f(rcPath);
     if (!f) return;
@@ -699,7 +701,7 @@ std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
             b64f.write(b64.c_str(), b64.size());
         }
         std::string decodeCmd = "base64 -d < " + tmpImg + ".b64 > " + tmpImg + " 2>/dev/null";
-        system(decodeCmd.c_str());
+        SYSTEM_IGNORE(decodeCmd.c_str());
         std::remove((tmpImg + ".b64").c_str());
     } else {
         if (imgUrl[0] == '/') return "";
@@ -707,7 +709,7 @@ std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
         std::string dlCmd = "curl -s --max-time 15 --socks5-hostname 127.0.0.1:9050 -L "
             "-c " + dataDir_ + "/tor_cookies.txt -b " + dataDir_ + "/tor_cookies.txt "
             "-o " + tmpImg + " \"" + imgUrl + "\" 2>/dev/null";
-        system(dlCmd.c_str());
+        SYSTEM_IGNORE(dlCmd.c_str());
     }
 
     std::string cnnModel = dataDir_ + "/captcha_cnn_model.pt";
@@ -898,7 +900,7 @@ std::string SynapsedEngine::downloadCaptchaImage(const std::string& imgUrl) cons
     std::string tmpImg = "" + dataDir_ + "/cap_" + std::to_string(nowMillis()) + ".png";
     std::string cmd = "curl -s --max-time 15 --socks5-hostname 127.0.0.1:9050 -L -o " +
                       tmpImg + " \"" + imgUrl + "\" 2>/dev/null";
-    system(cmd.c_str());
+    SYSTEM_IGNORE(cmd.c_str());
     std::ifstream check(tmpImg);
     if (!check.good()) return "";
     return tmpImg;
@@ -909,7 +911,7 @@ std::string SynapsedEngine::classifyImage(const std::string& imgPath) const {
     std::string cmd = "convert " + imgPath +
         " -resize 224x224! -colorspace Gray -normalize " +
         preprocessed + " 2>/dev/null";
-    system(cmd.c_str());
+    SYSTEM_IGNORE(cmd.c_str());
 
     std::string result = execCmd(
         "tesseract " + preprocessed + " stdout --psm 13 2>/dev/null");
@@ -949,7 +951,7 @@ std::string SynapsedEngine::solveTextCaptchaCyrillic(const std::string& imgUrl) 
     if (tmpImg.empty()) return "";
 
     std::string preprocessed = tmpImg + "_clean.png";
-    system(("convert " + tmpImg +
+    SYSTEM_IGNORE(("convert " + tmpImg +
             " -colorspace Gray -blur 0x1 -threshold 50% -morphology Open Square "
             + preprocessed + " 2>/dev/null").c_str());
 
@@ -1045,7 +1047,7 @@ std::string SynapsedEngine::solveClockCaptcha(const std::string& imgUrl) const {
     if (tmpImg.empty()) return "";
 
     std::string grayImg = tmpImg + "_gray.png";
-    system(("convert " + tmpImg +
+    SYSTEM_IGNORE(("convert " + tmpImg +
             " -colorspace Gray -blur 0x2 -canny 0x1+10%+30% " +
             grayImg + " 2>/dev/null").c_str());
 
@@ -2130,7 +2132,7 @@ void SynapsedEngine::primeCookieJar() const {
             "-b " + dataDir_ + "/clearnet_cookies.txt "
             "-H \"User-Agent: Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0\" "
             "\"" + u + "\" -o /dev/null 2>/dev/null";
-        system(cmd.c_str());
+        SYSTEM_IGNORE(cmd.c_str());
         cookiePool_.sessionCookies[u] = "primed";
     }
 }
@@ -2256,11 +2258,11 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
             std::this_thread::sleep_for(std::chrono::seconds(waitSec));
 
             if (isEndGameQueue && attempt == 0) {
-                system("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
+                SYSTEM_IGNORE("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
                        "nc 127.0.0.1 9051 2>/dev/null");
                 std::this_thread::sleep_for(std::chrono::seconds(8));
             } else if (attempt > 0 && attempt % 2 == 0) {
-                system("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
+                SYSTEM_IGNORE("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
                        "nc 127.0.0.1 9051 2>/dev/null");
                 std::this_thread::sleep_for(std::chrono::seconds(5));
             }
@@ -2675,7 +2677,7 @@ std::string SynapsedEngine::exploitCVE0001_PowCookieReplay(
 
     std::string cookieFile = dataDir_ + "/pow_replay_cookies.txt";
     std::string writeCmd = "echo '" + it->second + "' > " + cookieFile;
-    system(writeCmd.c_str());
+    SYSTEM_IGNORE(writeCmd.c_str());
 
     std::string cmd = "curl -s -k --max-time 45 --socks5-hostname 127.0.0.1:9050 -L "
         "-b " + cookieFile + " "
@@ -2701,7 +2703,7 @@ std::string SynapsedEngine::exploitCVE0002_QueueRace(
     std::string cookieFile = dataDir_ + "/queue_race_cookies.txt";
     std::string ua = randomUserAgent();
 
-    system("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
+    SYSTEM_IGNORE("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
            "nc 127.0.0.1 9051 2>/dev/null");
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
@@ -2727,7 +2729,7 @@ std::string SynapsedEngine::exploitCVE0002_QueueRace(
         }
     }
 
-    system("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
+    SYSTEM_IGNORE("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
            "nc 127.0.0.1 9051 2>/dev/null");
     std::this_thread::sleep_for(std::chrono::seconds(8));
 
@@ -3007,7 +3009,7 @@ std::string SynapsedEngine::exploitCVE0009_CookieConfusion(
             "-c " + cookieFile + " -b " + cookieFile + " "
             "-H \"User-Agent: " + randomUserAgent() + "\" "
             "\"" + seedUrl + "\" >/dev/null 2>&1";
-        system(seedCmd.c_str());
+        SYSTEM_IGNORE(seedCmd.c_str());
     }
 
     std::string cmd = "curl -s -k --max-time 45 --socks5-hostname 127.0.0.1:9050 -L "
@@ -3092,7 +3094,7 @@ std::string SynapsedEngine::exploitCVE0013_QueueNewnym(
     if (!isUrlSafe(url)) return "";
     if (url.find(".onion") == std::string::npos) return "";
 
-    system("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
+    SYSTEM_IGNORE("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
            "nc 127.0.0.1 9151 2>/dev/null");
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
@@ -3218,7 +3220,7 @@ std::string SynapsedEngine::solveCaptchaViaLLM(const std::string& html,
     std::string cmd = "cd " + dataDir_ + " && echo '" + prompt.substr(0, 500) +
                       "' | timeout 30 llama-cli -m " + modelPath_ +
                       " -n 32 -p - 2>/dev/null | tail -1 > " + tmpResp;
-    system(cmd.c_str());
+    SYSTEM_IGNORE(cmd.c_str());
 
     std::ifstream respFile(tmpResp);
     std::string answer;
@@ -3597,7 +3599,7 @@ void SynapsedEngine::ensureSigningKey() const {
     std::ifstream check(keyPath);
     if (check.good()) return;
     std::string cmd = "openssl genpkey -algorithm ed25519 -out " + keyPath + " 2>/dev/null";
-    system(cmd.c_str());
+    SYSTEM_IGNORE(cmd.c_str());
 }
 
 std::string SynapsedEngine::ed25519Sign(const std::string& data) const {
@@ -3611,7 +3613,7 @@ std::string SynapsedEngine::ed25519Sign(const std::string& data) const {
     }
     std::string cmd = "openssl pkeyutl -sign -rawin -inkey " + keyPath +
                       " -in " + tmpIn + " -out " + tmpOut + " 2>/dev/null";
-    system(cmd.c_str());
+    SYSTEM_IGNORE(cmd.c_str());
     std::ifstream sf(tmpOut, std::ios::binary);
     std::string sig;
     if (sf) {
@@ -3633,7 +3635,7 @@ std::string SynapsedEngine::ed25519Sign(const std::string& data) const {
 void SynapsedEngine::persistDraft(const NaanDraft& d, const std::string& hash) const {
     std::string dir = dataDir_ + "/knowledge";
     std::string mkd = "mkdir -p " + dir;
-    system(mkd.c_str());
+    SYSTEM_IGNORE(mkd.c_str());
     std::string hash12 = hash.size() >= 12 ? hash.substr(0, 12) : hash;
     std::string fname = dir + "/draft_" + std::to_string(nowMillis()) + "_" + hash12 + ".json";
     std::ofstream f(fname);
@@ -3811,7 +3813,7 @@ SynapsedEngine::HarvestPayload SynapsedEngine::extractAssets(
     }
 
     std::string assetsDir = dataDir_ + "/knowledge/assets";
-    system(("mkdir -p " + assetsDir).c_str());
+    SYSTEM_IGNORE(("mkdir -p " + assetsDir).c_str());
     bool isOnion = baseUrl.find(".onion") != std::string::npos;
     int downloaded = 0;
 
@@ -3854,7 +3856,7 @@ SynapsedEngine::HarvestPayload SynapsedEngine::extractAssets(
 
         if (verdict.find("malicious") != std::string::npos) {
             std::string quarDir = dataDir_ + "/knowledge/quarantine";
-            system(("mkdir -p " + quarDir).c_str());
+            SYSTEM_IGNORE(("mkdir -p " + quarDir).c_str());
             std::rename(finalPath.c_str(), (quarDir + "/" + sha + ext).c_str());
             finalPath = quarDir + "/" + sha + ext;
         }
@@ -3898,7 +3900,7 @@ std::string SynapsedEngine::downloadAsset(const std::string& url, bool isOnion,
               "-H \"User-Agent: " + randomUserAgent() + "\" "
               "-o \"" + tmpPath + "\" \"" + url + "\" 2>/dev/null";
     }
-    system(cmd.c_str());
+    SYSTEM_IGNORE(cmd.c_str());
 
     std::ifstream check(tmpPath, std::ios::binary | std::ios::ate);
     if (!check.good() || check.tellg() == 0) {
@@ -3992,7 +3994,7 @@ std::string SynapsedEngine::vtScanFile(const std::string& sha256,
 void SynapsedEngine::persistHarvest(const NaanDraft& d, const std::string& hash,
     const HarvestPayload& payload) const {
     std::string dir = dataDir_ + "/knowledge";
-    system(("mkdir -p " + dir).c_str());
+    SYSTEM_IGNORE(("mkdir -p " + dir).c_str());
     std::string hash12 = hash.size() >= 12 ? hash.substr(0, 12) : hash;
     std::string fname = dir + "/harvest_" + std::to_string(nowMillis()) + "_" + hash12 + ".json";
     std::ofstream f(fname);
