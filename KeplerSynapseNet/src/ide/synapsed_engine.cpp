@@ -484,6 +484,8 @@ int SynapsedEngine::init(const std::string& configPath) {
     const char* home = std::getenv("HOME");
     dataDir_ = home ? std::string(home) + "/.synapsenet" : "/tmp/.synapsenet";
 
+    walletAddress_ = "ngt1" + sha256Hex(nodeId_ + std::to_string(startTime_)).substr(0, 40);
+
     generateTorrc();
 
     auto ti = queryTorControl();
@@ -539,8 +541,48 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
     if (method == "model.status") return modelStatus();
 
     if (method == "wallet.info") {
+        if (walletAddress_.empty()) {
+            walletAddress_ = "ngt1" + sha256Hex(nodeId_ + std::to_string(startTime_)).substr(0, 40);
+        }
         return "{\"address\":\"" + jsonEscape(walletAddress_) +
                "\",\"balance\":\"" + balance_ + "\"}";
+    }
+
+    if (method == "wallet.create") {
+        if (walletAddress_.empty()) {
+            walletAddress_ = "ngt1" + sha256Hex(nodeId_ + std::to_string(startTime_)).substr(0, 40);
+        }
+        return "{\"address\":\"" + jsonEscape(walletAddress_) + "\",\"ok\":true}";
+    }
+
+    if (method == "wallet.seed") {
+        std::string seed = sha256Hex(nodeId_ + walletAddress_ + "seed");
+        std::string words;
+        static const char* wordlist[] = {
+            "abandon","ability","able","about","above","absent","absorb","abstract",
+            "absurd","abuse","access","accident","account","accuse","achieve","acid",
+            "acquire","across","act","action","actor","actual","adapt","add"
+        };
+        for (int i = 0; i < 12; i++) {
+            if (i > 0) words += " ";
+            unsigned val = 0;
+            for (int j = 0; j < 2; j++) {
+                char c = seed[(i * 2 + j) % seed.size()];
+                val = val * 16 + (c >= 'a' ? c - 'a' + 10 : c - '0');
+            }
+            words += wordlist[val % 24];
+        }
+        return "{\"seed\":\"" + words + "\"}";
+    }
+
+    if (method == "wallet.export") {
+        std::string path = dataDir_ + "/wallet_export.dat";
+        std::ofstream out(path);
+        if (out) {
+            out << walletAddress_ << "\n" << nodeId_ << "\n";
+            out.close();
+        }
+        return "{\"ok\":true,\"path\":\"" + jsonEscape(path) + "\"}";
     }
 
     if (method == "network.info") {
@@ -644,7 +686,7 @@ std::string SynapsedEngine::getStatus() const {
        << "\",\"peers\":" << peerCount_
        << ",\"balance\":\"" << balance_
        << "\",\"naan_state\":\"" << naanState_
-       << "\",\"last_block\":0"
+       << "\",\"last_block\":" << naanSubmissions_
        << ",\"model_loaded\":" << (modelLoaded_ ? "true" : "false")
        << ",\"model_name\":\"" << jsonEscape(modelName_)
        << "\",\"tor_bootstrap\":\"" << jsonEscape(torBootstrap_)
@@ -4555,7 +4597,17 @@ std::string SynapsedEngine::naanStatus() const {
            << "\",\"status\":\"" << naanHist_[i].status
            << "\",\"ngt\":" << naanHist_[i].ngt << "}";
     }
-    ss << "]}";
+    ss << "]"
+       << ",\"current_task\":\"" << (naanRunning_.load() ? "researching" : "") << "\""
+       << ",\"config\":{\"topics\":\"";
+    for (size_t i = 0; i < cfgTopics_.size(); i++) {
+        if (i) ss << ", ";
+        ss << cfgTopics_[i];
+    }
+    ss << "\",\"sources\":\"both\""
+       << ",\"tick_interval\":" << naanTickInterval_
+       << ",\"budget_limit\":\"" << std::fixed << naanBudgetPerEpoch_ << "\"}"
+       << "}";
     return ss.str();
 }
 

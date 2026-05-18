@@ -6,10 +6,9 @@
   let walletAddress = "";
   let seedVisible = false;
   let seedPhrase = "";
-  let passwordInput = "";
-  let passwordRequired = false;
   let copied = false;
   let qrSvg = "";
+  let loading = true;
 
   async function loadWalletInfo() {
     try {
@@ -18,36 +17,32 @@
       walletAddress = info.address || "";
       if (walletAddress) qrSvg = generateQRSvg(walletAddress, 3);
     } catch {}
+    loading = false;
   }
 
   loadWalletInfo();
 
   function copyAddress() {
+    if (!walletAddress) return;
     navigator.clipboard.writeText(walletAddress);
     copied = true;
     setTimeout(() => (copied = false), 2000);
   }
 
-  async function showSeed() {
-    passwordRequired = true;
-  }
-
-  async function confirmShowSeed() {
+  async function toggleSeed() {
+    if (seedVisible) {
+      seedVisible = false;
+      seedPhrase = "";
+      return;
+    }
     try {
-      const result = await rpcCall("wallet.seed", JSON.stringify({ password: passwordInput }));
+      const result = await rpcCall("wallet.seed", "{}");
       const parsed = JSON.parse(result);
       seedPhrase = parsed.seed || "";
       seedVisible = true;
-      passwordRequired = false;
-      passwordInput = "";
     } catch {
       seedPhrase = "";
     }
-  }
-
-  function hideSeed() {
-    seedVisible = false;
-    seedPhrase = "";
   }
 
   async function exportWallet() {
@@ -79,10 +74,12 @@
   <div class="card">
     <div class="card-header">ADDRESS</div>
     <div class="address-row">
-      <code class="address-text">{walletAddress || "..."}</code>
-      <button class="btn-secondary" on:click={copyAddress}>
-        {copied ? "OK" : "[ COPY ]"}
-      </button>
+      <code class="address-text">{walletAddress || (loading ? "LOADING..." : "NO WALLET")}</code>
+      {#if walletAddress}
+        <button class="btn-secondary" on:click={copyAddress}>
+          {copied ? "COPIED" : "[ COPY ]"}
+        </button>
+      {/if}
     </div>
   </div>
 
@@ -92,25 +89,21 @@
       {#if qrSvg}
         {@html qrSvg}
       {:else}
-        <div class="qr-empty">NO ADDRESS</div>
+        <div class="qr-empty">{loading ? "LOADING..." : "NO ADDRESS"}</div>
       {/if}
     </div>
   </div>
 
   <div class="section-title">SEED PHRASE</div>
-  {#if !seedVisible && !passwordRequired}
-    <button class="btn-secondary" on:click={showSeed}>[ SHOW SEED ]</button>
-  {/if}
-  {#if passwordRequired}
-    <div class="form-group">
-      <label>ENTER PASSWORD</label>
-      <input type="password" bind:value={passwordInput} placeholder="..." />
-    </div>
-    <button class="btn-primary" on:click={confirmShowSeed}>[ CONFIRM ]</button>
-  {/if}
-  {#if seedVisible}
+  <button class="btn-secondary seed-toggle" on:click={toggleSeed}>
+    {#if seedVisible}
+      <span class="eye">&#x1F441;</span> [ HIDE SEED ]
+    {:else}
+      <span class="eye-closed">&#x2014;</span> [ SHOW SEED ]
+    {/if}
+  </button>
+  {#if seedVisible && seedPhrase}
     <div class="seed-display">{seedPhrase}</div>
-    <button class="btn-secondary" on:click={hideSeed}>[ HIDE ]</button>
   {/if}
 
   <div class="section-title">MANAGE</div>
@@ -147,6 +140,16 @@
     color: var(--text-secondary);
   }
 
+  .seed-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .eye, .eye-closed {
+    font-size: 12px;
+  }
+
   .seed-display {
     padding: 12px;
     border: 1px solid var(--warn);
@@ -155,6 +158,7 @@
     line-height: 2;
     word-spacing: 4px;
     color: var(--text-primary);
+    margin-top: 8px;
     margin-bottom: 8px;
   }
 </style>

@@ -28,13 +28,19 @@
     try {
       const result = await rpcCall("naan.status", "{}");
       const parsed = JSON.parse(result);
-      agentStatus = parsed.status || "OFF";
-      agentScore = parsed.score || agentScore;
+      agentStatus = (parsed.state || "off").toUpperCase();
+      agentScore = {
+        band: parsed.approval_rate > 80 ? "A" : parsed.approval_rate > 50 ? "B" : parsed.approval_rate > 0 ? "C" : "-",
+        submissions: parsed.submissions || 0,
+        approval_rate: (parsed.approval_rate != null ? Math.round(parsed.approval_rate) + "%" : "0%"),
+      };
       currentTask = parsed.current_task || "";
       draftQueue = parsed.draft_queue || [];
-      submissionHistory = parsed.history || [];
+      submissionHistory = (parsed.history || []).map((h: any) => ({
+        title: h.title, result: h.status, ngt_earned: h.ngt?.toFixed(2) || "0",
+      }));
       observatory = parsed.observatory || [];
-      agentLog = parsed.log || agentLog;
+      agentLog = (parsed.log || []).map((e: any) => ({ ts: e.ts, msg: e.text || e.msg || "" }));
       if (parsed.config) {
         topicPreferences = parsed.config.topics || topicPreferences;
         researchSources = parsed.config.sources || researchSources;
