@@ -565,8 +565,7 @@ RpcResponse RpcServer::Impl::processRequest(const RpcRequest& request) {
     
     const RpcMethod& method = it->second;
     
-    const bool requireAuth = method.requiresAuth || static_cast<bool>(authCallback);
-    if (requireAuth) {
+    if (method.requiresAuth) {
         if (request.authToken.empty()) {
             response.errorCode = static_cast<int>(RpcErrorCode::UNAUTHORIZED);
             response.errorMessage = "Authentication required";
