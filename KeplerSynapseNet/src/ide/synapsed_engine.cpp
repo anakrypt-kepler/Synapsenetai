@@ -1,5 +1,6 @@
 #include "ide/synapsed_engine.h"
 #include "crypto/keys.h"
+#include "../third_party/llama.cpp/vendor/nlohmann/json.hpp"
 
 #include <algorithm>
 #include <array>
@@ -438,11 +439,23 @@ void SynapsedEngine::announceToSeed(const std::string& seedOnion, uint16_t port)
         return;
     }
 
-    // SOCKS5 handshake
-    uint8_t greeting[] = {0x05, 0x01, 0x00};
-    send(fd, (char*)greeting, 3, 0);
+    // SOCKS5 handshake (offer both no-auth and username/password)
+    uint8_t greeting[] = {0x05, 0x02, 0x00, 0x02};
+    send(fd, (char*)greeting, 4, 0);
     uint8_t gresp[2];
-    if (recv(fd, (char*)gresp, 2, 0) != 2 || gresp[1] != 0x00) {
+    if (recv(fd, (char*)gresp, 2, 0) != 2 || gresp[0] != 0x05) {
+        CLOSESOCK(fd);
+        return;
+    }
+    if (gresp[1] == 0x02) {
+        uint8_t auth[] = {0x01, 0x00, 0x00};
+        send(fd, (char*)auth, 3, 0);
+        uint8_t aresp[2];
+        if (recv(fd, (char*)aresp, 2, 0) != 2 || aresp[1] != 0x00) {
+            CLOSESOCK(fd);
+            return;
+        }
+    } else if (gresp[1] != 0x00) {
         CLOSESOCK(fd);
         return;
     }
@@ -471,6 +484,95 @@ void SynapsedEngine::announceToSeed(const std::string& seedOnion, uint16_t port)
     recv(fd, buf, sizeof(buf) - 1, 0);
 
     CLOSESOCK(fd);
+}
+
+void SynapsedEngine::fetchBlocksFromSeed(const std::string& seedOnion) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return;
+
+    struct timeval tv{15, 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(9050);
+    inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr);
+
+    if (connect(fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) {
+        CLOSESOCK(fd);
+        return;
+    }
+
+    // SOCKS5 handshake
+    uint8_t greeting[] = {0x05, 0x02, 0x00, 0x02};
+    send(fd, (char*)greeting, 4, 0);
+    uint8_t gresp[2];
+    if (recv(fd, (char*)gresp, 2, 0) != 2 || gresp[0] != 0x05) { CLOSESOCK(fd); return; }
+    if (gresp[1] == 0x02) {
+        uint8_t auth[] = {0x01, 0x00, 0x00};
+        send(fd, (char*)auth, 3, 0);
+        uint8_t aresp[2];
+        if (recv(fd, (char*)aresp, 2, 0) != 2 || aresp[1] != 0x00) { CLOSESOCK(fd); return; }
+    } else if (gresp[1] != 0x00) { CLOSESOCK(fd); return; }
+
+    // SOCKS5 connect to RPC port 8332
+    std::vector<uint8_t> req;
+    req.push_back(0x05); req.push_back(0x01); req.push_back(0x00); req.push_back(0x03);
+    req.push_back((uint8_t)seedOnion.size());
+    req.insert(req.end(), seedOnion.begin(), seedOnion.end());
+    uint16_t rpcPort = 8332;
+    req.push_back((rpcPort >> 8) & 0xFF);
+    req.push_back(rpcPort & 0xFF);
+    send(fd, (char*)req.data(), req.size(), 0);
+
+    uint8_t resp[10];
+    ssize_t n = recv(fd, (char*)resp, sizeof(resp), 0);
+    if (n < 2 || resp[1] != 0x00) { CLOSESOCK(fd); return; }
+
+    // Send HTTP RPC request for blocks.list
+    std::string body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"blocks.list\",\"params\":{}}";
+    std::string httpReq = "POST / HTTP/1.1\r\nHost: " + seedOnion + ":8332\r\n"
+        "Content-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) + "\r\n"
+        "Connection: close\r\n\r\n" + body;
+    send(fd, httpReq.c_str(), httpReq.size(), 0);
+
+    // Read HTTP response
+    std::string response;
+    char buf[4096];
+    while (true) {
+        ssize_t r = recv(fd, buf, sizeof(buf) - 1, 0);
+        if (r <= 0) break;
+        buf[r] = '\0';
+        response += buf;
+    }
+    CLOSESOCK(fd);
+
+    // Extract JSON body after \r\n\r\n
+    auto bodyPos = response.find("\r\n\r\n");
+    if (bodyPos == std::string::npos) return;
+    std::string jsonBody = response.substr(bodyPos + 4);
+
+    // Parse and write blocks to blocks.jsonl
+    try {
+        auto parsed = nlohmann::json::parse(jsonBody);
+        if (!parsed.contains("result") || !parsed["result"].contains("blocks")) return;
+        auto& blocks = parsed["result"]["blocks"];
+        if (!blocks.is_array() || blocks.empty()) return;
+
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            lastBlockHeight_ = parsed["result"].value("height", (uint64_t)0);
+            seedPeerCount_ = blocks.size();
+        }
+
+        std::ofstream blkf(dataDir_ + "/blocks.jsonl", std::ios::trunc);
+        if (!blkf.good()) return;
+        // Write in reverse so newest-first in file matches newest-first in array
+        for (const auto& b : blocks) {
+            blkf << b.dump() << "\n";
+        }
+    } catch (...) {}
 }
 
 int SynapsedEngine::init(const std::string& configPath) {
@@ -536,13 +638,26 @@ int SynapsedEngine::init(const std::string& configPath) {
 
         startOnionService();
 
-        // Announce to seeds in background
+        // Announce to seeds and fetch blocks in background
         if (!ownOnion_.empty()) {
             std::thread([this]() {
                 announceToSeed("nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion", 8333);
                 announceToSeed("ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion", 8333);
             }).detach();
         }
+
+        // Periodically fetch blocks from VPS seeds
+        blockFetchStop_ = false;
+        blockFetchThread_ = std::thread([this]() {
+            while (!blockFetchStop_.load()) {
+                fetchBlocksFromSeed("nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion");
+                if (blockFetchStop_.load()) break;
+                fetchBlocksFromSeed("ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion");
+                if (blockFetchStop_.load()) break;
+                for (int s = 0; s < 10 && !blockFetchStop_.load(); ++s)
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+        });
     } else {
         connectionType_ = "clearnet";
     }
@@ -554,6 +669,8 @@ int SynapsedEngine::init(const std::string& configPath) {
 void SynapsedEngine::shutdown() {
     stopNaan();
     stopListener();
+    blockFetchStop_ = true;
+    if (blockFetchThread_.joinable()) blockFetchThread_.join();
     std::lock_guard<std::mutex> lock(mtx_);
     if (!initialized_) return;
     initialized_ = false;

@@ -65,6 +65,8 @@ public:
     virtual std::string handleRpcNodeSeeds(const std::string& params) = 0;
     virtual std::string handleRpcNodeDiscoveryStats(const std::string& params) = 0;
     virtual std::string handleRpcNodeTorControl(const std::string& params) = 0;
+    virtual std::string handleRpcBlocksList(const std::string& params) = 0;
+    virtual std::string handleRpcBlocksGet(const std::string& params) = 0;
 };
 
 void registerCoreRpcMethods(web::RpcServer& server, RpcCommandHandlerProvider& provider);

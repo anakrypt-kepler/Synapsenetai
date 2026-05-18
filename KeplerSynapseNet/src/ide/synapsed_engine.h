@@ -277,6 +277,11 @@ private:
     void stopListener() const;
     void p2pListenerLoop() const;
     void announceToSeed(const std::string& seedOnion, uint16_t port) const;
+    void fetchBlocksFromSeed(const std::string& seedOnion);
+    mutable std::atomic<uint64_t> lastBlockHeight_{0};
+    mutable std::atomic<uint32_t> seedPeerCount_{0};
+    mutable std::thread blockFetchThread_;
+    mutable std::atomic<bool> blockFetchStop_{false};
 
     bool modelLoaded_ = false;
     std::string modelName_;

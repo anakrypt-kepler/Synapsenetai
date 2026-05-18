@@ -69,6 +69,8 @@ constexpr RpcMethodSpec kRpcMethodSpecs[] = {
     {"node.seeds", &RpcCommandHandlerProvider::handleRpcNodeSeeds, false, 300},
     {"node.discovery.stats", &RpcCommandHandlerProvider::handleRpcNodeDiscoveryStats, false, 300},
     {"node.tor.control", &RpcCommandHandlerProvider::handleRpcNodeTorControl, true, 30},
+    {"blocks.list", &RpcCommandHandlerProvider::handleRpcBlocksList, false, 300},
+    {"blocks.get", &RpcCommandHandlerProvider::handleRpcBlocksGet, false, 300},
 };
 
 } // namespace

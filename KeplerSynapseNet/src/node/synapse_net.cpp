@@ -2064,6 +2064,99 @@ std::string handleRpcNodeSeeds(const std::string& paramsJson) {
     return rpc::buildRpcNodeSeedsResponse(inputs);
 }
 
+std::string handleRpcBlocksList(const std::string& paramsJson) {
+    if (!ledger_) return "{\"blocks\":[],\"height\":0,\"total_events\":0,\"avg_events_per_block\":0,\"producers\":[]}";
+    auto params = parseRpcParams(paramsJson);
+    size_t limit = params.value("limit", 50);
+
+    auto stats = ledger_->getStats();
+    json out;
+    out["height"] = stats.totalBlocks;
+    out["total_events"] = stats.totalEvents;
+    out["avg_events_per_block"] = stats.avgEventsPerBlock;
+
+    auto recent = ledger_->getRecentBlocks(limit);
+    json blocksArr = json::array();
+    std::map<std::string, std::pair<uint64_t, uint64_t>> producerMap;
+    for (const auto& b : recent) {
+        json bj;
+        bj["height"] = b.height;
+        bj["hash"] = crypto::toHex(b.hash);
+        bj["prev_hash"] = crypto::toHex(b.prevHash);
+        bj["timestamp"] = b.timestamp * 1000;
+        std::string prod = addressFromPubKey(b.producer);
+        if (prod.empty()) prod = crypto::toHex(b.producer);
+        bj["producer"] = prod;
+        bj["events"] = b.events.size();
+        bj["difficulty"] = b.difficulty;
+        bj["nonce"] = b.nonce;
+        bj["size"] = b.events.size() * 128;
+        blocksArr.push_back(bj);
+        if (!prod.empty()) {
+            auto& ps = producerMap[prod];
+            ps.first++;
+            if (b.timestamp > ps.second) ps.second = b.timestamp;
+        }
+    }
+    out["blocks"] = blocksArr;
+
+    json prodArr = json::array();
+    for (const auto& [addr, pstats] : producerMap) {
+        json pj;
+        pj["address"] = addr;
+        pj["blocks"] = pstats.first;
+        pj["last_block"] = pstats.second * 1000;
+        prodArr.push_back(pj);
+    }
+    out["producers"] = prodArr;
+    return out.dump();
+}
+
+std::string handleRpcBlocksGet(const std::string& paramsJson) {
+    if (!ledger_) throw std::runtime_error("ledger not ready");
+    auto params = parseRpcParams(paramsJson);
+    uint64_t height = params.value("height", 0);
+    auto b = ledger_->getBlock(height);
+    if (b.height != height) throw std::runtime_error("block not found");
+
+    json out;
+    out["height"] = b.height;
+    out["hash"] = crypto::toHex(b.hash);
+    out["prev_hash"] = crypto::toHex(b.prevHash);
+    out["timestamp"] = b.timestamp * 1000;
+    crypto::PublicKey prodKey{};
+    std::memcpy(prodKey.data(), b.producer.data(), std::min(prodKey.size(), b.producer.size()));
+    std::string prod = addressFromPubKey(prodKey);
+    if (prod.empty()) prod = crypto::toHex(b.producer);
+    out["producer"] = prod;
+    out["difficulty"] = b.difficulty;
+    out["nonce"] = b.nonce;
+    json evArr = json::array();
+    for (const auto& ev : b.events) {
+        json ej;
+        const char* tname = "unknown";
+        switch (ev.type) {
+            case core::EventType::GENESIS: tname = "genesis"; break;
+            case core::EventType::KNOWLEDGE: tname = "knowledge"; break;
+            case core::EventType::TRANSFER: tname = "transfer"; break;
+            case core::EventType::VALIDATION: tname = "validation"; break;
+            case core::EventType::POE_ENTRY: tname = "poe_entry"; break;
+            case core::EventType::POE_VOTE: tname = "poe_vote"; break;
+            case core::EventType::PENALTY: tname = "penalty"; break;
+            case core::EventType::MODEL_REGISTER: tname = "model_register"; break;
+            case core::EventType::IDENTITY_BIND: tname = "identity_bind"; break;
+            default: break;
+        }
+        ej["type"] = tname;
+        ej["author"] = crypto::toHex(ev.author);
+        ej["hash"] = crypto::toHex(ev.hash);
+        ej["ts"] = ev.timestamp * 1000;
+        evArr.push_back(ej);
+    }
+    out["events"] = evArr;
+    return out.dump();
+}
+
 std::string handleRpcNodeDiscoveryStats(const std::string& paramsJson) {
     (void)paramsJson;
     if (!discovery_) {
