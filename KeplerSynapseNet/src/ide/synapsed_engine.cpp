@@ -903,8 +903,9 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         if (colon == std::string::npos) return "{\"error\":\"bad json\"}";
         int targetH = std::atoi(paramsJson.c_str() + colon + 1);
 
-        std::ifstream bf(dataDir_ + "/blocks.jsonl");
-        if (bf.good()) {
+        auto searchFile = [&](const std::string& path) -> std::string {
+            std::ifstream bf(path);
+            if (!bf.good()) return "";
             std::string line;
             while (std::getline(bf, line)) {
                 if (line.empty()) continue;
@@ -922,7 +923,11 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                     }
                 }
             }
-        }
+            return "";
+        };
+        std::string result = searchFile(dataDir_ + "/blocks.jsonl");
+        if (result.empty()) result = searchFile(dataDir_ + "/naan_blocks.jsonl");
+        if (!result.empty()) return result;
         return "{\"error\":\"block not found\"}";
     }
 
