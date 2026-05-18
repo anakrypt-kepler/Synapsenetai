@@ -127,6 +127,49 @@ bool torRateLimit(const std::string& domain) {
     return true;
 }
 
+bool probeSocks5(const std::string& onionHost, uint16_t port, int socksPort = 9050) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+
+    struct timeval tv{3, 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(socksPort);
+    inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr);
+
+    if (connect(fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) {
+        CLOSESOCK(fd);
+        return false;
+    }
+
+    uint8_t greeting[] = {0x05, 0x01, 0x00};
+    send(fd, (char*)greeting, 3, 0);
+    uint8_t gresp[2];
+    if (recv(fd, (char*)gresp, 2, 0) != 2 || gresp[1] != 0x00) {
+        CLOSESOCK(fd);
+        return false;
+    }
+
+    std::vector<uint8_t> req;
+    req.push_back(0x05);
+    req.push_back(0x01);
+    req.push_back(0x00);
+    req.push_back(0x03);
+    req.push_back((uint8_t)onionHost.size());
+    req.insert(req.end(), onionHost.begin(), onionHost.end());
+    req.push_back((port >> 8) & 0xFF);
+    req.push_back(port & 0xFF);
+    send(fd, (char*)req.data(), req.size(), 0);
+
+    uint8_t resp[10];
+    ssize_t n = recv(fd, (char*)resp, sizeof(resp), 0);
+    CLOSESOCK(fd);
+    return (n >= 2 && resp[1] == 0x00);
+}
+
 }
 
 SynapsedEngine::SynapsedEngine() = default;
@@ -136,6 +179,46 @@ SynapsedEngine::~SynapsedEngine() { shutdown(); }
 SynapsedEngine& SynapsedEngine::instance() {
     static SynapsedEngine eng;
     return eng;
+}
+
+void SynapsedEngine::probeSeedNodes() const {
+    int64_t now = nowMillis();
+    if (now - lastPeerProbe_ < 15000 && !cachedPeers_.empty()) return;
+    lastPeerProbe_ = now;
+
+    struct SeedDef { const char* addr; uint16_t port; };
+    static const SeedDef seeds[] = {
+        {"nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion", 8333},
+        {"ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion", 8333},
+    };
+
+    std::vector<PeerEntry> peers;
+
+    PeerEntry self;
+    self.address = nodeId_.substr(0, 8) + "...@local:8333";
+    self.transport = "tor";
+    self.latency_ms = 0;
+    self.role = "local";
+    self.alive = true;
+    peers.push_back(self);
+
+    for (const auto& s : seeds) {
+        PeerEntry pe;
+        pe.address = std::string(s.addr) + ":" + std::to_string(s.port);
+        pe.transport = "tor";
+        pe.role = "seed";
+
+        auto t0 = std::chrono::steady_clock::now();
+        pe.alive = probeSocks5(s.addr, s.port);
+        auto t1 = std::chrono::steady_clock::now();
+        pe.latency_ms = pe.alive
+            ? (int)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
+            : 0;
+
+        peers.push_back(pe);
+    }
+
+    cachedPeers_ = std::move(peers);
 }
 
 int SynapsedEngine::init(const std::string& configPath) {
@@ -199,14 +282,26 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
 
     if (method == "network.info") {
         auto ti = queryTorControl();
+        probeSeedNodes();
+
         std::ostringstream ss;
-        ss << "{\"peers\":["
-           << "{\"address\":\"nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion:8333\",\"transport\":\"tor\",\"latency_ms\":" << (ti.connected ? 120 : 0) << ",\"connected_since\":\"seed\"}"
-           << ",{\"address\":\"ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion:8333\",\"transport\":\"tor\",\"latency_ms\":" << (ti.connected ? 95 : 0) << ",\"connected_since\":\"seed\"}"
-           << "],\"tor\":{\"bootstrap\":\"" << jsonEscape(ti.bootstrap)
+        ss << "{\"peers\":[";
+        int aliveCount = 0;
+        for (size_t i = 0; i < cachedPeers_.size(); i++) {
+            const auto& p = cachedPeers_[i];
+            if (i > 0) ss << ",";
+            ss << "{\"address\":\"" << jsonEscape(p.address)
+               << "\",\"transport\":\"" << p.transport
+               << "\",\"latency_ms\":" << p.latency_ms
+               << ",\"connected_since\":\"" << p.role << "\"}";
+            if (p.alive) aliveCount++;
+        }
+        peerCount_ = aliveCount;
+
+        ss << "],\"tor\":{\"bootstrap\":\"" << jsonEscape(ti.bootstrap)
            << "\",\"circuits\":" << ti.circuits
            << ",\"bridge_status\":\"" << (ti.connected ? "active" : "none")
-           << "\"},\"discovery\":{\"dns_queries\":0,\"peer_exchange\":0}"
+           << "\"},\"discovery\":{\"dns_queries\":0,\"peer_exchange\":" << (aliveCount > 1 ? aliveCount - 1 : 0) << "}"
            << ",\"bandwidth\":{\"inbound_kbps\":0,\"outbound_kbps\":0}}";
         return ss.str();
     }
@@ -273,7 +368,10 @@ std::string SynapsedEngine::getStatus() const {
         connectionType_ = "tor";
         torBootstrap_ = ti.bootstrap;
         torCircuits_ = ti.circuits;
-        peerCount_ = ti.connected ? 2 : 0;
+        probeSeedNodes();
+        int alive = 0;
+        for (const auto& p : cachedPeers_) if (p.alive) alive++;
+        peerCount_ = alive;
     }
 
     int64_t uptime = nowMillis() - startTime_;

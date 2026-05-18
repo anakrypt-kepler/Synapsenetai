@@ -256,6 +256,17 @@ private:
     mutable std::string torBootstrap_;
     mutable int torCircuits_ = 0;
 
+    struct PeerEntry {
+        std::string address;
+        std::string transport;
+        int latency_ms = 0;
+        std::string role;
+        bool alive = false;
+    };
+    mutable std::vector<PeerEntry> cachedPeers_;
+    mutable int64_t lastPeerProbe_ = 0;
+    void probeSeedNodes() const;
+
     bool modelLoaded_ = false;
     std::string modelName_;
     std::string modelPath_;
