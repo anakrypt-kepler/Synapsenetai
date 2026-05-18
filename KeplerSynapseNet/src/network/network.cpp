@@ -1015,7 +1015,7 @@ bool Network::connect(const std::string& address, uint16_t port) {
     if (needSocks && hasSocksProxy) {
         sock = socket(AF_INET, SOCK_STREAM, 0);
         if (sock < 0) return false;
-        static constexpr int SOCKS5_CONNECT_TIMEOUT_MS = 5000;
+        const int SOCKS5_CONNECT_TIMEOUT_MS = isOnionAddr ? 30000 : 5000;
         struct timeval tvSocks;
         tvSocks.tv_sec = SOCKS5_CONNECT_TIMEOUT_MS / 1000;
         tvSocks.tv_usec = (SOCKS5_CONNECT_TIMEOUT_MS % 1000) * 1000;
