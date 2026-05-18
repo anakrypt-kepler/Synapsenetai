@@ -692,6 +692,7 @@ bool SynapsedEngine::isInitialized() const {
 }
 
 std::string SynapsedEngine::rpcCall(const std::string& method, const std::string& paramsJson) {
+  try {
     std::lock_guard<std::mutex> lock(mtx_);
     if (!initialized_) return "{\"error\":\"not initialized\"}";
 
@@ -1430,6 +1431,11 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
 
     (void)paramsJson;
     return "{\"error\":\"unknown method\",\"method\":\"" + method + "\"}";
+  } catch (const std::exception& e) {
+    return std::string("{\"error\":\"internal: ") + e.what() + "\"}";
+  } catch (...) {
+    return "{\"error\":\"internal error\"}";
+  }
 }
 
 int SynapsedEngine::subscribe(const std::string& eventType, EventCallback callback) {
