@@ -487,18 +487,31 @@ int SynapsedEngine::init(const std::string& configPath) {
 
     {
         std::string walletPath = dataDir_ + "/wallet.key";
+        std::string mnemonicPath = dataDir_ + "/wallet.mnemonic";
         crypto::Keys keys;
         std::ifstream wf(walletPath);
         if (wf.good()) {
             wf.close();
             keys.load(walletPath, "");
-            walletMnemonic_ = keys.toMnemonic();
+            std::ifstream mf(mnemonicPath);
+            if (mf.good()) std::getline(mf, walletMnemonic_);
+            if (!walletMnemonic_.empty()) {
+                keys.fromMnemonic(walletMnemonic_);
+            }
         }
         if (!keys.isValid()) {
             keys.generate();
             walletMnemonic_ = keys.generateMnemonic(24);
             keys.fromMnemonic(walletMnemonic_);
             keys.save(walletPath, "");
+            std::ofstream mf(mnemonicPath, std::ios::trunc);
+            if (mf.good()) mf << walletMnemonic_;
+        } else if (walletMnemonic_.empty()) {
+            walletMnemonic_ = keys.generateMnemonic(24);
+            keys.fromMnemonic(walletMnemonic_);
+            keys.save(walletPath, "");
+            std::ofstream mf(mnemonicPath, std::ios::trunc);
+            if (mf.good()) mf << walletMnemonic_;
         }
         walletAddress_ = keys.getAddress();
     }
@@ -579,6 +592,10 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         keys.fromMnemonic(walletMnemonic_);
         walletAddress_ = keys.getAddress();
         keys.save(dataDir_ + "/wallet.key", "");
+        {
+            std::ofstream mf(dataDir_ + "/wallet.mnemonic", std::ios::trunc);
+            if (mf.good()) mf << walletMnemonic_;
+        }
         return "{\"address\":\"" + jsonEscape(walletAddress_) + "\",\"ok\":true}";
     }
 
@@ -598,6 +615,10 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                     walletMnemonic_ = mnemonic;
                     walletAddress_ = keys.getAddress();
                     keys.save(dataDir_ + "/wallet.key", "");
+                    {
+                        std::ofstream mf(dataDir_ + "/wallet.mnemonic", std::ios::trunc);
+                        if (mf.good()) mf << walletMnemonic_;
+                    }
                     return "{\"address\":\"" + jsonEscape(walletAddress_) + "\",\"ok\":true}";
                 }
             }
