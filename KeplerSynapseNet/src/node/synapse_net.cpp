@@ -2693,8 +2693,8 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                 discovery_->addDnsSeed("seed3.synapsenet.io");
                 discovery_->addDnsSeed("seed4.synapsenet.io");
                 discovery_->addDnsSeed("seed5.synapsenet.io");
-                discovery_->addBootstrap("miuyapzmvhzvcknq4od6bk25vpx4exyqqlrk7r2e6xu3kfasdxjgkoqd.onion", 8333);
-                discovery_->addBootstrap("xa5xgwito6roew3rr5f4wrufdktwr6tfviu6wchunr4splj7smxkqcid.onion", 8333);
+                discovery_->addBootstrap("nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion", 8333);
+                discovery_->addBootstrap("ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion", 8333);
             }
         } else if (config_.regtest) {
             utils::Logger::info("Regtest mode: no bootstrap nodes");

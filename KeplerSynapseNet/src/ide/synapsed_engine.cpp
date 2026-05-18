@@ -201,8 +201,8 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         auto ti = queryTorControl();
         std::ostringstream ss;
         ss << "{\"peers\":["
-           << "{\"addr\":\"miuyapzmvhzvcknq4od6bk25vpx4exyqqlrk7r2e6xu3kfasdxjgkoqd.onion:8333\",\"type\":\"seed\"}"
-           << ",{\"addr\":\"xa5xgwito6roew3rr5f4wrufdktwr6tfviu6wchunr4splj7smxkqcid.onion:8333\",\"type\":\"seed\"}"
+           << "{\"addr\":\"nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion:8333\",\"type\":\"seed\"}"
+           << ",{\"addr\":\"ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion:8333\",\"type\":\"seed\"}"
            << "],\"tor\":{\"bootstrap\":\"" << jsonEscape(ti.bootstrap)
            << "\",\"circuits\":" << ti.circuits
            << ",\"bridge_status\":\"" << (ti.connected ? "active" : "none")

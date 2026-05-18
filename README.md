@@ -81,18 +81,18 @@ The alpha is running. Two nodes are online, connected over Tor, and mining auton
 
 | Node | Onion Address | Port |
 |------|--------------|------|
-| Seed 1 | `miuyapzmvhzvcknq4od6bk25vpx4exyqqlrk7r2e6xu3kfasdxjgkoqd.onion` | 8333 |
-| Seed 2 | `xa5xgwito6roew3rr5f4wrufdktwr6tfviu6wchunr4splj7smxkqcid.onion` | 8333 |
+| Seed 1 | `nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion` | 8333 |
+| Seed 2 | `ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion` | 8333 |
 
-To connect your node to the live network, add the seed addresses to your config:
+Nodes that build from source auto-discover these seeds — no manual config needed. To connect manually:
 
 ```bash
 ./synapsed --daemon --privacy --port 8333 \
-  --seednode miuyapzmvhzvcknq4od6bk25vpx4exyqqlrk7r2e6xu3kfasdxjgkoqd.onion:8333 \
-  --seednode xa5xgwito6roew3rr5f4wrufdktwr6tfviu6wchunr4splj7smxkqcid.onion:8333
+  --seednode nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion:8333 \
+  --seednode ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion:8333
 ```
 
-Both nodes run `synapsed v0.1.0-beta` compiled from this repository, with Tor-only routing, privacy mode enabled, and the full V5–V9 bypass chain active. The network is open — anyone can build the node from source and join.
+Both nodes run `synapsed v0.1.0-V9` with Tor-only routing, privacy mode, and auto-discovery enabled. The network is open — build from source and join automatically via Tor.
 
 ---
 
