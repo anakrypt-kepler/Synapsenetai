@@ -53,7 +53,7 @@ static bool testGetStatusReturnsValidJson() {
 
     std::string statusStr(status);
     assert(statusStr.find("node_id") != std::string::npos);
-    assert(statusStr.find("peer_count") != std::string::npos);
+    assert(statusStr.find("peers") != std::string::npos);
     assert(statusStr.find("uptime") != std::string::npos);
     assert(statusStr.find("version") != std::string::npos);
     assert(statusStr.find("model_loaded") != std::string::npos);
