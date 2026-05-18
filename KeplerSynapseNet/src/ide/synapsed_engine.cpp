@@ -560,18 +560,23 @@ void SynapsedEngine::fetchBlocksFromSeed(const std::string& seedOnion) {
         auto& blocks = parsed["result"]["blocks"];
         if (!blocks.is_array() || blocks.empty()) return;
 
+        uint64_t newHeight = parsed["result"].value("height", (uint64_t)0);
+        if (newHeight < lastBlockHeight_.load()) return;
+
         {
             std::lock_guard<std::mutex> lock(mtx_);
-            lastBlockHeight_ = parsed["result"].value("height", (uint64_t)0);
+            lastBlockHeight_ = newHeight;
             seedPeerCount_ = blocks.size();
         }
 
-        std::ofstream blkf(dataDir_ + "/blocks.jsonl", std::ios::trunc);
+        std::string tmpPath = dataDir_ + "/blocks.jsonl.tmp";
+        std::ofstream blkf(tmpPath, std::ios::trunc);
         if (!blkf.good()) return;
-        // Write in reverse so newest-first in file matches newest-first in array
         for (const auto& b : blocks) {
             blkf << b.dump() << "\n";
         }
+        blkf.close();
+        std::rename(tmpPath.c_str(), (dataDir_ + "/blocks.jsonl").c_str());
     } catch (...) {}
 }
 
