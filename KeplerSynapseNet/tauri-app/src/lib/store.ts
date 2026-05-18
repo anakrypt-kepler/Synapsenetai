@@ -30,7 +30,7 @@ export const nodeStatus = writable<NodeStatus>({
   tor_circuits: 0,
   bandwidth_in: 0,
   bandwidth_out: 0,
-  version: "v0.1.0-V4",
+  version: "v0.1.0-V9",
 });
 
 export const connectionColor = derived(nodeStatus, ($s) => {

@@ -169,7 +169,7 @@ export function parseStatus(raw: string): NodeStatus {
       tor_circuits: 0,
       bandwidth_in: 0,
       bandwidth_out: 0,
-      version: "v0.1.0-V4",
+      version: "v0.1.0-V9",
     };
   }
 }
