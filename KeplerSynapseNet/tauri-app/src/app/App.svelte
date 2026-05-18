@@ -10,6 +10,7 @@
   import Dashboard from "./routes/Dashboard.svelte";
   import Wallet from "./routes/Wallet.svelte";
   import Transfers from "./routes/Transfers.svelte";
+  import Blocks from "./routes/Blocks.svelte";
   import Knowledge from "./routes/Knowledge.svelte";
   import NaanAgent from "./routes/NaanAgent.svelte";
   import Harvest from "./routes/Harvest.svelte";
@@ -66,6 +67,8 @@
           <Wallet />
         {:else if $activeTab === "transfers"}
           <Transfers />
+        {:else if $activeTab === "blocks"}
+          <Blocks />
         {:else if $activeTab === "knowledge"}
           <Knowledge />
         {:else if $activeTab === "naan"}

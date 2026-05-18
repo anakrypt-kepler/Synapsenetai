@@ -705,6 +705,91 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         return harvestGet(paramsJson.substr(vs + 1, ve - vs - 1));
     }
 
+    if (method == "blocks.list") {
+        std::ostringstream ss;
+        ss << "{\"height\":" << naanSubmissions_
+           << ",\"total_events\":" << naanSubmissions_
+           << ",\"avg_events_per_block\":" << (naanSubmissions_ > 0 ? 1 : 0)
+           << ",\"blocks\":[";
+
+        std::ifstream bf(dataDir_ + "/blocks.jsonl");
+        if (bf.good()) {
+            std::vector<std::string> lines;
+            std::string line;
+            while (std::getline(bf, line)) {
+                if (!line.empty()) lines.push_back(line);
+            }
+            int start = lines.size() > 50 ? static_cast<int>(lines.size()) - 50 : 0;
+            for (int i = static_cast<int>(lines.size()) - 1; i >= start; i--) {
+                if (i < static_cast<int>(lines.size()) - 1) ss << ",";
+                ss << lines[i];
+            }
+        }
+        ss << "],\"producers\":[";
+        {
+            std::ifstream pf(dataDir_ + "/blocks.jsonl");
+            std::unordered_map<std::string, std::pair<int, int64_t>> prodMap;
+            if (pf.good()) {
+                std::string line;
+                while (std::getline(pf, line)) {
+                    if (line.empty()) continue;
+                    size_t pp = line.find("\"producer\":\"");
+                    if (pp == std::string::npos) continue;
+                    size_t ps = pp + 12;
+                    size_t pe = line.find('"', ps);
+                    if (pe == std::string::npos) continue;
+                    std::string prod = line.substr(ps, pe - ps);
+                    size_t tp = line.find("\"timestamp\":");
+                    int64_t ts = 0;
+                    if (tp != std::string::npos) ts = std::atoll(line.c_str() + tp + 12);
+                    auto& entry = prodMap[prod];
+                    entry.first++;
+                    if (ts > entry.second) entry.second = ts;
+                }
+            }
+            int pi = 0;
+            for (auto& kv : prodMap) {
+                if (pi > 0) ss << ",";
+                ss << "{\"address\":\"" << jsonEscape(kv.first)
+                   << "\",\"blocks\":" << kv.second.first
+                   << ",\"last_block\":" << kv.second.second << "}";
+                pi++;
+            }
+        }
+        ss << "]}";
+        return ss.str();
+    }
+
+    if (method == "blocks.get") {
+        size_t hp = paramsJson.find("\"height\"");
+        if (hp == std::string::npos) return "{\"error\":\"missing height\"}";
+        size_t colon = paramsJson.find(':', hp);
+        if (colon == std::string::npos) return "{\"error\":\"bad json\"}";
+        int targetH = std::atoi(paramsJson.c_str() + colon + 1);
+
+        std::ifstream bf(dataDir_ + "/blocks.jsonl");
+        if (bf.good()) {
+            std::string line;
+            while (std::getline(bf, line)) {
+                if (line.empty()) continue;
+                size_t hPos = line.find("\"height\":");
+                if (hPos != std::string::npos) {
+                    int h = std::atoi(line.c_str() + hPos + 9);
+                    if (h == targetH) {
+                        size_t edPos = line.find("\"events_detail\":");
+                        if (edPos != std::string::npos) {
+                            std::string before = line.substr(0, edPos);
+                            std::string after = line.substr(edPos + 16);
+                            return before + "\"events\":" + after;
+                        }
+                        return line;
+                    }
+                }
+            }
+        }
+        return "{\"error\":\"block not found\"}";
+    }
+
     if (method == "wallet.import") {
         size_t pp = paramsJson.find("\"path\"");
         if (pp == std::string::npos) return "{\"error\":\"missing path\"}";
@@ -5333,6 +5418,47 @@ void SynapsedEngine::naanLoop() {
             NaanDraft d{chosenTitle, topic, status, accepted ? ngt : 0.0};
             naanHist_.push_back(d);
             if (naanHist_.size() > 25) naanHist_.erase(naanHist_.begin());
+
+            {
+                int64_t blockTs = nowMillis();
+                std::string blockHash = hash.substr(0, 64);
+                std::string prevBlockHash;
+                {
+                    std::ifstream pbf(dataDir_ + "/blocks.jsonl");
+                    std::string lastLine;
+                    if (pbf.good()) {
+                        std::string ln;
+                        while (std::getline(pbf, ln)) {
+                            if (!ln.empty()) lastLine = ln;
+                        }
+                    }
+                    size_t phPos = lastLine.find("\"hash\":\"");
+                    if (phPos != std::string::npos) {
+                        size_t phs = phPos + 8;
+                        size_t phe = lastLine.find('"', phs);
+                        if (phe != std::string::npos) prevBlockHash = lastLine.substr(phs, phe - phs);
+                    }
+                }
+                if (prevBlockHash.empty()) prevBlockHash = std::string(64, '0');
+
+                std::ofstream blkf(dataDir_ + "/blocks.jsonl", std::ios::app);
+                if (blkf.good()) {
+                    blkf << "{\"height\":" << naanSubmissions_
+                         << ",\"hash\":\"" << blockHash
+                         << "\",\"prev_hash\":\"" << prevBlockHash
+                         << "\",\"timestamp\":" << blockTs
+                         << ",\"producer\":\"" << jsonEscape(walletAddress_)
+                         << "\",\"events\":1"
+                         << ",\"difficulty\":1"
+                         << ",\"nonce\":0"
+                         << ",\"size\":" << hash.size()
+                         << ",\"events_detail\":[{\"type\":\"" << (accepted ? "knowledge" : "poe_entry")
+                         << "\",\"author\":\"" << jsonEscape(walletAddress_)
+                         << "\",\"hash\":\"" << hash.substr(0, 32)
+                         << "\",\"ts\":" << blockTs << "}]"
+                         << "}\n";
+                }
+            }
 
             persistDraft(d, hash);
             naanState_ = "active";
