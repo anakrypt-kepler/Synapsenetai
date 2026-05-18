@@ -52,7 +52,42 @@
 >
 > This is the alpha version of SynapseNet. The codebase has been developed locally since 2023, outside of GitHub — this is its first public release. V9 is the latest milestone: distributed exploit intelligence sharing across the NAAN network. When one node discovers a working CVE bypass during mining, it publishes the exploit to a shared chain that every other node receives immediately. 14+ CVEs cataloged, 12 active exploit implementations, knowledge harvester with VirusTotal scanning, LLM captcha fallback, HARVEST and EXPLOITS tabs in both desktop and terminal UI. The more nodes mine, the faster the network learns to bypass new protections — one vendor on one side, thousands of autonomous nodes sharing intelligence on the other. The code is open for anyone to explore: look at the architecture, run it locally, see how mining works on a local devnet, trace the code structure and functions. This is not production-ready. Expect bugs. Right now you can build it, poke around, break things, and report what you find. Beta is still a ways out — there's a lot of work left to get the UX where it needs to be.
 >
-> The website and VPS infrastructure are currently in development. Seed nodes will be available over Tor hidden services. Until then, I am continuing to stabilize the alpha, fix bugs, ship hardening updates, and add new improvements.
+> The alpha network is live. Two seed nodes are running over Tor hidden services on dedicated VPS infrastructure. The website is deployed alongside the first node. Both nodes are connected, mining, and sharing exploit intelligence over the Tor mesh. This is the first public deployment of the SynapseNet protocol.
+
+---
+
+## Live Network
+
+The alpha is running. Two nodes are online, connected over Tor, and mining autonomously.
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Node_1-Online-000000?style=for-the-badge&labelColor=000000" alt="Node 1" />
+  <img src="https://img.shields.io/badge/Node_2-Online-000000?style=for-the-badge&labelColor=000000" alt="Node 2" />
+  <img src="https://img.shields.io/badge/Network-Tor_Only-000000?style=for-the-badge&logo=torproject&logoColor=white&labelColor=000000" alt="Tor Only" />
+</p>
+
+**Seed nodes (Tor hidden services):**
+
+| Node | Onion Address | Port |
+|------|--------------|------|
+| Seed 1 | `miuyapzmvhzvcknq4od6bk25vpx4exyqqlrk7r2e6xu3kfasdxjgkoqd.onion` | 8333 |
+| Seed 2 | `xa5xgwito6roew3rr5f4wrufdktwr6tfviu6wchunr4splj7smxkqcid.onion` | 8333 |
+
+**Web interface (Tor):**
+
+| Service | Onion Address |
+|---------|--------------|
+| SynapseNet Web | `4wt2yuebbtjosbptzje4qqicq6do4cegeoo63mdffommq7pe65movwqd.onion` |
+
+To connect your node to the live network, add the seed addresses to your config:
+
+```bash
+./synapsed --daemon --privacy --port 8333 \
+  --seednode miuyapzmvhzvcknq4od6bk25vpx4exyqqlrk7r2e6xu3kfasdxjgkoqd.onion:8333 \
+  --seednode xa5xgwito6roew3rr5f4wrufdktwr6tfviu6wchunr4splj7smxkqcid.onion:8333
+```
+
+Both nodes run `synapsed v0.1.0-beta` compiled from this repository, with Tor-only routing, privacy mode enabled, and the full V5–V9 bypass chain active. The network is open — anyone can build the node from source and join.
 
 ---
 
