@@ -2693,11 +2693,8 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                 discovery_->addDnsSeed("seed3.synapsenet.io");
                 discovery_->addDnsSeed("seed4.synapsenet.io");
                 discovery_->addDnsSeed("seed5.synapsenet.io");
-                discovery_->addBootstrap("synpseed1w3irxfv4qz6jre7mhg2ina5hfb3c5jkwyr7zhnqvu5zid.onion", 8333);
-                discovery_->addBootstrap("synpseed2kq2uda5xer3l7p6o3vgfkxsm4ynxj6q8chtwnvjyd4id.onion", 8333);
-                discovery_->addBootstrap("synpseed3rm6ghto2npcxe4qdlz5ul7bvoaewjk3c9x7pvy4rqbqnid.onion", 8333);
-                discovery_->addBootstrap("synpseed4f7kw9tmqvxjc6d2h5lpn8bfzgxa3eo7rjy2qkuqnrp3qid.onion", 8333);
-                discovery_->addBootstrap("synpseed5jrqmcpzxdy7htkn3fvw2lue6oycxa9bkjg4q8v5nwmrd7id.onion", 8333);
+                discovery_->addBootstrap("miuyapzmvhzvcknq4od6bk25vpx4exyqqlrk7r2e6xu3kfasdxjgkoqd.onion", 8333);
+                discovery_->addBootstrap("xa5xgwito6roew3rr5f4wrufdktwr6tfviu6wchunr4splj7smxkqcid.onion", 8333);
             }
         } else if (config_.regtest) {
             utils::Logger::info("Regtest mode: no bootstrap nodes");

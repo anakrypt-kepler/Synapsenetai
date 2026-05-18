@@ -200,9 +200,13 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
     if (method == "network.info") {
         auto ti = queryTorControl();
         std::ostringstream ss;
-        ss << "{\"peers\":[],\"tor\":{\"bootstrap\":\"" << jsonEscape(ti.bootstrap)
+        ss << "{\"peers\":["
+           << "{\"addr\":\"miuyapzmvhzvcknq4od6bk25vpx4exyqqlrk7r2e6xu3kfasdxjgkoqd.onion:8333\",\"type\":\"seed\"}"
+           << ",{\"addr\":\"xa5xgwito6roew3rr5f4wrufdktwr6tfviu6wchunr4splj7smxkqcid.onion:8333\",\"type\":\"seed\"}"
+           << "],\"tor\":{\"bootstrap\":\"" << jsonEscape(ti.bootstrap)
            << "\",\"circuits\":" << ti.circuits
-           << ",\"bridge_status\":\"none\"},\"discovery\":{\"dns_queries\":0,\"peer_exchange\":0}"
+           << ",\"bridge_status\":\"" << (ti.connected ? "active" : "none")
+           << "\"},\"discovery\":{\"dns_queries\":0,\"peer_exchange\":0}"
            << ",\"bandwidth\":{\"inbound_kbps\":0,\"outbound_kbps\":0}}";
         return ss.str();
     }
@@ -264,17 +268,29 @@ int SynapsedEngine::subscribe(const std::string& eventType, EventCallback callba
 std::string SynapsedEngine::getStatus() const {
     if (!initialized_) return "{\"error\":\"not initialized\"}";
 
+    auto ti = queryTorControl();
+    if (ti.connected) {
+        connectionType_ = "tor";
+        torBootstrap_ = ti.bootstrap;
+        torCircuits_ = ti.circuits;
+        peerCount_ = ti.circuits > 0 ? ti.circuits : 0;
+    }
+
     int64_t uptime = nowMillis() - startTime_;
     std::ostringstream ss;
     ss << "{\"node_id\":\"" << nodeId_
        << "\",\"connection\":\"" << connectionType_
-       << "\",\"peer_count\":" << peerCount_
+       << "\",\"peers\":" << peerCount_
        << ",\"balance\":\"" << balance_
        << "\",\"naan_state\":\"" << naanState_
-       << "\",\"model_loaded\":" << (modelLoaded_ ? "true" : "false")
+       << "\",\"last_block\":0"
+       << ",\"model_loaded\":" << (modelLoaded_ ? "true" : "false")
        << ",\"model_name\":\"" << jsonEscape(modelName_)
-       << "\",\"uptime\":" << uptime
-       << ",\"version\":\"0.1.0-V4\""
+       << "\",\"tor_bootstrap\":\"" << jsonEscape(torBootstrap_)
+       << "\",\"tor_circuits\":" << torCircuits_
+       << ",\"bandwidth_in\":0,\"bandwidth_out\":0"
+       << ",\"uptime\":" << uptime
+       << ",\"version\":\"v0.1.0-V9\""
        << "}";
     return ss.str();
 }
@@ -303,38 +319,29 @@ SynapsedEngine::TorInfo SynapsedEngine::queryTorControl() const {
 
     struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(9051);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
     struct timeval tv{2, 0};
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
-    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+    int ports[] = {9151, 9051};
+    bool connected = false;
+    for (int port : ports) {
+        addr.sin_port = htons(port);
+        if (::connect(fd, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
+            connected = true;
+            break;
+        }
         CLOSESOCK(fd);
-        return info;
+        fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) return info;
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     }
+    if (!connected) { CLOSESOCK(fd); return info; }
 
-    std::string cookiePath = dataDir_ + "/tor/data/control_auth_cookie";
-    std::ifstream cf(cookiePath, std::ios::binary);
-    if (!cf) {
-        CLOSESOCK(fd);
-        return info;
-    }
-    std::vector<uint8_t> cookie((std::istreambuf_iterator<char>(cf)),
-                                 std::istreambuf_iterator<char>());
-    cf.close();
-    if (cookie.size() != 32) { CLOSESOCK(fd); return info; }
-
-    std::string hex;
-    hex.reserve(64);
-    for (uint8_t b : cookie) {
-        char tmp[3];
-        snprintf(tmp, sizeof(tmp), "%02X", b);
-        hex += tmp;
-    }
-
-    std::string authCmd = "AUTHENTICATE " + hex + "\r\n";
+    std::string authCmd = "AUTHENTICATE\r\n";
     send(fd, authCmd.c_str(), authCmd.size(), 0);
 
     char buf[4096];

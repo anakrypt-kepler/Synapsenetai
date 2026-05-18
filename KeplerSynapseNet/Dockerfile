@@ -59,5 +59,9 @@ RUN set -eux; \
     cp /tmp/build/synapsed /app/synapsed; \
     rm -rf /tmp/build
 
-EXPOSE 8332
-ENTRYPOINT ["/app/synapsed"]
+COPY synapsenet.conf.example /etc/synapsenet/synapsenet.conf
+
+EXPOSE 8332 8333
+ENTRYPOINT ["/app/synapsed", "--privacy", \
+  "--seednode", "miuyapzmvhzvcknq4od6bk25vpx4exyqqlrk7r2e6xu3kfasdxjgkoqd.onion:8333", \
+  "--seednode", "xa5xgwito6roew3rr5f4wrufdktwr6tfviu6wchunr4splj7smxkqcid.onion:8333"]
