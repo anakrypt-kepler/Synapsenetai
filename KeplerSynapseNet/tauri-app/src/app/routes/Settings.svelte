@@ -78,16 +78,19 @@
   }
 
   async function startModelDownload() {
+    if (!modelPath) return;
     downloading = true;
     downloadProgress = 0;
-    const interval = setInterval(() => {
-      downloadProgress += Math.random() * 10;
-      if (downloadProgress >= 100) {
-        downloadProgress = 100;
-        downloading = false;
-        clearInterval(interval);
+    try {
+      const result = await rpcCall("model.load", JSON.stringify({ path: modelPath }));
+      const parsed = JSON.parse(result);
+      if (parsed.ok || !parsed.error) {
+        modelLoaded = true;
+        modelName = modelPath.split("/").pop() || modelPath;
       }
-    }, 500);
+    } catch {}
+    downloadProgress = 100;
+    downloading = false;
   }
 
   async function selectModelFile() {

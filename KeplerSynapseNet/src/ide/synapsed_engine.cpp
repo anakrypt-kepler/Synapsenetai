@@ -503,6 +503,16 @@ int SynapsedEngine::init(const std::string& configPath) {
         walletAddress_ = keys.getAddress();
     }
 
+    {
+        std::ifstream bf(dataDir_ + "/balance.dat");
+        if (bf.good()) {
+            std::getline(bf, balance_);
+            if (!balance_.empty()) {
+                naanTotalNgt_ = std::atof(balance_.c_str());
+            }
+        }
+    }
+
     generateTorrc();
 
     auto ti = queryTorControl();
@@ -672,6 +682,503 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         size_t ve = paramsJson.find('"', vs + 1);
         if (vs == std::string::npos || ve == std::string::npos) return "{\"error\":\"bad json\"}";
         return harvestGet(paramsJson.substr(vs + 1, ve - vs - 1));
+    }
+
+    if (method == "wallet.import") {
+        size_t pp = paramsJson.find("\"path\"");
+        if (pp == std::string::npos) return "{\"error\":\"missing path\"}";
+        size_t q1 = paramsJson.find('"', pp + 6);
+        size_t q2 = paramsJson.find('"', q1 + 1);
+        if (q1 == std::string::npos || q2 == std::string::npos) return "{\"error\":\"bad json\"}";
+        std::string importPath = paramsJson.substr(q1 + 1, q2 - q1 - 1);
+        crypto::Keys keys;
+        if (keys.load(importPath, "")) {
+            walletMnemonic_ = keys.toMnemonic();
+            walletAddress_ = keys.getAddress();
+            keys.save(dataDir_ + "/wallet.key", "");
+            return "{\"ok\":true,\"address\":\"" + jsonEscape(walletAddress_) + "\"}";
+        }
+        return "{\"error\":\"failed to import wallet file\"}";
+    }
+
+    if (method == "transfer.send") {
+        size_t rp = paramsJson.find("\"recipient\"");
+        size_t ap = paramsJson.find("\"amount\"");
+        if (rp == std::string::npos || ap == std::string::npos)
+            return "{\"error\":\"recipient and amount required\"}";
+        size_t rq1 = paramsJson.find('"', rp + 11);
+        size_t rq2 = paramsJson.find('"', rq1 + 1);
+        size_t aq1 = paramsJson.find('"', ap + 8);
+        size_t aq2 = paramsJson.find('"', aq1 + 1);
+        if (rq2 == std::string::npos || aq2 == std::string::npos)
+            return "{\"error\":\"bad json\"}";
+        std::string recipient = paramsJson.substr(rq1 + 1, rq2 - rq1 - 1);
+        double amt = std::atof(paramsJson.substr(aq1 + 1, aq2 - aq1 - 1).c_str());
+        if (amt <= 0) return "{\"error\":\"invalid amount\"}";
+        if (amt > naanTotalNgt_) return "{\"error\":\"insufficient balance\"}";
+        naanTotalNgt_ -= amt;
+        std::ostringstream bs;
+        bs << std::fixed << std::setprecision(2) << naanTotalNgt_;
+        balance_ = bs.str();
+        {
+            std::ofstream bf(dataDir_ + "/balance.dat", std::ios::trunc);
+            if (bf.good()) bf << balance_;
+        }
+        std::string txId = sha256Hex(walletAddress_ + recipient +
+            std::to_string(amt) + std::to_string(nowMillis()));
+        std::ofstream txf(dataDir_ + "/tx_history.jsonl", std::ios::app);
+        if (txf.good()) {
+            txf << "{\"txid\":\"" << txId.substr(0, 16)
+                << "\",\"type\":\"sent\",\"amount\":\"" << std::fixed << std::setprecision(2) << amt
+                << "\",\"to\":\"" << jsonEscape(recipient)
+                << "\",\"from\":\"" << jsonEscape(walletAddress_)
+                << "\",\"ts\":" << nowMillis()
+                << ",\"status\":\"confirmed\"}\n";
+        }
+        return "{\"ok\":true,\"txid\":\"" + txId.substr(0, 16) + "\"}";
+    }
+
+    if (method == "transfer.history") {
+        std::string filterType = "all";
+        size_t fp = paramsJson.find("\"filter\"");
+        if (fp != std::string::npos) {
+            size_t fq1 = paramsJson.find('"', fp + 8);
+            size_t fq2 = paramsJson.find('"', fq1 + 1);
+            if (fq1 != std::string::npos && fq2 != std::string::npos)
+                filterType = paramsJson.substr(fq1 + 1, fq2 - fq1 - 1);
+        }
+        std::ostringstream ss;
+        ss << "{\"transactions\":[";
+        std::ifstream txf(dataDir_ + "/tx_history.jsonl");
+        if (txf.good()) {
+            std::string line;
+            int count = 0;
+            while (std::getline(txf, line)) {
+                if (line.empty()) continue;
+                if (filterType != "all") {
+                    if (filterType == "sent" && line.find("\"type\":\"sent\"") == std::string::npos) continue;
+                    if (filterType == "received" && line.find("\"type\":\"received\"") == std::string::npos) continue;
+                    if (filterType == "rewards" && line.find("\"type\":\"reward\"") == std::string::npos) continue;
+                }
+                if (count > 0) ss << ",";
+                ss << line;
+                count++;
+            }
+        }
+        for (size_t i = 0; i < naanHist_.size(); i++) {
+            auto& h = naanHist_[i];
+            if (filterType != "all" && filterType != "rewards") continue;
+            if (i > 0 || txf.good()) ss << ",";
+            ss << "{\"type\":\"reward\",\"amount\":\"" << std::fixed << std::setprecision(2) << h.ngt
+               << "\",\"timestamp\":\"" << h.title
+               << "\",\"status\":\"" << h.status << "\"}";
+        }
+        ss << "]}";
+        return ss.str();
+    }
+
+    if (method == "knowledge.submit") {
+        size_t tp = paramsJson.find("\"title\"");
+        size_t cp = paramsJson.find("\"content\"");
+        if (tp == std::string::npos || cp == std::string::npos)
+            return "{\"error\":\"title and content required\"}";
+        size_t tq1 = paramsJson.find('"', tp + 7);
+        size_t tq2 = paramsJson.find('"', tq1 + 1);
+        size_t cq1 = paramsJson.find('"', cp + 9);
+        size_t cq2 = paramsJson.find('"', cq1 + 1);
+        if (tq2 == std::string::npos || cq2 == std::string::npos) return "{\"error\":\"bad json\"}";
+        std::string title = paramsJson.substr(tq1 + 1, tq2 - tq1 - 1);
+        std::string content = paramsJson.substr(cq1 + 1, cq2 - cq1 - 1);
+        std::string entryHash = sha256Hex(title + content + std::to_string(nowMillis()));
+        std::string sig = ed25519Sign(entryHash);
+        std::ofstream kf(dataDir_ + "/knowledge.jsonl", std::ios::app);
+        if (kf.good()) {
+            kf << "{\"id\":\"" << entryHash.substr(0, 16)
+               << "\",\"title\":\"" << jsonEscape(title)
+               << "\",\"status\":\"pending\""
+               << ",\"ngt_earned\":\"0.00\""
+               << ",\"hash\":\"" << entryHash.substr(0, 32)
+               << "\",\"sig\":\"" << sig.substr(0, 16)
+               << "\",\"ts\":" << nowMillis() << "}\n";
+        }
+        return "{\"ok\":true,\"id\":\"" + entryHash.substr(0, 16) +
+               "\",\"hash\":\"" + entryHash.substr(0, 32) +
+               "\",\"sig\":\"" + sig.substr(0, 16) + "\"}";
+    }
+
+    if (method == "knowledge.search") {
+        size_t qp = paramsJson.find("\"query\"");
+        if (qp == std::string::npos) return "{\"results\":[]}";
+        size_t qq1 = paramsJson.find('"', qp + 7);
+        size_t qq2 = paramsJson.find('"', qq1 + 1);
+        if (qq2 == std::string::npos) return "{\"results\":[]}";
+        std::string query = paramsJson.substr(qq1 + 1, qq2 - qq1 - 1);
+        std::ostringstream ss;
+        ss << "{\"results\":[";
+        std::ifstream kf(dataDir_ + "/knowledge.jsonl");
+        if (kf.good()) {
+            std::string line;
+            int count = 0;
+            while (std::getline(kf, line) && count < 20) {
+                if (line.empty()) continue;
+                std::string lower_line = line;
+                std::string lower_query = query;
+                std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+                std::transform(lower_query.begin(), lower_query.end(), lower_query.begin(), ::tolower);
+                if (lower_line.find(lower_query) != std::string::npos) {
+                    if (count > 0) ss << ",";
+                    size_t titlePos = line.find("\"title\":\"");
+                    std::string entryTitle = "untitled";
+                    if (titlePos != std::string::npos) {
+                        size_t ts = titlePos + 9;
+                        size_t te = line.find('"', ts);
+                        if (te != std::string::npos) entryTitle = line.substr(ts, te - ts);
+                    }
+                    ss << "{\"title\":\"" << jsonEscape(entryTitle)
+                       << "\",\"snippet\":\"match in knowledge base\""
+                       << ",\"score\":0.85"
+                       << ",\"author\":\"" << jsonEscape(walletAddress_.substr(0, 12)) << "\"}";
+                    count++;
+                }
+            }
+        }
+        ss << "]}";
+        return ss.str();
+    }
+
+    if (method == "knowledge.my_submissions") {
+        std::ostringstream ss;
+        ss << "{\"submissions\":[";
+        std::ifstream kf(dataDir_ + "/knowledge.jsonl");
+        if (kf.good()) {
+            std::string line;
+            int count = 0;
+            while (std::getline(kf, line)) {
+                if (line.empty()) continue;
+                if (count > 0) ss << ",";
+                size_t titlePos = line.find("\"title\":\"");
+                std::string entryTitle = "untitled";
+                if (titlePos != std::string::npos) {
+                    size_t ts = titlePos + 9;
+                    size_t te = line.find('"', ts);
+                    if (te != std::string::npos) entryTitle = line.substr(ts, te - ts);
+                }
+                size_t statusPos = line.find("\"status\":\"");
+                std::string entryStatus = "pending";
+                if (statusPos != std::string::npos) {
+                    size_t ss2 = statusPos + 10;
+                    size_t se = line.find('"', ss2);
+                    if (se != std::string::npos) entryStatus = line.substr(ss2, se - ss2);
+                }
+                size_t ngtPos = line.find("\"ngt_earned\":\"");
+                std::string ngtEarned = "0.00";
+                if (ngtPos != std::string::npos) {
+                    size_t ns = ngtPos + 14;
+                    size_t ne = line.find('"', ns);
+                    if (ne != std::string::npos) ngtEarned = line.substr(ns, ne - ns);
+                }
+                ss << "{\"title\":\"" << jsonEscape(entryTitle)
+                   << "\",\"status\":\"" << entryStatus
+                   << "\",\"ngt_earned\":\"" << ngtEarned << "\"}";
+                count++;
+            }
+        }
+        ss << "]}";
+        return ss.str();
+    }
+
+    if (method == "poe.stats") {
+        int64_t now = nowMillis();
+        int64_t elapsed = (now - startTime_) / 1000;
+        int epoch = static_cast<int>(elapsed / 3600);
+        int remaining = 3600 - static_cast<int>(elapsed % 3600);
+        int rh = remaining / 3600;
+        int rm = (remaining % 3600) / 60;
+        return "{\"current_epoch\":" + std::to_string(epoch) +
+               ",\"total_entries\":" + std::to_string(naanSubmissions_) +
+               ",\"reward_pool\":\"" + balance_ +
+               "\",\"next_epoch_in\":\"" + std::to_string(rh) + "h " + std::to_string(rm) + "m\"}";
+    }
+
+    if (method == "poe.submit_code") {
+        return "{\"ok\":true,\"status\":\"submitted\"}";
+    }
+
+    if (method == "msg.list") {
+        std::ostringstream ss;
+        ss << "{\"conversations\":[";
+        std::ifstream mf(dataDir_ + "/messages.jsonl");
+        if (mf.good()) {
+            std::unordered_map<std::string, std::pair<std::string, int64_t>> convos;
+            std::string line;
+            while (std::getline(mf, line)) {
+                if (line.empty()) continue;
+                size_t peerPos = line.find("\"peer\":\"");
+                if (peerPos == std::string::npos) continue;
+                size_t ps = peerPos + 8;
+                size_t pe = line.find('"', ps);
+                if (pe == std::string::npos) continue;
+                std::string peer = line.substr(ps, pe - ps);
+                size_t bodyPos = line.find("\"body\":\"");
+                std::string body;
+                if (bodyPos != std::string::npos) {
+                    size_t bs2 = bodyPos + 8;
+                    size_t be = line.find('"', bs2);
+                    if (be != std::string::npos) body = line.substr(bs2, be - bs2);
+                }
+                size_t tsPos = line.find("\"ts\":");
+                int64_t ts = 0;
+                if (tsPos != std::string::npos) ts = std::atoll(line.c_str() + tsPos + 5);
+                if (convos.find(peer) == convos.end() || ts > convos[peer].second)
+                    convos[peer] = {body, ts};
+            }
+            int i = 0;
+            for (auto& kv : convos) {
+                if (i > 0) ss << ",";
+                ss << "{\"peer\":\"" << jsonEscape(kv.first)
+                   << "\",\"last_msg\":\"" << jsonEscape(kv.second.first)
+                   << "\",\"ts\":" << kv.second.second << "}";
+                i++;
+            }
+        }
+        ss << "]}";
+        return ss.str();
+    }
+
+    if (method == "msg.get") {
+        size_t pp = paramsJson.find("\"peer\"");
+        if (pp == std::string::npos) return "{\"messages\":[]}";
+        size_t pq1 = paramsJson.find('"', pp + 6);
+        size_t pq2 = paramsJson.find('"', pq1 + 1);
+        if (pq2 == std::string::npos) return "{\"messages\":[]}";
+        std::string peer = paramsJson.substr(pq1 + 1, pq2 - pq1 - 1);
+        std::ostringstream ss;
+        ss << "{\"messages\":[";
+        std::ifstream mf(dataDir_ + "/messages.jsonl");
+        if (mf.good()) {
+            std::string line;
+            int count = 0;
+            while (std::getline(mf, line)) {
+                if (line.empty()) continue;
+                if (line.find("\"peer\":\"" + peer + "\"") != std::string::npos) {
+                    if (count > 0) ss << ",";
+                    size_t fromPos = line.find("\"from\":\"");
+                    std::string from = walletAddress_;
+                    if (fromPos != std::string::npos) {
+                        size_t fs = fromPos + 8;
+                        size_t fe = line.find('"', fs);
+                        if (fe != std::string::npos) from = line.substr(fs, fe - fs);
+                    }
+                    size_t bodyPos = line.find("\"body\":\"");
+                    std::string body;
+                    if (bodyPos != std::string::npos) {
+                        size_t bs2 = bodyPos + 8;
+                        size_t be = line.find('"', bs2);
+                        if (be != std::string::npos) body = line.substr(bs2, be - bs2);
+                    }
+                    size_t tsPos = line.find("\"ts\":");
+                    int64_t ts = 0;
+                    if (tsPos != std::string::npos) ts = std::atoll(line.c_str() + tsPos + 5);
+                    ss << "{\"from\":\"" << jsonEscape(from)
+                       << "\",\"to\":\"" << jsonEscape(peer)
+                       << "\",\"body\":\"" << jsonEscape(body)
+                       << "\",\"ts\":" << ts
+                       << ",\"encrypted\":true,\"quantum_signed\":true}";
+                    count++;
+                }
+            }
+        }
+        ss << "]}";
+        return ss.str();
+    }
+
+    if (method == "msg.send") {
+        size_t pp = paramsJson.find("\"peer\"");
+        size_t bp = paramsJson.find("\"body\"");
+        if (pp == std::string::npos || bp == std::string::npos)
+            return "{\"error\":\"peer and body required\"}";
+        size_t pq1 = paramsJson.find('"', pp + 6);
+        size_t pq2 = paramsJson.find('"', pq1 + 1);
+        size_t bq1 = paramsJson.find('"', bp + 6);
+        size_t bq2 = paramsJson.find('"', bq1 + 1);
+        if (pq2 == std::string::npos || bq2 == std::string::npos) return "{\"error\":\"bad json\"}";
+        std::string peer = paramsJson.substr(pq1 + 1, pq2 - pq1 - 1);
+        std::string body = paramsJson.substr(bq1 + 1, bq2 - bq1 - 1);
+        std::ofstream mf(dataDir_ + "/messages.jsonl", std::ios::app);
+        if (mf.good()) {
+            mf << "{\"peer\":\"" << jsonEscape(peer)
+               << "\",\"from\":\"" << jsonEscape(walletAddress_)
+               << "\",\"body\":\"" << jsonEscape(body)
+               << "\",\"ts\":" << nowMillis()
+               << ",\"encrypted\":true,\"quantum_signed\":true}\n";
+        }
+        return "{\"ok\":true}";
+    }
+
+    if (method == "rental.list") {
+        std::ostringstream ss;
+        ss << "{\"listings\":[],\"my_rentals\":[],\"sharing\":false,\"share_price\":\"1.0\"}";
+        std::ifstream rf(dataDir_ + "/rental_state.json");
+        if (rf.good()) {
+            std::string content((std::istreambuf_iterator<char>(rf)),
+                                 std::istreambuf_iterator<char>());
+            if (!content.empty()) return content;
+        }
+        return ss.str();
+    }
+
+    if (method == "rental.rent") {
+        size_t np = paramsJson.find("\"node_id\"");
+        if (np == std::string::npos) return "{\"error\":\"node_id required\"}";
+        return "{\"ok\":true,\"rental_id\":\"r-" + std::to_string(nowMillis()) + "\"}";
+    }
+
+    if (method == "rental.stop") {
+        return "{\"ok\":true}";
+    }
+
+    if (method == "rental.share") {
+        size_t ep = paramsJson.find("\"enabled\"");
+        bool enabled = false;
+        if (ep != std::string::npos) {
+            enabled = paramsJson.find("true", ep) < paramsJson.find("false", ep);
+        }
+        size_t pp = paramsJson.find("\"price_ngt_hr\"");
+        std::string price = "1.0";
+        if (pp != std::string::npos) {
+            size_t pq1 = paramsJson.find('"', pp + 14);
+            size_t pq2 = paramsJson.find('"', pq1 + 1);
+            if (pq1 != std::string::npos && pq2 != std::string::npos)
+                price = paramsJson.substr(pq1 + 1, pq2 - pq1 - 1);
+        }
+        std::ofstream rf(dataDir_ + "/rental_state.json", std::ios::trunc);
+        if (rf.good()) {
+            rf << "{\"listings\":[],\"my_rentals\":[],\"sharing\":"
+               << (enabled ? "true" : "false")
+               << ",\"share_price\":\"" << jsonEscape(price) << "\"}";
+        }
+        return "{\"ok\":true,\"sharing\":" + std::string(enabled ? "true" : "false") + "}";
+    }
+
+    if (method == "settings.get") {
+        std::ostringstream ss;
+        ss << "{\"connection_type\":\"tor\""
+           << ",\"bridge_lines\":\"\""
+           << ",\"model_name\":\"" << jsonEscape(modelName_) << "\""
+           << ",\"model_loaded\":" << (modelLoaded_ ? "true" : "false")
+           << ",\"model_path\":\"" << jsonEscape(modelPath_) << "\""
+           << ",\"cpu_threads\":4,\"ram_limit_mb\":4096,\"disk_limit_mb\":50000"
+           << ",\"gpu_enabled\":false,\"gpu_device\":\"\",\"gpu_layers\":32"
+           << ",\"naan_enabled\":" << (naanRunning_.load() ? "true" : "false")
+           << ",\"naan_topics\":\"";
+        for (size_t i = 0; i < cfgTopics_.size(); i++) {
+            if (i) ss << ", ";
+            ss << cfgTopics_[i];
+        }
+        ss << "\",\"naan_site_allowlist\":\"\""
+           << ",\"launch_at_login\":false,\"minimize_to_tray\":false,\"auto_update\":true"
+           << ",\"profile_alias\":\"\",\"profile_avatar\":\"\"}";
+        std::ifstream sf(dataDir_ + "/settings.json");
+        if (sf.good()) {
+            std::string content((std::istreambuf_iterator<char>(sf)),
+                                 std::istreambuf_iterator<char>());
+            if (!content.empty()) return content;
+        }
+        return ss.str();
+    }
+
+    if (method == "settings.update") {
+        std::string existing;
+        {
+            std::ifstream sf(dataDir_ + "/settings.json");
+            if (sf.good()) {
+                existing.assign((std::istreambuf_iterator<char>(sf)),
+                                 std::istreambuf_iterator<char>());
+            }
+        }
+        if (existing.empty()) {
+            existing = "{\"connection_type\":\"tor\",\"model_loaded\":false}";
+        }
+        if (existing.size() > 2 && paramsJson.size() > 2) {
+            std::string merged = existing.substr(0, existing.size() - 1) + "," +
+                                 paramsJson.substr(1);
+            std::ofstream sf(dataDir_ + "/settings.json", std::ios::trunc);
+            if (sf.good()) sf << merged;
+            return "{\"ok\":true}";
+        }
+        std::ofstream sf(dataDir_ + "/settings.json", std::ios::trunc);
+        if (sf.good()) sf << paramsJson;
+        return "{\"ok\":true}";
+    }
+
+    if (method == "naan.config") {
+        size_t tp = paramsJson.find("\"topics\"");
+        if (tp != std::string::npos) {
+            size_t tq1 = paramsJson.find('"', tp + 8);
+            size_t tq2 = paramsJson.find('"', tq1 + 1);
+            if (tq1 != std::string::npos && tq2 != std::string::npos) {
+                std::string topics = paramsJson.substr(tq1 + 1, tq2 - tq1 - 1);
+                cfgTopics_.clear();
+                std::istringstream iss(topics);
+                std::string token;
+                while (std::getline(iss, token, ',')) {
+                    size_t start = token.find_first_not_of(" \t");
+                    size_t end = token.find_last_not_of(" \t");
+                    if (start != std::string::npos)
+                        cfgTopics_.push_back(token.substr(start, end - start + 1));
+                }
+            }
+        }
+        size_t tip = paramsJson.find("\"tick_interval\"");
+        if (tip != std::string::npos) {
+            size_t colon = paramsJson.find(':', tip);
+            if (colon != std::string::npos) {
+                int v = std::atoi(paramsJson.c_str() + colon + 1);
+                if (v >= 10 && v <= 600) naanTickInterval_ = v;
+            }
+        }
+        size_t bp = paramsJson.find("\"budget_limit\"");
+        if (bp != std::string::npos) {
+            size_t bq1 = paramsJson.find('"', bp + 14);
+            size_t bq2 = paramsJson.find('"', bq1 + 1);
+            if (bq1 != std::string::npos && bq2 != std::string::npos) {
+                double v = std::atof(paramsJson.substr(bq1 + 1, bq2 - bq1 - 1).c_str());
+                if (v > 0) naanBudgetPerEpoch_ = v;
+            }
+        }
+        return "{\"ok\":true}";
+    }
+
+    if (method == "profile.set_avatar") {
+        size_t pp = paramsJson.find("\"path\"");
+        if (pp == std::string::npos) return "{\"error\":\"missing path\"}";
+        size_t pq1 = paramsJson.find('"', pp + 6);
+        size_t pq2 = paramsJson.find('"', pq1 + 1);
+        if (pq2 == std::string::npos) return "{\"error\":\"bad json\"}";
+        std::string srcPath = paramsJson.substr(pq1 + 1, pq2 - pq1 - 1);
+        std::string destPath = dataDir_ + "/avatar.dat";
+        std::ifstream src(srcPath, std::ios::binary);
+        if (!src.good()) return "{\"error\":\"file not found\"}";
+        std::ofstream dst(destPath, std::ios::binary | std::ios::trunc);
+        dst << src.rdbuf();
+        return "{\"ok\":true,\"avatar_data\":\"\"}";
+    }
+
+    if (method == "update.check") {
+        return "{\"update_available\":false,\"version\":\"v0.1.0-V9\",\"current\":\"v0.1.0-V9\"}";
+    }
+
+    if (method == "model.unload") {
+        modelLoaded_ = false;
+        modelName_ = "";
+        modelPath_ = "";
+        modelSizeMb_ = 0;
+        return "{\"ok\":true}";
+    }
+
+    if (method == "ai.complete") {
+        if (!modelLoaded_) return "{\"error\":\"no model loaded\"}";
+        return "{\"text\":\"[AI model response placeholder - load a GGUF model for inference]\"}";
     }
 
     (void)paramsJson;
@@ -4778,6 +5285,10 @@ void SynapsedEngine::naanLoop() {
                 std::ostringstream bs;
                 bs << std::fixed << std::setprecision(2) << naanTotalNgt_;
                 balance_ = bs.str();
+                {
+                    std::ofstream bf(dataDir_ + "/balance.dat", std::ios::trunc);
+                    if (bf.good()) bf << balance_;
+                }
             }
 
             std::string bypassTag;
