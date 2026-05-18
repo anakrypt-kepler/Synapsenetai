@@ -153,8 +153,11 @@ static bool recvAllBlocking(int sock, uint8_t* data, size_t len) {
 }
 
 static bool socks5ConnectTarget(int sock, const std::string& targetHost, uint16_t targetPort,
-                                const std::string& socksUsername = "", const std::string& socksPassword = "") {
-    struct timeval tv {5, 0};
+                                const std::string& socksUsername = "", const std::string& socksPassword = "",
+                                int timeoutMs = 5000) {
+    struct timeval tv;
+    tv.tv_sec = timeoutMs / 1000;
+    tv.tv_usec = (timeoutMs % 1000) * 1000;
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
@@ -1029,7 +1032,7 @@ bool Network::connect(const std::string& address, uint16_t port) {
             return false;
         }
         if (::connect(sock, reinterpret_cast<struct sockaddr*>(&proxyAddr), sizeof(proxyAddr)) == 0) {
-            connected = socks5ConnectTarget(sock, address, port);
+            connected = socks5ConnectTarget(sock, address, port, "", "", SOCKS5_CONNECT_TIMEOUT_MS);
         }
         if (!connected) {
             close(sock);
