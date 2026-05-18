@@ -838,6 +838,13 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                     if (!line.empty()) lines.push_back(line);
                 }
             }
+            std::ifstream nf(dataDir_ + "/naan_blocks.jsonl");
+            if (nf.good()) {
+                std::string line;
+                while (std::getline(nf, line)) {
+                    if (!line.empty()) lines.push_back(line);
+                }
+            }
         }
         for (auto& l : lines) {
             size_t ep = l.find("\"events\":");
@@ -861,25 +868,20 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         }
         ss << "],\"producers\":[";
         {
-            std::ifstream pf(dataDir_ + "/blocks.jsonl");
             std::unordered_map<std::string, std::pair<int, int64_t>> prodMap;
-            if (pf.good()) {
-                std::string line;
-                while (std::getline(pf, line)) {
-                    if (line.empty()) continue;
-                    size_t pp = line.find("\"producer\":\"");
-                    if (pp == std::string::npos) continue;
-                    size_t ps = pp + 12;
-                    size_t pe = line.find('"', ps);
-                    if (pe == std::string::npos) continue;
-                    std::string prod = line.substr(ps, pe - ps);
-                    size_t tp = line.find("\"timestamp\":");
-                    int64_t ts = 0;
-                    if (tp != std::string::npos) ts = std::atoll(line.c_str() + tp + 12);
-                    auto& entry = prodMap[prod];
-                    entry.first++;
-                    if (ts > entry.second) entry.second = ts;
-                }
+            for (auto& line : lines) {
+                size_t pp = line.find("\"producer\":\"");
+                if (pp == std::string::npos) continue;
+                size_t ps = pp + 12;
+                size_t pe = line.find('"', ps);
+                if (pe == std::string::npos) continue;
+                std::string prod = line.substr(ps, pe - ps);
+                size_t tp = line.find("\"timestamp\":");
+                int64_t ts = 0;
+                if (tp != std::string::npos) ts = std::atoll(line.c_str() + tp + 12);
+                auto& entry = prodMap[prod];
+                entry.first++;
+                if (ts > entry.second) entry.second = ts;
             }
             int pi = 0;
             for (auto& kv : prodMap) {
@@ -5558,12 +5560,21 @@ void SynapsedEngine::naanLoop() {
                 std::string blockHash = hash.substr(0, 64);
                 std::string prevBlockHash;
                 {
-                    std::ifstream pbf(dataDir_ + "/blocks.jsonl");
+                    std::ifstream pbf(dataDir_ + "/naan_blocks.jsonl");
                     std::string lastLine;
                     if (pbf.good()) {
                         std::string ln;
                         while (std::getline(pbf, ln)) {
                             if (!ln.empty()) lastLine = ln;
+                        }
+                    }
+                    if (lastLine.empty()) {
+                        std::ifstream vbf(dataDir_ + "/blocks.jsonl");
+                        if (vbf.good()) {
+                            std::string ln;
+                            while (std::getline(vbf, ln)) {
+                                if (!ln.empty()) lastLine = ln;
+                            }
                         }
                     }
                     size_t phPos = lastLine.find("\"hash\":\"");
@@ -5575,7 +5586,7 @@ void SynapsedEngine::naanLoop() {
                 }
                 if (prevBlockHash.empty()) prevBlockHash = std::string(64, '0');
 
-                std::ofstream blkf(dataDir_ + "/blocks.jsonl", std::ios::app);
+                std::ofstream blkf(dataDir_ + "/naan_blocks.jsonl", std::ios::app);
                 if (blkf.good()) {
                     blkf << "{\"height\":" << naanSubmissions_
                          << ",\"hash\":\"" << blockHash
