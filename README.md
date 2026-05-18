@@ -94,6 +94,65 @@ Nodes that build from source auto-discover these seeds — no manual config need
 
 Both nodes run `synapsed v0.1.0-V9` with Tor-only routing, privacy mode, and auto-discovery enabled. The network is open — build from source and join automatically via Tor.
 
+### Network Status
+
+The blockchain is live and producing blocks. Validators are up, consensus is running, and the chain is syncing across all nodes in real time.
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Blockchain-Active-000000?style=for-the-badge&labelColor=000000" alt="Blockchain Active" />
+  <img src="https://img.shields.io/badge/Validators-Online-000000?style=for-the-badge&labelColor=000000" alt="Validators Online" />
+  <img src="https://img.shields.io/badge/Blocks-Producing-000000?style=for-the-badge&labelColor=000000" alt="Blocks Producing" />
+  <img src="https://img.shields.io/badge/RPC-Open-000000?style=for-the-badge&labelColor=000000" alt="RPC Open" />
+</p>
+
+- PoE validators are active on both seed nodes — blocks are mined when events are submitted
+- Block data is accessible via RPC (`blocks.list`, `blocks.get`) over Tor hidden services on port 8332
+- Desktop nodes auto-sync the full chain from seed validators over Tor SOCKS5
+- NAAN agents produce knowledge events that get included in new blocks
+- NGT rewards are distributed to producers on every accepted submission
+
+**Anyone can join.** Build the desktop app, connect to the seed nodes, and your node will sync the chain and start mining automatically.
+
+### How to Join
+
+> **Build the desktop app (Tauri), not the terminal daemon.** The standalone `synapsed` CLI binary is legacy and no longer receives feature updates. All active development targets the desktop application with the Svelte frontend and `libsynapsed` shared library.
+
+**Supported platforms:** macOS (recommended), Linux. Windows is not tested.
+
+**Requirements:**
+- Rust + Cargo (for Tauri)
+- Node.js + npm (for Svelte frontend)
+- CMake + C++17 compiler (for libsynapsed)
+- Tor Browser running (provides SOCKS5 proxy on port 9050)
+
+**Build steps:**
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/anakrypt-kepler/Synapsenetai.git
+cd Synapsenetai/KeplerSynapseNet
+
+# 2. Build the native library
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make synapsed_lib -j$(nproc)
+cd ..
+
+# 3. Build and run the desktop app
+cd tauri-app
+npm install
+npm run tauri dev
+```
+
+The app will auto-discover seed nodes over Tor, sync the blockchain, and begin NAAN mining. No manual configuration needed — just make sure Tor Browser is running in the background.
+
+**What you get:**
+- Full chain sync from VPS validators via Tor
+- Live block explorer in the BLOCKS tab
+- NAAN autonomous agent mining knowledge and earning NGT
+- Wallet with HD key derivation (24-word mnemonic backup)
+- Real-time peer discovery over Tor mesh
+
 ---
 
 ## What Is This
