@@ -27,6 +27,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <dirent.h>
 #endif
 
 #ifdef _WIN32
@@ -650,6 +651,35 @@ int SynapsedEngine::init(const std::string& configPath) {
         }
     }
 
+    {
+        std::string modelsDir = dataDir_ + "/models";
+        DIR* dir = opendir(modelsDir.c_str());
+        if (dir) {
+            std::string bestPath;
+            size_t bestSize = 0;
+            struct dirent* ent;
+            while ((ent = readdir(dir)) != nullptr) {
+                std::string name = ent->d_name;
+                if (name.size() > 5 && name.substr(name.size() - 5) == ".gguf") {
+                    std::string full = modelsDir + "/" + name;
+                    std::ifstream f(full, std::ios::ate | std::ios::binary);
+                    if (f.good()) {
+                        size_t sz = f.tellg();
+                        if (sz > bestSize) { bestSize = sz; bestPath = full; }
+                    }
+                }
+            }
+            closedir(dir);
+            if (!bestPath.empty() && bestSize > 1024 * 1024 && validateGguf(bestPath)) {
+                size_t sl = bestPath.rfind('/');
+                modelName_ = (sl != std::string::npos) ? bestPath.substr(sl + 1) : bestPath;
+                modelPath_ = bestPath;
+                modelSizeMb_ = bestSize / (1024 * 1024);
+                modelLoaded_ = true;
+            }
+        }
+    }
+
     generateTorrc();
 
     auto ti = queryTorControl();
@@ -710,13 +740,16 @@ bool SynapsedEngine::isInitialized() const {
 
 std::string SynapsedEngine::rpcCall(const std::string& method, const std::string& paramsJson) {
   try {
+    if (method == "naan.control") {
+        return naanControl(paramsJson);
+    }
+
     std::lock_guard<std::mutex> lock(mtx_);
     if (!initialized_) return "{\"error\":\"not initialized\"}";
 
     if (method == "node.status") return getStatus();
     if (method == "node.peers") return "{\"peer_count\":" + std::to_string(peerCount_) + "}";
     if (method == "naan.status") return naanStatus();
-    if (method == "naan.control") return naanControl(paramsJson);
     if (method == "model.load") return modelLoad(paramsJson);
     if (method == "model.status") return modelStatus();
 
@@ -5411,9 +5444,13 @@ std::string SynapsedEngine::naanControl(const std::string& paramsJson) {
     if (paramsJson.find("\"start\"") != std::string::npos ||
         paramsJson.find("\"action\":\"start\"") != std::string::npos) {
         if (!naanRunning_.load()) {
+            if (naanThread_.joinable()) naanThread_.join();
             naanStop_.store(false);
             naanSpentThisEpoch_ = 0.0;
-            naanState_ = "active";
+            {
+                std::lock_guard<std::mutex> lock(mtx_);
+                naanState_ = "active";
+            }
             naanRunning_.store(true);
             naanThread_ = std::thread(&SynapsedEngine::naanLoop, this);
         }
@@ -5425,6 +5462,7 @@ std::string SynapsedEngine::naanControl(const std::string& paramsJson) {
         return "{\"ok\":true,\"state\":\"off\"}";
     }
     if (paramsJson.find("\"topics\"") != std::string::npos) {
+        std::lock_guard<std::mutex> lock(mtx_);
         cfgTopics_.clear();
         size_t arr = paramsJson.find('[');
         size_t arre = paramsJson.find(']', arr);
@@ -5443,6 +5481,7 @@ std::string SynapsedEngine::naanControl(const std::string& paramsJson) {
         return "{\"ok\":true}";
     }
     if (paramsJson.find("\"tick\"") != std::string::npos) {
+        std::lock_guard<std::mutex> lock(mtx_);
         size_t vp = paramsJson.find("\"tick\"");
         size_t colon = paramsJson.find(':', vp);
         if (colon != std::string::npos) {
@@ -5452,6 +5491,7 @@ std::string SynapsedEngine::naanControl(const std::string& paramsJson) {
         return "{\"ok\":true,\"tick\":" + std::to_string(naanTickInterval_) + "}";
     }
     if (paramsJson.find("\"budget\"") != std::string::npos) {
+        std::lock_guard<std::mutex> lock(mtx_);
         size_t vp = paramsJson.find("\"budget\"");
         size_t colon = paramsJson.find(':', vp);
         if (colon != std::string::npos) {
@@ -5465,9 +5505,13 @@ std::string SynapsedEngine::naanControl(const std::string& paramsJson) {
 
 void SynapsedEngine::startNaan() {
     if (naanRunning_.load()) return;
+    if (naanThread_.joinable()) naanThread_.join();
     naanStop_.store(false);
     naanSpentThisEpoch_ = 0.0;
-    naanState_ = "active";
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        naanState_ = "active";
+    }
     naanRunning_.store(true);
     naanThread_ = std::thread(&SynapsedEngine::naanLoop, this);
 }
