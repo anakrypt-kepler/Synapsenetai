@@ -828,19 +828,31 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
     }
 
     if (method == "blocks.list") {
+        std::vector<std::string> lines;
+        int totalEvents = 0;
+        {
+            std::ifstream bf(dataDir_ + "/blocks.jsonl");
+            if (bf.good()) {
+                std::string line;
+                while (std::getline(bf, line)) {
+                    if (!line.empty()) lines.push_back(line);
+                }
+            }
+        }
+        for (auto& l : lines) {
+            size_t ep = l.find("\"events\":");
+            if (ep != std::string::npos) totalEvents += std::atoi(l.c_str() + ep + 9);
+        }
+        uint64_t height = lines.empty() ? 0 : (uint64_t)lines.size();
+        int avgEvt = lines.empty() ? 0 : (totalEvents / (int)lines.size());
+
         std::ostringstream ss;
-        ss << "{\"height\":" << naanSubmissions_
-           << ",\"total_events\":" << naanSubmissions_
-           << ",\"avg_events_per_block\":" << (naanSubmissions_ > 0 ? 1 : 0)
+        ss << "{\"height\":" << height
+           << ",\"total_events\":" << totalEvents
+           << ",\"avg_events_per_block\":" << avgEvt
            << ",\"blocks\":[";
 
-        std::ifstream bf(dataDir_ + "/blocks.jsonl");
-        if (bf.good()) {
-            std::vector<std::string> lines;
-            std::string line;
-            while (std::getline(bf, line)) {
-                if (!line.empty()) lines.push_back(line);
-            }
+        {
             int start = lines.size() > 50 ? static_cast<int>(lines.size()) - 50 : 0;
             for (int i = static_cast<int>(lines.size()) - 1; i >= start; i--) {
                 if (i < static_cast<int>(lines.size()) - 1) ss << ",";
