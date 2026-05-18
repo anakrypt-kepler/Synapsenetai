@@ -267,6 +267,16 @@ private:
     mutable int64_t lastPeerProbe_ = 0;
     void probeSeedNodes() const;
 
+    mutable std::string ownOnion_;
+    mutable std::string onionPrivKey_;
+    mutable int listenFd_ = -1;
+    mutable std::thread listenerThread_;
+    mutable std::atomic<bool> listenerStop_{false};
+    void startOnionService() const;
+    void stopListener() const;
+    void p2pListenerLoop() const;
+    void announceToSeed(const std::string& seedOnion, uint16_t port) const;
+
     bool modelLoaded_ = false;
     std::string modelName_;
     std::string modelPath_;

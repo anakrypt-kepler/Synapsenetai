@@ -195,7 +195,9 @@ void SynapsedEngine::probeSeedNodes() const {
     std::vector<PeerEntry> peers;
 
     PeerEntry self;
-    self.address = nodeId_.substr(0, 8) + "...@local:8333";
+    self.address = ownOnion_.empty()
+        ? (nodeId_.substr(0, 8) + "...@local:8333")
+        : (ownOnion_ + ":8333");
     self.transport = "tor";
     self.latency_ms = 0;
     self.role = "local";
@@ -221,6 +223,255 @@ void SynapsedEngine::probeSeedNodes() const {
     cachedPeers_ = std::move(peers);
 }
 
+void SynapsedEngine::startOnionService() const {
+    if (!ownOnion_.empty()) return;
+
+    // Load saved private key if exists
+    std::string keyFile = dataDir_ + "/onion_key";
+    std::string keySpec = "NEW:ED25519-V3";
+    {
+        std::ifstream kf(keyFile);
+        if (kf) {
+            std::getline(kf, onionPrivKey_);
+            if (!onionPrivKey_.empty())
+                keySpec = onionPrivKey_;
+        }
+    }
+
+    // Bind local listener on a free port
+    listenFd_ = socket(AF_INET, SOCK_STREAM, 0);
+    if (listenFd_ < 0) return;
+
+    int opt = 1;
+    setsockopt(listenFd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in la{};
+    la.sin_family = AF_INET;
+    la.sin_port = htons(18333);
+    inet_pton(AF_INET, "127.0.0.1", &la.sin_addr);
+
+    if (bind(listenFd_, (struct sockaddr*)&la, sizeof(la)) < 0) {
+        // Try another port
+        la.sin_port = htons(18334);
+        if (bind(listenFd_, (struct sockaddr*)&la, sizeof(la)) < 0) {
+            CLOSESOCK(listenFd_);
+            listenFd_ = -1;
+            return;
+        }
+    }
+    listen(listenFd_, 16);
+
+    uint16_t localPort = ntohs(la.sin_port);
+
+    // Connect to Tor control and ADD_ONION
+    int cfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (cfd < 0) { CLOSESOCK(listenFd_); listenFd_ = -1; return; }
+
+    struct timeval tv{5, 0};
+    setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in ca{};
+    ca.sin_family = AF_INET;
+    inet_pton(AF_INET, "127.0.0.1", &ca.sin_addr);
+
+    bool connected = false;
+    int ports[] = {9151, 9051};
+    for (int p : ports) {
+        ca.sin_port = htons(p);
+        if (::connect(cfd, (struct sockaddr*)&ca, sizeof(ca)) == 0) {
+            connected = true;
+            break;
+        }
+        CLOSESOCK(cfd);
+        cfd = socket(AF_INET, SOCK_STREAM, 0);
+        if (cfd < 0) { CLOSESOCK(listenFd_); listenFd_ = -1; return; }
+        setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    }
+    if (!connected) { CLOSESOCK(cfd); CLOSESOCK(listenFd_); listenFd_ = -1; return; }
+
+    // Authenticate
+    std::string auth = "AUTHENTICATE\r\n";
+    send(cfd, auth.c_str(), auth.size(), 0);
+    char buf[2048];
+    ssize_t n = recv(cfd, buf, sizeof(buf) - 1, 0);
+    if (n <= 0 || std::string(buf, n).find("250") == std::string::npos) {
+        CLOSESOCK(cfd);
+        CLOSESOCK(listenFd_); listenFd_ = -1;
+        return;
+    }
+
+    // ADD_ONION
+    std::string addCmd = "ADD_ONION " + keySpec +
+        " Flags=DiscardPK Port=8333,127.0.0.1:" + std::to_string(localPort) + "\r\n";
+    if (keySpec.find("ED25519") != std::string::npos && keySpec.find("NEW:") == 0) {
+        // New key — don't discard, save it
+        addCmd = "ADD_ONION " + keySpec +
+            " Port=8333,127.0.0.1:" + std::to_string(localPort) + "\r\n";
+    }
+    send(cfd, addCmd.c_str(), addCmd.size(), 0);
+
+    std::string resp;
+    while (true) {
+        n = recv(cfd, buf, sizeof(buf) - 1, 0);
+        if (n <= 0) break;
+        buf[n] = 0;
+        resp += buf;
+        if (resp.find("250 OK") != std::string::npos) break;
+        if (resp.find("510") != std::string::npos || resp.find("512") != std::string::npos ||
+            resp.find("513") != std::string::npos || resp.find("550") != std::string::npos) break;
+    }
+
+    send(cfd, "QUIT\r\n", 6, 0);
+    CLOSESOCK(cfd);
+
+    // Parse ServiceID and PrivateKey
+    for (const auto& token : {std::string("250-ServiceID="), std::string("ServiceID=")}) {
+        auto pos = resp.find(token);
+        if (pos != std::string::npos) {
+            size_t start = pos + token.size();
+            size_t end = resp.find_first_of("\r\n ", start);
+            ownOnion_ = resp.substr(start, end - start) + ".onion";
+            break;
+        }
+    }
+
+    auto pkPos = resp.find("250-PrivateKey=");
+    if (pkPos != std::string::npos) {
+        size_t start = pkPos + 15;
+        size_t end = resp.find_first_of("\r\n", start);
+        onionPrivKey_ = resp.substr(start, end - start);
+        // Save key for persistence
+        std::ofstream kf(keyFile);
+        if (kf) kf << onionPrivKey_;
+    }
+
+    if (ownOnion_.empty()) {
+        CLOSESOCK(listenFd_); listenFd_ = -1;
+        return;
+    }
+
+    // Start listener thread
+    listenerStop_.store(false);
+    listenerThread_ = std::thread([this]() { p2pListenerLoop(); });
+    listenerThread_.detach();
+}
+
+void SynapsedEngine::stopListener() const {
+    listenerStop_.store(true);
+    if (listenFd_ >= 0) {
+        CLOSESOCK(listenFd_);
+        listenFd_ = -1;
+    }
+}
+
+void SynapsedEngine::p2pListenerLoop() const {
+    while (!listenerStop_.load()) {
+        struct timeval tv{1, 0};
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(listenFd_, &fds);
+
+        int r = select(listenFd_ + 1, &fds, nullptr, nullptr, &tv);
+        if (r <= 0) continue;
+
+        struct sockaddr_in peer{};
+        socklen_t plen = sizeof(peer);
+        int cfd = accept(listenFd_, (struct sockaddr*)&peer, &plen);
+        if (cfd < 0) continue;
+
+        // Read peer announce: "SYNAPSE_PEER <onion_address>\n"
+        char buf[512];
+        ssize_t n = recv(cfd, buf, sizeof(buf) - 1, 0);
+        if (n > 0) {
+            buf[n] = 0;
+            std::string msg(buf);
+            if (msg.find("SYNAPSE_PEER ") == 0) {
+                std::string peerAddr = trim(msg.substr(13));
+                if (!peerAddr.empty() && peerAddr.find(".onion") != std::string::npos) {
+                    // Add to known peers
+                    bool found = false;
+                    for (const auto& p : cachedPeers_) {
+                        if (p.address == peerAddr) { found = true; break; }
+                    }
+                    if (!found) {
+                        PeerEntry pe;
+                        pe.address = peerAddr;
+                        pe.transport = "tor";
+                        pe.latency_ms = 0;
+                        pe.role = "peer";
+                        pe.alive = true;
+                        cachedPeers_.push_back(pe);
+                    }
+                }
+            }
+            // Reply with our address
+            std::string reply = "SYNAPSE_ACK " + ownOnion_ + ":8333\n";
+            send(cfd, reply.c_str(), reply.size(), 0);
+        }
+        CLOSESOCK(cfd);
+    }
+}
+
+void SynapsedEngine::announceToSeed(const std::string& seedOnion, uint16_t port) const {
+    if (ownOnion_.empty()) return;
+
+    std::string msg = "SYNAPSE_PEER " + ownOnion_ + ":8333\n";
+
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return;
+
+    struct timeval tv{5, 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    // Connect via SOCKS5 to seed node
+    struct sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(9050);
+    inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr);
+
+    if (connect(fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) {
+        CLOSESOCK(fd);
+        return;
+    }
+
+    // SOCKS5 handshake
+    uint8_t greeting[] = {0x05, 0x01, 0x00};
+    send(fd, (char*)greeting, 3, 0);
+    uint8_t gresp[2];
+    if (recv(fd, (char*)gresp, 2, 0) != 2 || gresp[1] != 0x00) {
+        CLOSESOCK(fd);
+        return;
+    }
+
+    // SOCKS5 connect
+    std::vector<uint8_t> req;
+    req.push_back(0x05); req.push_back(0x01); req.push_back(0x00); req.push_back(0x03);
+    req.push_back((uint8_t)seedOnion.size());
+    req.insert(req.end(), seedOnion.begin(), seedOnion.end());
+    req.push_back((port >> 8) & 0xFF);
+    req.push_back(port & 0xFF);
+    send(fd, (char*)req.data(), req.size(), 0);
+
+    uint8_t resp[10];
+    ssize_t n = recv(fd, (char*)resp, sizeof(resp), 0);
+    if (n < 2 || resp[1] != 0x00) {
+        CLOSESOCK(fd);
+        return;
+    }
+
+    // Send announce
+    send(fd, msg.c_str(), msg.size(), 0);
+
+    // Read ACK
+    char buf[256];
+    recv(fd, buf, sizeof(buf) - 1, 0);
+
+    CLOSESOCK(fd);
+}
+
 int SynapsedEngine::init(const std::string& configPath) {
     std::lock_guard<std::mutex> lock(mtx_);
     if (initialized_) return -1;
@@ -238,7 +489,18 @@ int SynapsedEngine::init(const std::string& configPath) {
     auto ti = queryTorControl();
     if (ti.connected) {
         connectionType_ = "tor";
-        peerCount_ = ti.circuits > 0 ? ti.circuits : 1;
+        torBootstrap_ = ti.bootstrap;
+        torCircuits_ = ti.circuits;
+
+        startOnionService();
+
+        // Announce to seeds in background
+        if (!ownOnion_.empty()) {
+            std::thread([this]() {
+                announceToSeed("nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion", 8333);
+                announceToSeed("ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion", 8333);
+            }).detach();
+        }
     } else {
         connectionType_ = "clearnet";
     }
@@ -249,6 +511,7 @@ int SynapsedEngine::init(const std::string& configPath) {
 
 void SynapsedEngine::shutdown() {
     stopNaan();
+    stopListener();
     std::lock_guard<std::mutex> lock(mtx_);
     if (!initialized_) return;
     initialized_ = false;
