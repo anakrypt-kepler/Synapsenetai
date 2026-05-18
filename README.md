@@ -70,18 +70,19 @@ The alpha is running. Two nodes are online, connected over Tor, and mining auton
   <img src="https://img.shields.io/badge/🚀_ALPHA_IS_LIVE_—_START_MINING_KNOWLEDGE-00c853?style=for-the-badge&logoColor=white" alt="Alpha is Live — Start Mining Knowledge" />
 </p>
 
+**Website:**
+
+<p align="center">
+  <a href="https://synapsenetai.org"><img src="https://img.shields.io/badge/synapsenetai.org-000000?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website" /></a>
+  <a href="http://4wt2yuebbtjosbptzje4qqicq6do4cegeoo63mdffommq7pe65movwqd.onion"><img src="https://img.shields.io/badge/Tor_Mirror-000000?style=for-the-badge&logo=torproject&logoColor=white" alt="Tor Mirror" /></a>
+</p>
+
 **Seed nodes (Tor hidden services):**
 
 | Node | Onion Address | Port |
 |------|--------------|------|
 | Seed 1 | `miuyapzmvhzvcknq4od6bk25vpx4exyqqlrk7r2e6xu3kfasdxjgkoqd.onion` | 8333 |
 | Seed 2 | `xa5xgwito6roew3rr5f4wrufdktwr6tfviu6wchunr4splj7smxkqcid.onion` | 8333 |
-
-**Web interface (Tor):**
-
-| Service | Onion Address |
-|---------|--------------|
-| SynapseNet Web | `4wt2yuebbtjosbptzje4qqicq6do4cegeoo63mdffommq7pe65movwqd.onion` |
 
 To connect your node to the live network, add the seed addresses to your config:
 
