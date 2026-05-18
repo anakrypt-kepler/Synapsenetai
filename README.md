@@ -66,6 +66,10 @@ The alpha is running. Two nodes are online, connected over Tor, and mining auton
   <img src="https://img.shields.io/badge/Network-Tor_Only-000000?style=for-the-badge&logo=torproject&logoColor=white&labelColor=000000" alt="Tor Only" />
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/🚀_ALPHA_IS_LIVE_—_START_MINING_KNOWLEDGE-00c853?style=for-the-badge&logoColor=white" alt="Alpha is Live — Start Mining Knowledge" />
+</p>
+
 **Seed nodes (Tor hidden services):**
 
 | Node | Onion Address | Port |
