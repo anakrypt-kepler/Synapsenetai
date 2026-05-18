@@ -97,9 +97,9 @@
   <div class="section-title">SEED PHRASE</div>
   <button class="btn-secondary seed-toggle" on:click={toggleSeed}>
     {#if seedVisible}
-      <span class="eye">&#x1F441;</span> [ HIDE SEED ]
+      [ HIDE SEED ]
     {:else}
-      <span class="eye-closed">&#x2014;</span> [ SHOW SEED ]
+      [ SHOW SEED ]
     {/if}
   </button>
   {#if seedVisible && seedPhrase}
@@ -141,13 +141,7 @@
   }
 
   .seed-toggle {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .eye, .eye-closed {
-    font-size: 12px;
+    display: inline-block;
   }
 
   .seed-display {

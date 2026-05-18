@@ -252,6 +252,7 @@ private:
     mutable int peerCount_ = 0;
     mutable std::string connectionType_ = "disconnected";
     std::string walletAddress_;
+    std::string walletMnemonic_;
     std::string balance_ = "0.00";
     mutable std::string torBootstrap_;
     mutable int torCircuits_ = 0;

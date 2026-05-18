@@ -1,4 +1,5 @@
 #include "ide/synapsed_engine.h"
+#include "crypto/keys.h"
 
 #include <algorithm>
 #include <array>
@@ -484,7 +485,23 @@ int SynapsedEngine::init(const std::string& configPath) {
     const char* home = std::getenv("HOME");
     dataDir_ = home ? std::string(home) + "/.synapsenet" : "/tmp/.synapsenet";
 
-    walletAddress_ = "ngt1" + sha256Hex(nodeId_ + std::to_string(startTime_)).substr(0, 40);
+    {
+        std::string walletPath = dataDir_ + "/wallet.key";
+        crypto::Keys keys;
+        std::ifstream wf(walletPath);
+        if (wf.good()) {
+            wf.close();
+            keys.load(walletPath, "");
+            walletMnemonic_ = keys.toMnemonic();
+        }
+        if (!keys.isValid()) {
+            keys.generate();
+            walletMnemonic_ = keys.generateMnemonic(24);
+            keys.fromMnemonic(walletMnemonic_);
+            keys.save(walletPath, "");
+        }
+        walletAddress_ = keys.getAddress();
+    }
 
     generateTorrc();
 
@@ -541,46 +558,48 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
     if (method == "model.status") return modelStatus();
 
     if (method == "wallet.info") {
-        if (walletAddress_.empty()) {
-            walletAddress_ = "ngt1" + sha256Hex(nodeId_ + std::to_string(startTime_)).substr(0, 40);
-        }
         return "{\"address\":\"" + jsonEscape(walletAddress_) +
                "\",\"balance\":\"" + balance_ + "\"}";
     }
 
     if (method == "wallet.create") {
-        if (walletAddress_.empty()) {
-            walletAddress_ = "ngt1" + sha256Hex(nodeId_ + std::to_string(startTime_)).substr(0, 40);
-        }
+        crypto::Keys keys;
+        keys.generate();
+        walletMnemonic_ = keys.generateMnemonic(24);
+        keys.fromMnemonic(walletMnemonic_);
+        walletAddress_ = keys.getAddress();
+        keys.save(dataDir_ + "/wallet.key", "");
         return "{\"address\":\"" + jsonEscape(walletAddress_) + "\",\"ok\":true}";
     }
 
     if (method == "wallet.seed") {
-        std::string seed = sha256Hex(nodeId_ + walletAddress_ + "seed");
-        std::string words;
-        static const char* wordlist[] = {
-            "abandon","ability","able","about","above","absent","absorb","abstract",
-            "absurd","abuse","access","accident","account","accuse","achieve","acid",
-            "acquire","across","act","action","actor","actual","adapt","add"
-        };
-        for (int i = 0; i < 12; i++) {
-            if (i > 0) words += " ";
-            unsigned val = 0;
-            for (int j = 0; j < 2; j++) {
-                char c = seed[(i * 2 + j) % seed.size()];
-                val = val * 16 + (c >= 'a' ? c - 'a' + 10 : c - '0');
+        return "{\"seed\":\"" + jsonEscape(walletMnemonic_) + "\"}";
+    }
+
+    if (method == "wallet.restore") {
+        size_t seedPos = paramsJson.find("\"seed\"");
+        if (seedPos != std::string::npos) {
+            size_t q1 = paramsJson.find('"', seedPos + 6);
+            size_t q2 = paramsJson.find('"', q1 + 1);
+            if (q1 != std::string::npos && q2 != std::string::npos) {
+                std::string mnemonic = paramsJson.substr(q1 + 1, q2 - q1 - 1);
+                crypto::Keys keys;
+                if (keys.fromMnemonic(mnemonic)) {
+                    walletMnemonic_ = mnemonic;
+                    walletAddress_ = keys.getAddress();
+                    keys.save(dataDir_ + "/wallet.key", "");
+                    return "{\"address\":\"" + jsonEscape(walletAddress_) + "\",\"ok\":true}";
+                }
             }
-            words += wordlist[val % 24];
         }
-        return "{\"seed\":\"" + words + "\"}";
+        return "{\"error\":\"invalid mnemonic\"}";
     }
 
     if (method == "wallet.export") {
-        std::string path = dataDir_ + "/wallet_export.dat";
-        std::ofstream out(path);
-        if (out) {
-            out << walletAddress_ << "\n" << nodeId_ << "\n";
-            out.close();
+        std::string path = dataDir_ + "/wallet_export.key";
+        crypto::Keys keys;
+        if (keys.fromMnemonic(walletMnemonic_)) {
+            keys.save(path, "");
         }
         return "{\"ok\":true,\"path\":\"" + jsonEscape(path) + "\"}";
     }
