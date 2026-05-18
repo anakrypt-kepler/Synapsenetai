@@ -593,6 +593,23 @@ int SynapsedEngine::init(const std::string& configPath) {
     dataDir_ = home ? std::string(home) + "/.synapsenet" : "/tmp/.synapsenet";
 
     {
+        std::ifstream nbf(dataDir_ + "/naan_blocks.jsonl");
+        if (nbf.good()) {
+            std::string line;
+            int maxH = 0;
+            while (std::getline(nbf, line)) {
+                if (line.empty()) continue;
+                size_t hp = line.find("\"height\":");
+                if (hp != std::string::npos) {
+                    int h = std::atoi(line.c_str() + hp + 9);
+                    if (h > maxH) maxH = h;
+                }
+            }
+            naanSubmissions_ = maxH;
+        }
+    }
+
+    {
         std::string walletPath = dataDir_ + "/wallet.key";
         std::string mnemonicPath = dataDir_ + "/wallet.mnemonic";
         crypto::Keys keys;
