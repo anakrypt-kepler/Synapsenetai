@@ -171,7 +171,7 @@ static bool socks5ConnectTarget(int sock, const std::string& targetHost, uint16_
 
     if (authResp[1] == 0x02) {
         // Username/password authentication subnegotiation (RFC 1929)
-        if (socksUsername.empty()) return false;
+        // Tor accepts empty username/password for SOCKS5 auth
         std::vector<uint8_t> authReq;
         authReq.push_back(0x01); // subnegotiation version
         authReq.push_back(static_cast<uint8_t>(socksUsername.size()));
