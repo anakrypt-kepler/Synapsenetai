@@ -581,6 +581,91 @@ void SynapsedEngine::fetchBlocksFromSeed(const std::string& seedOnion) {
     } catch (...) {}
 }
 
+std::vector<std::string> SynapsedEngine::fetchPeersFromSeed(const std::string& seedOnion) {
+    std::vector<std::string> out;
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return out;
+
+    struct timeval tv{15, 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(9050);
+    inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr);
+
+    if (connect(fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) { CLOSESOCK(fd); return out; }
+
+    // SOCKS5 handshake
+    uint8_t greeting[] = {0x05, 0x02, 0x00, 0x02};
+    send(fd, (char*)greeting, 4, 0);
+    uint8_t gresp[2];
+    if (recv(fd, (char*)gresp, 2, 0) != 2 || gresp[0] != 0x05) { CLOSESOCK(fd); return out; }
+    if (gresp[1] == 0x02) {
+        uint8_t auth[] = {0x01, 0x00, 0x00};
+        send(fd, (char*)auth, 3, 0);
+        uint8_t aresp[2];
+        if (recv(fd, (char*)aresp, 2, 0) != 2 || aresp[1] != 0x00) { CLOSESOCK(fd); return out; }
+    } else if (gresp[1] != 0x00) { CLOSESOCK(fd); return out; }
+
+    // SOCKS5 connect to RPC port 8332
+    std::vector<uint8_t> req;
+    req.push_back(0x05); req.push_back(0x01); req.push_back(0x00); req.push_back(0x03);
+    req.push_back((uint8_t)seedOnion.size());
+    req.insert(req.end(), seedOnion.begin(), seedOnion.end());
+    uint16_t rpcPort = 8332;
+    req.push_back((rpcPort >> 8) & 0xFF);
+    req.push_back(rpcPort & 0xFF);
+    send(fd, (char*)req.data(), req.size(), 0);
+
+    uint8_t resp[10];
+    ssize_t n = recv(fd, (char*)resp, sizeof(resp), 0);
+    if (n < 2 || resp[1] != 0x00) { CLOSESOCK(fd); return out; }
+
+    // Send HTTP RPC request for node.peers
+    std::string body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"node.peers\",\"params\":{}}";
+    std::string httpReq = "POST / HTTP/1.1\r\nHost: " + seedOnion + ":8332\r\n"
+        "Content-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) + "\r\n"
+        "Connection: close\r\n\r\n" + body;
+    send(fd, httpReq.c_str(), httpReq.size(), 0);
+
+    std::string response;
+    char buf[4096];
+    while (true) {
+        ssize_t r = recv(fd, buf, sizeof(buf) - 1, 0);
+        if (r <= 0) break;
+        buf[r] = '\0';
+        response += buf;
+    }
+    CLOSESOCK(fd);
+
+    auto bodyPos = response.find("\r\n\r\n");
+    if (bodyPos == std::string::npos) return out;
+    std::string jsonBody = response.substr(bodyPos + 4);
+
+    // Extract peer onion identities from displayAddress fields
+    try {
+        auto parsed = nlohmann::json::parse(jsonBody);
+        if (!parsed.contains("result")) return out;
+        auto& result = parsed["result"];
+        if (!result.is_array()) return out;
+        for (const auto& p : result) {
+            std::string disp;
+            if (p.contains("displayAddress") && p["displayAddress"].is_string())
+                disp = p["displayAddress"].get<std::string>();
+            else if (p.contains("address") && p["address"].is_string())
+                disp = p["address"].get<std::string>();
+            if (disp.find(".onion") == std::string::npos) continue;
+            // strip :port suffix
+            size_t colon = disp.find(':');
+            std::string onion = (colon != std::string::npos) ? disp.substr(0, colon) : disp;
+            out.push_back(onion);
+        }
+    } catch (...) {}
+    return out;
+}
+
 int SynapsedEngine::init(const std::string& configPath) {
     std::lock_guard<std::mutex> lock(mtx_);
     if (initialized_) return -1;
@@ -698,13 +783,32 @@ int SynapsedEngine::init(const std::string& configPath) {
             }).detach();
         }
 
-        // Periodically fetch blocks from VPS seeds
+        // Periodically fetch blocks and discover peers from VPS seeds
         blockFetchStop_ = false;
         blockFetchThread_ = std::thread([this]() {
+            const std::string seed1 = "nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion";
+            const std::string seed2 = "ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion";
             while (!blockFetchStop_.load()) {
-                fetchBlocksFromSeed("nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion");
+                fetchBlocksFromSeed(seed1);
                 if (blockFetchStop_.load()) break;
-                fetchBlocksFromSeed("ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion");
+                fetchBlocksFromSeed(seed2);
+                if (blockFetchStop_.load()) break;
+
+                // Discover other nodes connected to the seeds (peer visibility)
+                std::vector<std::string> peers = fetchPeersFromSeed(seed1);
+                if (blockFetchStop_.load()) break;
+                auto p2 = fetchPeersFromSeed(seed2);
+                peers.insert(peers.end(), p2.begin(), p2.end());
+                {
+                    std::lock_guard<std::mutex> lock(mtx_);
+                    std::vector<std::string> uniq;
+                    for (auto& o : peers) {
+                        if (o.empty() || o == ownOnion_ || o == seed1 || o == seed2) continue;
+                        if (std::find(uniq.begin(), uniq.end(), o) == uniq.end())
+                            uniq.push_back(o);
+                    }
+                    discoveredPeers_ = uniq;
+                }
                 if (blockFetchStop_.load()) break;
                 for (int s = 0; s < 10 && !blockFetchStop_.load(); ++s)
                     std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -815,21 +919,38 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         std::ostringstream ss;
         ss << "{\"peers\":[";
         int aliveCount = 0;
+        size_t emitted = 0;
         for (size_t i = 0; i < cachedPeers_.size(); i++) {
             const auto& p = cachedPeers_[i];
-            if (i > 0) ss << ",";
+            if (emitted > 0) ss << ",";
             ss << "{\"address\":\"" << jsonEscape(p.address)
                << "\",\"transport\":\"" << p.transport
                << "\",\"latency_ms\":" << p.latency_ms
                << ",\"connected_since\":\"" << p.role << "\"}";
+            emitted++;
             if (p.alive) aliveCount++;
+        }
+        // Append other miners discovered through the seed nodes
+        for (const auto& onion : discoveredPeers_) {
+            bool dup = false;
+            for (const auto& p : cachedPeers_) {
+                if (!onion.empty() && p.address.find(onion) != std::string::npos) { dup = true; break; }
+            }
+            if (dup) continue;
+            if (emitted > 0) ss << ",";
+            ss << "{\"address\":\"" << jsonEscape(onion) << ":8333\""
+               << ",\"transport\":\"tor\""
+               << ",\"latency_ms\":0"
+               << ",\"connected_since\":\"PEER\"}";
+            emitted++;
+            aliveCount++;
         }
         peerCount_ = aliveCount;
 
         ss << "],\"tor\":{\"bootstrap\":\"" << jsonEscape(ti.bootstrap)
            << "\",\"circuits\":" << ti.circuits
            << ",\"bridge_status\":\"" << (ti.connected ? "active" : "none")
-           << "\"},\"discovery\":{\"dns_queries\":0,\"peer_exchange\":" << (aliveCount > 1 ? aliveCount - 1 : 0) << "}"
+           << "\"},\"discovery\":{\"dns_queries\":0,\"peer_exchange\":" << discoveredPeers_.size() << "}"
            << ",\"bandwidth\":{\"inbound_kbps\":0,\"outbound_kbps\":0}}";
         return ss.str();
     }
@@ -1047,29 +1168,33 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         }
         std::ostringstream ss;
         ss << "{\"transactions\":[";
-        std::ifstream txf(dataDir_ + "/tx_history.jsonl");
-        if (txf.good()) {
-            std::string line;
-            int count = 0;
-            while (std::getline(txf, line)) {
-                if (line.empty()) continue;
-                if (filterType != "all") {
-                    if (filterType == "sent" && line.find("\"type\":\"sent\"") == std::string::npos) continue;
-                    if (filterType == "received" && line.find("\"type\":\"received\"") == std::string::npos) continue;
-                    if (filterType == "rewards" && line.find("\"type\":\"reward\"") == std::string::npos) continue;
+        bool first = true;
+        {
+            std::ifstream txf(dataDir_ + "/tx_history.jsonl");
+            if (txf.good()) {
+                std::string line;
+                while (std::getline(txf, line)) {
+                    if (line.empty()) continue;
+                    if (filterType != "all") {
+                        if (filterType == "sent" && line.find("\"type\":\"sent\"") == std::string::npos) continue;
+                        if (filterType == "received" && line.find("\"type\":\"received\"") == std::string::npos) continue;
+                        if (filterType == "rewards" && line.find("\"type\":\"reward\"") == std::string::npos) continue;
+                    }
+                    if (!first) ss << ",";
+                    first = false;
+                    ss << line;
                 }
-                if (count > 0) ss << ",";
-                ss << line;
-                count++;
             }
         }
-        for (size_t i = 0; i < naanHist_.size(); i++) {
-            auto& h = naanHist_[i];
-            if (filterType != "all" && filterType != "rewards") continue;
-            if (i > 0 || txf.good()) ss << ",";
-            ss << "{\"type\":\"reward\",\"amount\":\"" << std::fixed << std::setprecision(2) << h.ngt
-               << "\",\"timestamp\":\"" << h.title
-               << "\",\"status\":\"" << h.status << "\"}";
+        if (filterType == "all" || filterType == "rewards") {
+            for (size_t i = 0; i < naanHist_.size(); i++) {
+                auto& h = naanHist_[i];
+                if (!first) ss << ",";
+                first = false;
+                ss << "{\"type\":\"reward\",\"amount\":\"" << std::fixed << std::setprecision(2) << h.ngt
+                   << "\",\"timestamp\":\"" << jsonEscape(h.title)
+                   << "\",\"status\":\"" << jsonEscape(h.status) << "\"}";
+            }
         }
         ss << "]}";
         return ss.str();
@@ -1505,7 +1630,7 @@ std::string SynapsedEngine::getStatus() const {
         probeSeedNodes();
         int alive = 0;
         for (const auto& p : cachedPeers_) if (p.alive) alive++;
-        peerCount_ = alive;
+        peerCount_ = alive + static_cast<int>(discoveredPeers_.size());
     }
 
     int64_t uptime = nowMillis() - startTime_;
