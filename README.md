@@ -146,6 +146,123 @@ npm run tauri dev
 
 The app will auto-discover seed nodes over Tor, sync the blockchain, and begin NAAN mining. No manual configuration needed — just make sure Tor Browser is running in the background.
 
+### macOS Full Setup (AI-Assisted)
+
+Complete guide for building SynapseNet on macOS from scratch using any AI coding assistant. Copy each step into your AI tool and it will handle the rest.
+
+**Step 1 — Install system dependencies**
+
+```bash
+# Install Homebrew if not present
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install build tools and libraries
+brew install cmake openssl libsodium pkg-config
+
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+
+# Install Node.js (>= 18)
+brew install node
+```
+
+**Step 2 — Install and configure Tor**
+
+The app requires a standalone Tor process on port 9050. Tor Browser alone (port 9150) is not enough — the engine hardcodes SOCKS5 on port 9050.
+
+```bash
+# Install Tor
+brew install tor
+
+# Start Tor as a background service
+brew services start tor
+
+# Verify Tor is listening on port 9050
+lsof -i :9050
+# Should show: tor ... TCP localhost:9050 (LISTEN)
+```
+
+If you cannot use `brew install tor`, install from the expert bundle:
+
+```bash
+# Download and extract Tor expert bundle
+curl -LO https://www.torproject.org/dist/torbrowser/14.5.1/tor-expert-bundle-macos-aarch64-14.5.1.tar.gz
+mkdir -p ~/.local/bin && tar -xzf tor-expert-bundle-*.tar.gz -C ~/.local/
+export PATH="$HOME/.local/bin:$PATH"
+
+# Create config and start
+mkdir -p ~/.synapsenet
+echo "SocksPort 9050
+DataDirectory $HOME/.synapsenet/tor_data" > ~/.synapsenet/torrc
+
+~/.local/bin/tor -f ~/.synapsenet/torrc &
+
+# Verify
+lsof -i :9050
+```
+
+**Step 3 — Clone and build the native library**
+
+```bash
+git clone https://github.com/anakrypt-kepler/Synapsenetai.git
+cd Synapsenetai/KeplerSynapseNet
+
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIB=ON
+make -j$(sysctl -n hw.logicalcpu)
+cd ..
+```
+
+This produces two artifacts:
+- `build/synapsed` — full node daemon (for VPS/servers)
+- `build/libsynapsed.dylib` — shared library for the desktop app
+
+**Step 4 — Build and run the desktop app**
+
+```bash
+cd tauri-app
+npm install
+npm run tauri dev
+```
+
+The app will launch, connect to seed nodes over Tor, and sync the blockchain automatically.
+
+**Step 5 — Verify everything works**
+
+Check these indicators in the app:
+- **MAIN tab**: Connection should show `TOR`, Peers should be `2+`
+- **NET tab**: Both seed nodes listed with `SEED` status
+- **BLOCKS tab**: Block height should match the network (currently 4+)
+- **Status bar**: Should show `TOR | 2P+ | BLK#4+`
+
+If `BLK#0` after 2 minutes — restart the app (Cmd+Q, relaunch). Make sure Tor is running on port 9050 before launching.
+
+**Step 6 — Start mining**
+
+Go to the **NAAN** tab and press **START**. The agent will begin autonomous knowledge mining and earning NGT.
+
+**Troubleshooting**
+
+| Problem | Fix |
+|---------|-----|
+| `BLK#0` stays after launch | Tor not running on port 9050. Run `lsof -i :9050` to check. |
+| `PEERS: 0` | Tor not connected. Restart Tor: `brew services restart tor` |
+| `NAAN: OFF` after clicking START | Check AI model. Go to SET tab, load a GGUF model from `~/.synapsenet/models/` |
+| App crashes on NAAN start/stop | Update to latest `libsynapsed.dylib` — deadlock fix was shipped in V9 |
+| Build fails on `cmake` | Make sure OpenSSL and libsodium are installed: `brew install openssl libsodium` |
+| `pkg-config` errors | Run `export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"` before cmake |
+
+**Minimum requirements**
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| RAM | 4 GB | 8 GB (for AI model) |
+| Disk | 10 GB | 50 GB |
+| CPU | 2 cores | 4 cores |
+| macOS | 13+ (Ventura) | 14+ (Sonoma) |
+| Network | Any (routed through Tor) | Stable connection |
+
 **What you get:**
 - Full chain sync from VPS validators via Tor
 - Live block explorer in the BLOCKS tab
