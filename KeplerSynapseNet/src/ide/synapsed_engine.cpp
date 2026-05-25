@@ -623,8 +623,8 @@ std::vector<std::string> SynapsedEngine::fetchPeersFromSeed(const std::string& s
     ssize_t n = recv(fd, (char*)resp, sizeof(resp), 0);
     if (n < 2 || resp[1] != 0x00) { CLOSESOCK(fd); return out; }
 
-    // Send HTTP RPC request for node.peers
-    std::string body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"node.peers\",\"params\":{}}";
+    // Send HTTP RPC request for peer.directory (presence list of online nodes)
+    std::string body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"peer.directory\",\"params\":{}}";
     std::string httpReq = "POST / HTTP/1.1\r\nHost: " + seedOnion + ":8332\r\n"
         "Content-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) + "\r\n"
         "Connection: close\r\n\r\n" + body;
@@ -644,26 +644,73 @@ std::vector<std::string> SynapsedEngine::fetchPeersFromSeed(const std::string& s
     if (bodyPos == std::string::npos) return out;
     std::string jsonBody = response.substr(bodyPos + 4);
 
-    // Extract peer onion identities from displayAddress fields
+    // Extract onions from the presence directory: {"result":{"peers":[{"onion":...}]}}
     try {
         auto parsed = nlohmann::json::parse(jsonBody);
         if (!parsed.contains("result")) return out;
         auto& result = parsed["result"];
-        if (!result.is_array()) return out;
-        for (const auto& p : result) {
-            std::string disp;
-            if (p.contains("displayAddress") && p["displayAddress"].is_string())
-                disp = p["displayAddress"].get<std::string>();
-            else if (p.contains("address") && p["address"].is_string())
-                disp = p["address"].get<std::string>();
-            if (disp.find(".onion") == std::string::npos) continue;
-            // strip :port suffix
-            size_t colon = disp.find(':');
-            std::string onion = (colon != std::string::npos) ? disp.substr(0, colon) : disp;
+        if (!result.contains("peers") || !result["peers"].is_array()) return out;
+        for (const auto& p : result["peers"]) {
+            if (!p.contains("onion") || !p["onion"].is_string()) continue;
+            std::string onion = p["onion"].get<std::string>();
+            if (onion.find(".onion") == std::string::npos) continue;
+            size_t colon = onion.find(':');
+            if (colon != std::string::npos) onion = onion.substr(0, colon);
             out.push_back(onion);
         }
     } catch (...) {}
     return out;
+}
+
+void SynapsedEngine::announcePresenceToSeed(const std::string& seedOnion) {
+    if (ownOnion_.empty()) return;
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return;
+
+    struct timeval tv{15, 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(9050);
+    inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr);
+    if (connect(fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) { CLOSESOCK(fd); return; }
+
+    uint8_t greeting[] = {0x05, 0x02, 0x00, 0x02};
+    send(fd, (char*)greeting, 4, 0);
+    uint8_t gresp[2];
+    if (recv(fd, (char*)gresp, 2, 0) != 2 || gresp[0] != 0x05) { CLOSESOCK(fd); return; }
+    if (gresp[1] == 0x02) {
+        uint8_t auth[] = {0x01, 0x00, 0x00};
+        send(fd, (char*)auth, 3, 0);
+        uint8_t aresp[2];
+        if (recv(fd, (char*)aresp, 2, 0) != 2 || aresp[1] != 0x00) { CLOSESOCK(fd); return; }
+    } else if (gresp[1] != 0x00) { CLOSESOCK(fd); return; }
+
+    std::vector<uint8_t> req;
+    req.push_back(0x05); req.push_back(0x01); req.push_back(0x00); req.push_back(0x03);
+    req.push_back((uint8_t)seedOnion.size());
+    req.insert(req.end(), seedOnion.begin(), seedOnion.end());
+    uint16_t rpcPort = 8332;
+    req.push_back((rpcPort >> 8) & 0xFF);
+    req.push_back(rpcPort & 0xFF);
+    send(fd, (char*)req.data(), req.size(), 0);
+
+    uint8_t resp[10];
+    ssize_t n = recv(fd, (char*)resp, sizeof(resp), 0);
+    if (n < 2 || resp[1] != 0x00) { CLOSESOCK(fd); return; }
+
+    std::string body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"peer.announce\",\"params\":{\"onion\":\""
+        + ownOnion_ + "\"}}";
+    std::string httpReq = "POST / HTTP/1.1\r\nHost: " + seedOnion + ":8332\r\n"
+        "Content-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) + "\r\n"
+        "Connection: close\r\n\r\n" + body;
+    send(fd, httpReq.c_str(), httpReq.size(), 0);
+
+    char buf[512];
+    recv(fd, buf, sizeof(buf), 0);  // drain, don't care about body
+    CLOSESOCK(fd);
 }
 
 int SynapsedEngine::init(const std::string& configPath) {
@@ -794,7 +841,13 @@ int SynapsedEngine::init(const std::string& configPath) {
                 fetchBlocksFromSeed(seed2);
                 if (blockFetchStop_.load()) break;
 
-                // Discover other nodes connected to the seeds (peer visibility)
+                // Register our presence so other nodes can discover us
+                announcePresenceToSeed(seed1);
+                if (blockFetchStop_.load()) break;
+                announcePresenceToSeed(seed2);
+                if (blockFetchStop_.load()) break;
+
+                // Discover other nodes from the seed directory (peer visibility)
                 std::vector<std::string> peers = fetchPeersFromSeed(seed1);
                 if (blockFetchStop_.load()) break;
                 auto p2 = fetchPeersFromSeed(seed2);

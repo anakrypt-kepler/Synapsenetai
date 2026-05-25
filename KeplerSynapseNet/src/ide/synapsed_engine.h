@@ -279,6 +279,7 @@ private:
     void announceToSeed(const std::string& seedOnion, uint16_t port) const;
     void fetchBlocksFromSeed(const std::string& seedOnion);
     std::vector<std::string> fetchPeersFromSeed(const std::string& seedOnion);
+    void announcePresenceToSeed(const std::string& seedOnion);
     mutable std::vector<std::string> discoveredPeers_;
     mutable std::atomic<uint64_t> lastBlockHeight_{0};
     mutable std::atomic<uint32_t> seedPeerCount_{0};

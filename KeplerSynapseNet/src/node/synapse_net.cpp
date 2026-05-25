@@ -2041,6 +2041,49 @@ std::string handleRpcNodePeers(const std::string& paramsJson) {
         [this](const network::Peer& peer) { return getPeerDisplayInfo(peer); });
 }
 
+std::string handleRpcPeerAnnounce(const std::string& paramsJson) {
+    auto params = parseRpcParams(paramsJson);
+    std::string onion = params.value("onion", std::string());
+    // basic validation: must look like an onion hostname
+    if (onion.size() < 16 || onion.find(".onion") == std::string::npos) {
+        return "{\"error\":\"invalid onion\"}";
+    }
+    int64_t now = static_cast<int64_t>(std::time(nullptr));
+    {
+        std::lock_guard<std::mutex> lock(presenceMtx_);
+        presenceMap_[onion] = now;
+        // prune stale (> 600s) and cap directory size
+        for (auto it = presenceMap_.begin(); it != presenceMap_.end();) {
+            if (now - it->second > 600) it = presenceMap_.erase(it);
+            else ++it;
+        }
+    }
+    return "{\"ok\":true}";
+}
+
+std::string handleRpcPeerDirectory(const std::string& paramsJson) {
+    (void)paramsJson;
+    int64_t now = static_cast<int64_t>(std::time(nullptr));
+    json arr = json::array();
+    {
+        std::lock_guard<std::mutex> lock(presenceMtx_);
+        for (auto it = presenceMap_.begin(); it != presenceMap_.end();) {
+            int64_t age = now - it->second;
+            if (age > 600) { it = presenceMap_.erase(it); continue; }
+            if (age <= 300) {
+                json p;
+                p["onion"] = it->first;
+                p["last_seen"] = age;
+                arr.push_back(p);
+            }
+            ++it;
+        }
+    }
+    json out;
+    out["peers"] = arr;
+    return out.dump();
+}
+
 std::string handleRpcNodeLogs(const std::string& paramsJson) {
     auto params = parseRpcParams(paramsJson);
     size_t limit = 100;
@@ -4796,6 +4839,8 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
 		    std::mutex implantSafetyMtx_;
 		    std::mutex updateInstallMtx_;
 		    std::mutex invMtx_;
+		    mutable std::mutex presenceMtx_;
+		    std::map<std::string, int64_t> presenceMap_;
 		    std::mutex poeSyncMtx_;
 		    std::unordered_map<std::string, PoePeerSyncState> poeSync_;
 	    std::unordered_map<uint64_t, uint64_t> requestedBlocks_;
