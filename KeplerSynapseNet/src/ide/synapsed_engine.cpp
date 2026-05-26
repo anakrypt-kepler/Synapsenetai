@@ -728,12 +728,24 @@ void SynapsedEngine::announcePresenceToSeed(const std::string& seedOnion) {
     CLOSESOCK(fd);
 }
 
+static bool isValidV3Onion(const std::string& s) {
+    // Tor v3 onion = 56 base32 chars (a-z,2-7) + ".onion"
+    const std::string suf = ".onion";
+    if (s.size() != 56 + suf.size()) return false;
+    if (s.compare(s.size() - suf.size(), suf.size(), suf) != 0) return false;
+    for (size_t i = 0; i < 56; i++) {
+        char c = s[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '2' && c <= '7'))) return false;
+    }
+    return true;
+}
+
 void SynapsedEngine::mergeKnownPeer(const std::string& onionRaw, const std::string& source, bool connected) const {
     std::string onion = onionRaw;
     size_t colon = onion.find(':');
     if (colon != std::string::npos) onion = onion.substr(0, colon);
     onion = trim(onion);
-    if (onion.empty() || onion.find(".onion") == std::string::npos) return;
+    if (!isValidV3Onion(onion)) return;  // reject malformed / junk onions
     if (onion == ownOnion_) return;  // never store self
     std::lock_guard<std::mutex> lock(knownPeersMtx_);
     auto& kp = knownPeers_[onion];
@@ -824,7 +836,7 @@ void SynapsedEngine::loadPeerCache() const {
         std::istringstream iss(line);
         std::string onion; int64_t ls = 0;
         iss >> onion >> ls;
-        if (onion.find(".onion") == std::string::npos) continue;
+        if (!isValidV3Onion(onion)) continue;  // skip malformed / junk cache lines
         if (onion == ownOnion_) continue;
         KnownPeer kp;
         kp.onion = onion;
