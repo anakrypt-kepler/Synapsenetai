@@ -7,6 +7,7 @@
     transport: string;
     latency_ms: number;
     connected_since: string;
+    online?: boolean;
   }
 
   let peers: PeerInfo[] = [];
@@ -35,9 +36,8 @@
 
   // Connections = everyone except our own LOCAL entry
   $: connectionCount = peers.filter((p) => p.connected_since !== "LOCAL").length;
-  $: seedCount = peers.filter((p) => p.connected_since === "SEED").length;
-  // ONLINE once Tor is fully bootstrapped and we are linked to the network
-  $: isOnline = torStatus.bootstrap === "100%" && seedCount >= 1;
+  // ONLINE once at least one seed is reachable (responded) — that means we're on the network
+  $: isOnline = peers.some((p) => p.connected_since === "SEED" && p.online);
 </script>
 
 <div class="content-area">
@@ -108,16 +108,16 @@
     <svg viewBox="0 0 400 160" width="100%" height="140">
       <rect width="400" height="160" fill="none" stroke="var(--border)" stroke-width="1" />
       {#each peers as peer, i}
-        <rect
-          x={46 + (i % 8) * 45}
-          y={30 + Math.floor(i / 8) * 40}
-          width="8" height="8"
-          fill="var(--text-primary)"
+        <circle
+          cx={50 + (i % 8) * 45}
+          cy={34 + Math.floor(i / 8) * 40}
+          r="5"
+          fill={peer.online ? "#00c853" : "#444"}
         />
         <text
           x={50 + (i % 8) * 45}
-          y={50 + Math.floor(i / 8) * 40}
-          fill="var(--text-secondary)"
+          y={52 + Math.floor(i / 8) * 40}
+          fill={peer.online ? "var(--text-secondary)" : "#555"}
           font-size="6"
           font-family="Silkscreen, monospace"
           text-anchor="middle"

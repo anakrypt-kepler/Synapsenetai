@@ -1149,6 +1149,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             ss << "{\"address\":\"" << jsonEscape(p.address)
                << "\",\"transport\":\"" << p.transport
                << "\",\"latency_ms\":" << p.latency_ms
+               << ",\"online\":" << (p.alive ? "true" : "false")
                << ",\"connected_since\":\"" << p.role << "\"}";
             emitted++;
             if (p.alive) aliveCount++;
@@ -1166,14 +1167,16 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                     if (p.address.find(kp.onion) != std::string::npos) { dup = true; break; }
                 }
                 if (dup) continue;
-                std::string tag = "PEER";
+                // online = confirmed within the last 90s (active); otherwise known-but-offline
+                bool peerOnline = (now - kp.lastSeen) < 90000;
                 if (emitted > 0) ss << ",";
                 ss << "{\"address\":\"" << jsonEscape(kp.onion) << ":8333\""
                    << ",\"transport\":\"tor\""
                    << ",\"latency_ms\":0"
-                   << ",\"connected_since\":\"" << tag << "\"}";
+                   << ",\"online\":" << (peerOnline ? "true" : "false")
+                   << ",\"connected_since\":\"PEER\"}";
                 emitted++;
-                aliveCount++;
+                if (peerOnline) aliveCount++;
                 meshPeers++;
             }
         }
