@@ -1166,10 +1166,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                     if (p.address.find(kp.onion) != std::string::npos) { dup = true; break; }
                 }
                 if (dup) continue;
-                std::string tag = kp.connected ? "PEX" :
-                    (kp.source == "directory" ? "DIR" :
-                     kp.source == "inbound" ? "IN" :
-                     kp.source == "cache" ? "CACHE" : "PEER");
+                std::string tag = "PEER";
                 if (emitted > 0) ss << ",";
                 ss << "{\"address\":\"" << jsonEscape(kp.onion) << ":8333\""
                    << ",\"transport\":\"tor\""

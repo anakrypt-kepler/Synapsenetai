@@ -32,10 +32,21 @@
       bandwidth = parsed.bandwidth || bandwidth;
     } catch {}
   }
+
+  // Connections = everyone except our own LOCAL entry
+  $: connectionCount = peers.filter((p) => p.connected_since !== "LOCAL").length;
+  $: seedCount = peers.filter((p) => p.connected_since === "SEED").length;
+  // ONLINE once Tor is fully bootstrapped and we are linked to the network
+  $: isOnline = torStatus.bootstrap === "100%" && seedCount >= 1;
 </script>
 
 <div class="content-area">
-  <div class="section-title">PEERS</div>
+  <div class="section-title peers-header">
+    <span>PEERS — {connectionCount} CONNECTED</span>
+    <span class="net-status {isOnline ? 'online' : 'connecting'}">
+      {isOnline ? "● ONLINE" : "○ CONNECTING"}
+    </span>
+  </div>
   <table>
     <thead><tr><th>ADDRESS</th><th>TYPE</th><th>PING</th><th>SINCE</th></tr></thead>
     <tbody>
@@ -124,6 +135,26 @@
 </div>
 
 <style>
+  .peers-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .net-status {
+    font-family: Silkscreen, monospace;
+    font-size: 0.85em;
+    letter-spacing: 1px;
+  }
+
+  .net-status.online {
+    color: #00c853;
+  }
+
+  .net-status.connecting {
+    color: var(--text-secondary);
+  }
+
   .peer-map {
     border: 1px solid var(--border);
     padding: 8px;
