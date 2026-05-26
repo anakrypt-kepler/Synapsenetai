@@ -72,6 +72,7 @@ public:
     virtual std::string handleRpcPeerAnnounce(const std::string& params) = 0;
     virtual std::string handleRpcPeerDirectory(const std::string& params) = 0;
     virtual std::string handleRpcNaanSecurityAssessment(const std::string& params) = 0;
+    virtual std::string handleRpcNaanThreatIntel(const std::string& params) = 0;
     virtual std::string handleRpcNaanMessageLedger(const std::string& params) = 0;
     virtual std::string handleRpcNodeFederationStatus(const std::string& params) = 0;
 };
