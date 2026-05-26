@@ -77,6 +77,8 @@ constexpr RpcMethodSpec kRpcMethodSpecs[] = {
     {"peer.directory", &RpcCommandHandlerProvider::handleRpcPeerDirectory, false, 300},
     {"node.replication_status", &RpcCommandHandlerProvider::handleRpcNodeReplicationStatus, false, 300},
     {"naan.security_assessment", &RpcCommandHandlerProvider::handleRpcNaanSecurityAssessment, true, 30},
+    {"naan.message_ledger", &RpcCommandHandlerProvider::handleRpcNaanMessageLedger, false, 300},
+    {"node.federation_status", &RpcCommandHandlerProvider::handleRpcNodeFederationStatus, false, 300},
 };
 
 } // namespace

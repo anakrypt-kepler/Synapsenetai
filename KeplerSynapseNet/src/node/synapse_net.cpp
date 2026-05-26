@@ -1999,6 +1999,71 @@ std::string handleRpcNaanPipelineDrain(const std::string& paramsJson) {
     return rpc::runRpcNaanPipelineDrain(paramsJson, makeRpcNaanRuntimeInputs());
 }
 
+std::string handleRpcNaanDashboard(const std::string& paramsJson) {
+    (void)paramsJson;
+    json result;
+
+    const NodeStats st = getStats();
+    result["activeNodes"] = st.peersConnected + 1;
+
+    result["taskDistribution"] = json::object();
+    result["taskDistribution"]["research"] = naanTaskResearchRuns_.load();
+    result["taskDistribution"]["verify"] = naanTaskVerifyRuns_.load();
+    result["taskDistribution"]["review"] = naanTaskReviewRuns_.load();
+    result["taskDistribution"]["draft"] = naanTaskDraftRuns_.load();
+    result["taskDistribution"]["submit"] = naanTaskSubmitRuns_.load();
+
+    result["knowledgeEntries"] = st.knowledgeEntries;
+    result["bytesMined"] = st.bytesReceived + st.bytesSent;
+
+    web::NodeSpecialization spec = web::NodeSpecialization::GENERAL;
+    {
+        std::lock_guard<std::mutex> lock(webMtx_);
+        if (webSearch_) {
+            spec = webSearch_->getConfig().naanNodeSpecialization;
+        }
+    }
+    result["nodeSpecialization"] = web::nodeSpecializationToString(spec);
+
+    result["topResearchTopics"] = json::array();
+    {
+        std::lock_guard<std::mutex> lock(naanWebResearchMtx_);
+        if (!naanWebResearchSnapshot_.query.empty()) {
+            result["topResearchTopics"].push_back(naanWebResearchSnapshot_.query);
+        }
+    }
+    auto* taskRoom = agentCoordination_.getRoom("tasks/main");
+    if (taskRoom) {
+        std::vector<std::string> recentTopics;
+        std::unordered_set<std::string> seen;
+        const auto artifacts = taskRoom->getArtifacts(0, 50);
+        for (auto it = artifacts.rbegin(); it != artifacts.rend(); ++it) {
+            if (recentTopics.size() >= 10) break;
+            const auto parsed = json::parse(it->message.payload, nullptr, false);
+            if (parsed.is_discarded()) continue;
+            if (!parsed.contains("query") || !parsed["query"].is_string()) continue;
+            std::string q = parsed["query"].get<std::string>();
+            if (q.empty() || !seen.insert(q).second) continue;
+            recentTopics.push_back(q);
+        }
+        result["topResearchTopics"] = recentTopics;
+    }
+
+    result["pipeline"] = json::object();
+    result["pipeline"]["runs"] = naanPipelineRuns_.load();
+    result["pipeline"]["approved"] = naanPipelineApproved_.load();
+    result["pipeline"]["submitted"] = naanPipelineSubmitted_.load();
+    result["pipeline"]["rejected"] = naanPipelineRejected_.load();
+
+    result["ticks"] = naanTickCount_.load();
+    result["runtimeInitialized"] = naanRuntimeInitialized_.load();
+    if (attachedAgentIdentity_.valid()) {
+        result["agentId"] = crypto::toHex(attachedAgentIdentity_.id);
+    }
+
+    return result.dump();
+}
+
 std::string handleRpcNodeStatus(const std::string& paramsJson) {
     (void)paramsJson;
     const NodeStats st = getStats();

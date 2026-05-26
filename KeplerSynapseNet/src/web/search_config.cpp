@@ -1700,6 +1700,24 @@ bool saveSearchConfig(const SearchConfig& inputConfig, const std::string& path) 
     writeList(config.chunkedUpload.fallbackEndpoints);
     file << "\n";
     file << "transport_protocol=" << config.transportProtocol << "\n";
+    file << "message_ledger_enabled=" << (config.messageLedger.enabled ? "1" : "0") << "\n";
+    file << "message_ledger_store_hash=" << (config.messageLedger.storeHashInLedger ? "1" : "0") << "\n";
+    file << "message_ledger_proof_of_delivery=" << (config.messageLedger.proofOfDelivery ? "1" : "0") << "\n";
+    file << "message_ledger_hash_algorithm=" << config.messageLedger.hashAlgorithm << "\n";
+    file << "message_ledger_confirmation_depth=" << config.messageLedger.confirmationDepth << "\n";
+    file << "message_ledger_encrypt_metadata=" << (config.messageLedger.encryptMetadata ? "1" : "0") << "\n";
+    file << "message_ledger_retention_days=" << config.messageLedger.retentionDays << "\n";
+    file << "federation_enabled=" << (config.federation.enabled ? "1" : "0") << "\n";
+    file << "federation_protocol_version=" << config.federation.protocolVersion << "\n";
+    file << "federation_max_peers=" << config.federation.maxFederatedPeers << "\n";
+    file << "federation_require_mutual_auth=" << (config.federation.requireMutualAuth ? "1" : "0") << "\n";
+    file << "federation_relay_knowledge=" << (config.federation.relayKnowledge ? "1" : "0") << "\n";
+    file << "federation_relay_messages=" << (config.federation.relayMessages ? "1" : "0") << "\n";
+    file << "federation_sync_interval_sec=" << config.federation.syncIntervalSec << "\n";
+    file << "federation_trusted_peers=";
+    writeList(config.federation.trustedFederationPeers);
+    file << "\n";
+    file << "federation_mode=" << config.federation.federationMode << "\n";
     file << "cf_bypass_enabled=" << (config.cfBypassEnabled ? "1" : "0") << "\n";
     file << "cf_user_agent_rotation=" << (config.cfUserAgentRotation ? "1" : "0") << "\n";
     file << "cf_user_agents=";
@@ -1773,7 +1791,9 @@ bool saveSearchConfig(const SearchConfig& inputConfig, const std::string& path) 
     file << "relay_routing_timeout_sec=" << config.relayRouting.relayTimeoutSec << "\n";
     file << "relay_routing_encrypt_per_hop=" << (config.relayRouting.encryptPerHop ? "1" : "0") << "\n";
     file << "relay_routing_mode=" << config.relayRouting.routingMode << "\n";
-    
+    file << "naan_security_assessment_enabled=" << (config.naanSecurityAssessmentEnabled ? "1" : "0") << "\n";
+    file << "naan_security_assessment_interval_sec=" << config.naanSecurityAssessmentIntervalSec << "\n";
+
     return true;
 }
 
