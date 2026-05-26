@@ -59,6 +59,7 @@ public:
     virtual std::string handleRpcNaanObservatoryDraftGet(const std::string& params) = 0;
     virtual std::string handleRpcNaanPipelineDryRun(const std::string& params) = 0;
     virtual std::string handleRpcNaanPipelineDrain(const std::string& params) = 0;
+    virtual std::string handleRpcNaanDashboard(const std::string& params) = 0;
     virtual std::string handleRpcNodeStatus(const std::string& params) = 0;
     virtual std::string handleRpcNodePeers(const std::string& params) = 0;
     virtual std::string handleRpcNodeLogs(const std::string& params) = 0;

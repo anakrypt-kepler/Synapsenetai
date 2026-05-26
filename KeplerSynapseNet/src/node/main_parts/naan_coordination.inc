@@ -1,3 +1,103 @@
+web::NodeSpecialization resolveNodeSpecialization() const {
+    std::lock_guard<std::mutex> lock(webMtx_);
+    if (!webSearch_) return web::NodeSpecialization::GENERAL;
+    return webSearch_->getConfig().naanNodeSpecialization;
+}
+
+static std::vector<std::string> queriesForSpecialization(web::NodeSpecialization spec) {
+    switch (spec) {
+        case web::NodeSpecialization::DARKNET_CRAWLER:
+            return {
+                "darknet marketplace infrastructure",
+                "tor hidden service enumeration",
+                "onion site content extraction",
+                "dark web forum monitoring techniques",
+                "hidden service discovery protocols",
+                "darknet search engine crawling",
+                "anonymous network topology mapping",
+                "onion address directory scraping"
+            };
+        case web::NodeSpecialization::BOOK_EXTRACTOR:
+            return {
+                "digital library archive extraction",
+                "open access academic paper repositories",
+                "distributed ebook storage systems",
+                "scientific publication metadata mining",
+                "document format conversion pipelines",
+                "OCR text extraction optimization",
+                "library genesis mirror architecture",
+                "open knowledge archive protocols"
+            };
+        case web::NodeSpecialization::SECURITY_MONITOR:
+            return {
+                "real-time CVE feed monitoring",
+                "exploit database change tracking",
+                "threat intelligence feed aggregation",
+                "security advisory automated parsing",
+                "vulnerability disclosure monitoring",
+                "malware sample hash tracking",
+                "incident response intelligence feeds",
+                "zero day exploit market signals"
+            };
+        case web::NodeSpecialization::CONFERENCE_MINER:
+            return {
+                "DEF CON presentation archives",
+                "Black Hat briefings extraction",
+                "CCC congress talk recordings",
+                "security conference slide decks",
+                "hacker conference workshop materials",
+                "RSA conference keynote summaries",
+                "BSides talk topic extraction",
+                "academic security symposium papers"
+            };
+        case web::NodeSpecialization::GENERAL:
+        default:
+            return {};
+    }
+}
+
+core::AgentTaskClass selectTaskForSpecialization(
+    web::NodeSpecialization spec,
+    bool researchReady,
+    bool verifyReady,
+    bool reviewReady,
+    bool draftReady,
+    bool submitReady) const {
+    switch (spec) {
+        case web::NodeSpecialization::DARKNET_CRAWLER:
+        case web::NodeSpecialization::CONFERENCE_MINER:
+            if (researchReady) return core::AgentTaskClass::RESEARCH;
+            if (draftReady) return core::AgentTaskClass::DRAFT;
+            if (submitReady) return core::AgentTaskClass::SUBMIT;
+            if (verifyReady) return core::AgentTaskClass::VERIFY;
+            if (reviewReady) return core::AgentTaskClass::REVIEW;
+            break;
+        case web::NodeSpecialization::BOOK_EXTRACTOR:
+            if (researchReady) return core::AgentTaskClass::RESEARCH;
+            if (draftReady) return core::AgentTaskClass::DRAFT;
+            if (verifyReady) return core::AgentTaskClass::VERIFY;
+            if (submitReady) return core::AgentTaskClass::SUBMIT;
+            if (reviewReady) return core::AgentTaskClass::REVIEW;
+            break;
+        case web::NodeSpecialization::SECURITY_MONITOR:
+            if (researchReady) return core::AgentTaskClass::RESEARCH;
+            if (verifyReady) return core::AgentTaskClass::VERIFY;
+            if (reviewReady) return core::AgentTaskClass::REVIEW;
+            if (draftReady) return core::AgentTaskClass::DRAFT;
+            if (submitReady) return core::AgentTaskClass::SUBMIT;
+            break;
+        case web::NodeSpecialization::GENERAL:
+        default:
+            break;
+    }
+    if (submitReady) return core::AgentTaskClass::SUBMIT;
+    if (verifyReady) return core::AgentTaskClass::VERIFY;
+    if (reviewReady) return core::AgentTaskClass::REVIEW;
+    if (draftReady) return core::AgentTaskClass::DRAFT;
+    if (researchReady) return core::AgentTaskClass::RESEARCH;
+    return core::AgentTaskClass::RESEARCH;
+}
+
 bool configureNaanTaskScheduler() {
     auto& cfg = utils::Config::instance();
 
@@ -1114,10 +1214,14 @@ bool runNaanResearchTask(uint64_t now, const core::AgentAdaptiveSchedule& schedu
         }
     }
 
+    const web::NodeSpecialization nodeSpec = cfg.naanNodeSpecialization;
     std::vector<std::string> queries;
     for (const auto& raw : cfg.naanAutoSearchQueries) {
         std::string q = trimCopy(raw);
         if (!q.empty()) queries.push_back(q);
+    }
+    if (queries.empty()) {
+        queries = queriesForSpecialization(nodeSpec);
     }
     if (queries.empty()) {
         queries = {
@@ -1276,6 +1380,7 @@ bool runNaanResearchTask(uint64_t now, const core::AgentAdaptiveSchedule& schedu
     json payload;
     payload["event"] = "attached_agent_research_auto_search";
     payload["agentId"] = crypto::toHex(attachedAgentIdentity_.id);
+    payload["nodeSpecialization"] = web::nodeSpecializationToString(nodeSpec);
     payload["tick"] = tick;
     payload["state"] = core::schedulingStateToString(schedule.state);
     payload["observatoryMessages"] = agentCoordination_.totalMessages();
@@ -1645,7 +1750,16 @@ void tickNaanCoordination(uint64_t now) {
         {core::AgentTaskClass::SUBMIT, submitReady}
     }};
 
+    const web::NodeSpecialization activeSpec = resolveNodeSpecialization();
     auto decision = naanTaskScheduler_.tick(requests);
+
+    if (activeSpec != web::NodeSpecialization::GENERAL && !decision.scheduled) {
+        const auto preferred = selectTaskForSpecialization(
+            activeSpec, researchReady, verifyReady, reviewReady, draftReady, submitReady);
+        decision.scheduled = true;
+        decision.taskClass = preferred;
+    }
+
     if (decision.scheduled) {
         switch (decision.taskClass) {
             case core::AgentTaskClass::RESEARCH:

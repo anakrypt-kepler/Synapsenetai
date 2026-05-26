@@ -342,7 +342,23 @@ static bool isRecognizedConfigKey(const std::string& key) {
         "conference_mining_extract_techniques",
         "conference_mining_max_presentations",
         "naan_security_assessment_enabled",
-        "naan_security_assessment_interval_sec"
+        "naan_security_assessment_interval_sec",
+        "message_ledger_enabled",
+        "message_ledger_store_hash",
+        "message_ledger_proof_of_delivery",
+        "message_ledger_hash_algorithm",
+        "message_ledger_confirmation_depth",
+        "message_ledger_encrypt_metadata",
+        "message_ledger_retention_days",
+        "federation_enabled",
+        "federation_protocol_version",
+        "federation_max_peers",
+        "federation_require_mutual_auth",
+        "federation_relay_knowledge",
+        "federation_relay_messages",
+        "federation_sync_interval_sec",
+        "federation_trusted_peers",
+        "federation_mode"
     };
     return keys.find(key) != keys.end();
 }
@@ -968,6 +984,133 @@ static void applyConfigKeyValue(SearchConfig& cfg,
         cfg.relayRouting.routingMode = mode;
         return;
     }
+    if (key == "threat_intel_enabled") {
+        cfg.threatIntel.enabled = parseBool(value);
+        return;
+    }
+    if (key == "threat_intel_monitor_interval_sec") {
+        cfg.threatIntel.monitorIntervalSec = static_cast<uint32_t>(std::stoul(value));
+        return;
+    }
+    if (key == "threat_intel_sources") {
+        cfg.threatIntel.threatSources = splitList(value);
+        return;
+    }
+    if (key == "threat_intel_auto_update_bypasses") {
+        cfg.threatIntel.autoUpdateBypasses = parseBool(value);
+        return;
+    }
+    if (key == "threat_intel_max_tracked") {
+        cfg.threatIntel.maxTrackedVulnerabilities = static_cast<uint32_t>(std::stoul(value));
+        return;
+    }
+    if (key == "threat_intel_alert_on_critical") {
+        cfg.threatIntel.alertOnCritical = parseBool(value);
+        return;
+    }
+    if (key == "conference_mining_enabled") {
+        cfg.conferenceMining.enabled = parseBool(value);
+        return;
+    }
+    if (key == "conference_mining_sources") {
+        cfg.conferenceMining.conferenceSources = splitList(value);
+        return;
+    }
+    if (key == "conference_mining_extract_tools") {
+        cfg.conferenceMining.extractToolNames = parseBool(value);
+        return;
+    }
+    if (key == "conference_mining_extract_techniques") {
+        cfg.conferenceMining.extractTechniqueNames = parseBool(value);
+        return;
+    }
+    if (key == "conference_mining_max_presentations") {
+        cfg.conferenceMining.maxPresentationsPerCrawl = static_cast<uint32_t>(std::stoul(value));
+        return;
+    }
+    if (key == "naan_security_assessment_enabled") {
+        cfg.naanSecurityAssessmentEnabled = parseBool(value);
+        return;
+    }
+    if (key == "naan_security_assessment_interval_sec") {
+        cfg.naanSecurityAssessmentIntervalSec = static_cast<uint32_t>(std::stoul(value));
+        if (cfg.naanSecurityAssessmentIntervalSec < 30) cfg.naanSecurityAssessmentIntervalSec = 30;
+        if (cfg.naanSecurityAssessmentIntervalSec > 86400) cfg.naanSecurityAssessmentIntervalSec = 86400;
+        return;
+    }
+    if (key == "message_ledger_enabled") {
+        cfg.messageLedger.enabled = parseBool(value);
+        return;
+    }
+    if (key == "message_ledger_store_hash") {
+        cfg.messageLedger.storeHashInLedger = parseBool(value);
+        return;
+    }
+    if (key == "message_ledger_proof_of_delivery") {
+        cfg.messageLedger.proofOfDelivery = parseBool(value);
+        return;
+    }
+    if (key == "message_ledger_hash_algorithm") {
+        std::string algo = toLower(value);
+        if (algo != "sha256" && algo != "sha512" && algo != "blake2b") algo = "sha256";
+        cfg.messageLedger.hashAlgorithm = algo;
+        return;
+    }
+    if (key == "message_ledger_confirmation_depth") {
+        cfg.messageLedger.confirmationDepth = static_cast<uint32_t>(std::stoul(value));
+        if (cfg.messageLedger.confirmationDepth > 128) cfg.messageLedger.confirmationDepth = 128;
+        return;
+    }
+    if (key == "message_ledger_encrypt_metadata") {
+        cfg.messageLedger.encryptMetadata = parseBool(value);
+        return;
+    }
+    if (key == "message_ledger_retention_days") {
+        cfg.messageLedger.retentionDays = static_cast<uint32_t>(std::stoul(value));
+        if (cfg.messageLedger.retentionDays > 3650) cfg.messageLedger.retentionDays = 3650;
+        return;
+    }
+    if (key == "federation_enabled") {
+        cfg.federation.enabled = parseBool(value);
+        return;
+    }
+    if (key == "federation_protocol_version") {
+        cfg.federation.protocolVersion = value;
+        return;
+    }
+    if (key == "federation_max_peers") {
+        cfg.federation.maxFederatedPeers = static_cast<uint32_t>(std::stoul(value));
+        if (cfg.federation.maxFederatedPeers > 1024) cfg.federation.maxFederatedPeers = 1024;
+        return;
+    }
+    if (key == "federation_require_mutual_auth") {
+        cfg.federation.requireMutualAuth = parseBool(value);
+        return;
+    }
+    if (key == "federation_relay_knowledge") {
+        cfg.federation.relayKnowledge = parseBool(value);
+        return;
+    }
+    if (key == "federation_relay_messages") {
+        cfg.federation.relayMessages = parseBool(value);
+        return;
+    }
+    if (key == "federation_sync_interval_sec") {
+        cfg.federation.syncIntervalSec = static_cast<uint32_t>(std::stoul(value));
+        if (cfg.federation.syncIntervalSec < 5) cfg.federation.syncIntervalSec = 5;
+        if (cfg.federation.syncIntervalSec > 86400) cfg.federation.syncIntervalSec = 86400;
+        return;
+    }
+    if (key == "federation_trusted_peers") {
+        cfg.federation.trustedFederationPeers = splitList(value);
+        return;
+    }
+    if (key == "federation_mode") {
+        std::string mode = toLower(value);
+        if (mode != "open" && mode != "trusted_only" && mode != "hybrid") mode = "open";
+        cfg.federation.federationMode = mode;
+        return;
+    }
 }
 
 void sanitizeSearchConfig(SearchConfig& cfg) {
@@ -1266,6 +1409,25 @@ SearchConfig defaultSearchConfig() {
         "privacy", "encryption", "protocol", "decentralized",
         "mesh network", "quantum", "vulnerability"
     };
+    cfg.threatIntel.enabled = true;
+    cfg.threatIntel.monitorIntervalSec = 3600;
+    cfg.threatIntel.threatSources = {
+        "http://darkzzx4avcsuofgfez5zq75cqc4mprjvfqywo45dfcaxrwqg6qrlfid.onion/",
+        "http://g7ejphhubv5idbbu3hb3wawrs5adw7tkx7yjabnf65xtzztgg4hcsqqd.onion/",
+        "http://w27irt6ldaydjoacyovepuzlethuoypazhhbot6tljuywy52emetn7qd.onion/"
+    };
+    cfg.threatIntel.autoUpdateBypasses = true;
+    cfg.threatIntel.maxTrackedVulnerabilities = 100;
+    cfg.threatIntel.alertOnCritical = true;
+    cfg.threatIntel.feedFormat = "auto";
+    cfg.conferenceMining.enabled = true;
+    cfg.conferenceMining.conferenceSources.clear();
+    cfg.conferenceMining.extractToolNames = true;
+    cfg.conferenceMining.extractTechniqueNames = true;
+    cfg.conferenceMining.extractProtocolSpecs = true;
+    cfg.conferenceMining.maxPresentationsPerCrawl = 20;
+    cfg.naanSecurityAssessmentEnabled = true;
+    cfg.naanSecurityAssessmentIntervalSec = 300;
     cfg.cfBypassEnabled = false;
     cfg.cfUserAgentRotation = true;
     cfg.cfUserAgents = {

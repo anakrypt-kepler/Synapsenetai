@@ -63,6 +63,8 @@ constexpr RpcMethodSpec kRpcMethodSpecs[] = {
     {"naan.observatory.draft.get", &RpcCommandHandlerProvider::handleRpcNaanObservatoryDraftGet, false, 300},
     {"naan.pipeline.dryrun", &RpcCommandHandlerProvider::handleRpcNaanPipelineDryRun, true, 30},
     {"naan.pipeline.drain", &RpcCommandHandlerProvider::handleRpcNaanPipelineDrain, true, 10},
+    {"naan.dashboard", &RpcCommandHandlerProvider::handleRpcNaanDashboard, false, 300},
+    {"naan.threat_intel", &RpcCommandHandlerProvider::handleRpcNaanThreatIntel, false, 300},
     {"node.status", &RpcCommandHandlerProvider::handleRpcNodeStatus, false, 300},
     {"node.peers", &RpcCommandHandlerProvider::handleRpcNodePeers, false, 300},
     {"node.logs", &RpcCommandHandlerProvider::handleRpcNodeLogs, true, 120},
@@ -73,6 +75,7 @@ constexpr RpcMethodSpec kRpcMethodSpecs[] = {
     {"blocks.get", &RpcCommandHandlerProvider::handleRpcBlocksGet, false, 300},
     {"peer.announce", &RpcCommandHandlerProvider::handleRpcPeerAnnounce, false, 600},
     {"peer.directory", &RpcCommandHandlerProvider::handleRpcPeerDirectory, false, 300},
+    {"node.replication_status", &RpcCommandHandlerProvider::handleRpcNodeReplicationStatus, false, 300},
     {"naan.security_assessment", &RpcCommandHandlerProvider::handleRpcNaanSecurityAssessment, true, 30},
 };
 

@@ -265,6 +265,8 @@ struct SearchConfig {
     RelayRoutingConfig relayRouting;
     ThreatIntelConfig threatIntel;
     ConferenceMiningConfig conferenceMining;
+    bool naanSecurityAssessmentEnabled = true;
+    uint32_t naanSecurityAssessmentIntervalSec = 300;
     MessageLedgerConfig messageLedger;
     FederationConfig federation;
     std::string transportProtocol = "tcp";
