@@ -254,6 +254,7 @@ struct SearchConfig {
     bool naanExtractFiles = true;
     uint32_t naanMaxFileSizeMb = 50;
     bool naanVirusTotalCheck = true;
+    NodeSpecialization naanNodeSpecialization = NodeSpecialization::GENERAL;
     std::vector<std::string> fetchAllowlistRoutes;
     std::vector<std::string> fetchDenylistRoutes;
     bool connectorAuditEnabled;
