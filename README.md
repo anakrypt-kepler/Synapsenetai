@@ -123,7 +123,7 @@ The blockchain is live and producing blocks. Validators are up, consensus is run
 - Rust + Cargo (for Tauri)
 - Node.js + npm (for Svelte frontend)
 - CMake + C++17 compiler (for libsynapsed)
-- Tor Browser running (provides SOCKS5 proxy on port 9050)
+- A standalone Tor daemon running on port 9050 (started from the terminal — **not** Tor Browser; see Step 2 below)
 
 **Build steps:**
 
@@ -144,7 +144,7 @@ npm install
 npm run tauri dev
 ```
 
-The app will auto-discover seed nodes over Tor, sync the blockchain, and begin NAAN mining. No manual configuration needed — just make sure Tor Browser is running in the background.
+The app will auto-discover seed nodes over Tor, sync the blockchain, and begin NAAN mining. No manual configuration needed — just make sure your standalone Tor daemon is running on port 9050 in the background (see Step 2 — do not use Tor Browser).
 
 ### macOS Full Setup (AI-Assisted)
 
@@ -167,15 +167,15 @@ source "$HOME/.cargo/env"
 brew install node
 ```
 
-**Step 2 — Install and configure Tor**
+**Step 2 — Install and configure Tor (standalone, via terminal)**
 
-The app requires a standalone Tor process on port 9050. Tor Browser alone (port 9150) is not enough — the engine hardcodes SOCKS5 on port 9050.
+> **Do not rely on Tor Browser.** This is the single most common setup failure. Tor Browser runs its SOCKS proxy on port **9150** and only stays up while the browser window is open — the SynapseNet engine connects to a standalone Tor on port **9050**. Run your own Tor daemon from the terminal. It is more reliable, always on, and lets you configure bridges yourself when your network blocks Tor. The terminal-managed daemon is the recommended and proven setup; Tor Browser is not.
 
 ```bash
 # Install Tor
 brew install tor
 
-# Start Tor as a background service
+# Start Tor as a background service (always on, survives reboots)
 brew services start tor
 
 # Verify Tor is listening on port 9050
@@ -183,7 +183,7 @@ lsof -i :9050
 # Should show: tor ... TCP localhost:9050 (LISTEN)
 ```
 
-If you cannot use `brew install tor`, install from the expert bundle:
+If you cannot use `brew install tor`, install from the expert bundle (also ships the `lyrebird`/obfs4 pluggable transport for bridges):
 
 ```bash
 # Download and extract Tor expert bundle
@@ -201,6 +201,42 @@ DataDirectory $HOME/.synapsenet/tor_data" > ~/.synapsenet/torrc
 # Verify
 lsof -i :9050
 ```
+
+**Using bridges (recommended when Tor is blocked or unstable)**
+
+If plain Tor will not bootstrap to 100% (common on restricted, censored, or rate-limited networks), configure obfs4 bridges yourself in the terminal. This is the reliable path — do not switch back to Tor Browser to "fix" connectivity.
+
+```bash
+# 1. Get fresh obfs4 bridge lines:
+#    - Open https://bridges.torproject.org/ and request obfs4 bridges, OR
+#    - Email bridges@torproject.org with body: get transport obfs4
+#    You will receive 2-3 lines that look like:
+#    obfs4 1.2.3.4:443 FINGERPRINT cert=... iat-mode=0
+
+# 2. Find your obfs4 transport binary
+#    Homebrew:      brew install obfs4proxy   -> /opt/homebrew/bin/obfs4proxy
+#    Expert bundle: ~/.local/tor/pluggable_transports/lyrebird
+
+# 3. Write a torrc with bridges enabled (replace the example bridge lines)
+mkdir -p ~/.synapsenet
+cat > ~/.synapsenet/torrc <<'EOF'
+SocksPort 9050
+DataDirectory ~/.synapsenet/tor_data
+UseBridges 1
+ClientTransportPlugin obfs4 exec /opt/homebrew/bin/obfs4proxy
+Bridge obfs4 1.2.3.4:443 0000000000000000000000000000000000000000 cert=REPLACE_ME iat-mode=0
+Bridge obfs4 5.6.7.8:443 1111111111111111111111111111111111111111 cert=REPLACE_ME iat-mode=0
+EOF
+
+# 4. Start Tor with this config and watch it bootstrap
+~/.local/bin/tor -f ~/.synapsenet/torrc
+# Wait for: "Bootstrapped 100% (done)"  -- then Ctrl+C and rerun with & to background it
+
+# 5. Confirm SOCKS is live on 9050
+lsof -i :9050
+```
+
+Keep this Tor daemon running in the background whenever you use SynapseNet. The app, the block sync, and the NAAN agent all route through `127.0.0.1:9050`.
 
 **Step 3 — Clone and build the native library**
 
@@ -302,7 +338,7 @@ Web1 was read. Web2 was read-write. Web3 was read-write-own. **Web4 is read-writ
 - The agent can route all outbound research through Tor SOCKS5 proxy
 - Supports `.onion` site crawling for censorship-resistant knowledge gathering
 - Managed Tor runtime — SynapseNet can start/stop its own Tor process
-- External Tor — works with Tor Browser or system Tor on port `9150` / `9050`
+- External Tor — connects to a standalone/system Tor daemon on port `9050` (run from the terminal; Tor Browser's port `9150` is not used)
 - Bridge support — paste obfs4 bridges for regions where Tor is blocked
 - Fail-closed behavior — if Tor is required but unavailable, the agent stops rather than leaking clearnet traffic
 
