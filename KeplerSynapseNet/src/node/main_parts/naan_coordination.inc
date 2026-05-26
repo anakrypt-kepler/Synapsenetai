@@ -996,7 +996,16 @@ bool runNaanResearchTask(uint64_t now, const core::AgentAdaptiveSchedule& schedu
         queries = {
             "latest space engineering research",
             "latest ai research papers",
-            "open source systems engineering best practices"
+            "open source systems engineering best practices",
+            "decentralized identity protocols 2026",
+            "zero knowledge proofs real world applications",
+            "mesh networking over tor hidden services",
+            "post-quantum cryptography standards",
+            "distributed hash table optimization",
+            "autonomous agent reinforcement learning",
+            "privacy preserving machine learning techniques",
+            "blockchain consensus mechanism comparison",
+            "homomorphic encryption practical use cases"
         };
     }
 
@@ -1324,21 +1333,80 @@ bool runNaanReviewTask(uint64_t now, const core::AgentAdaptiveSchedule& schedule
 }
 
 bool runNaanDraftTask(uint64_t now, const core::AgentAdaptiveSchedule& schedule) {
-    json draftBody;
-    draftBody["event"] = "periodic_research_snapshot";
-    draftBody["agentId"] = crypto::toHex(attachedAgentIdentity_.id);
-    draftBody["tick"] = naanTickCount_.load();
-    draftBody["observatoryMessages"] = agentCoordination_.totalMessages();
-    draftBody["schedulerState"] = core::schedulingStateToString(schedule.state);
-    if (!sanitizeNaanPayload(&draftBody, "periodic_draft_payload", now)) {
-        return false;
+    std::string draftTitle;
+    std::string draftBodyText;
+
+    auto* taskRoom = agentCoordination_.getRoom("tasks/main");
+    bool usedResearch = false;
+    if (taskRoom) {
+        const auto artifacts = taskRoom->getArtifacts(0, 50);
+        for (auto it = artifacts.rbegin(); it != artifacts.rend(); ++it) {
+            const auto parsed = json::parse(it->message.payload, nullptr, false);
+            if (parsed.is_discarded()) continue;
+            if (!parsed.contains("event") || parsed["event"] != "attached_agent_research_auto_search") continue;
+            if (!parsed.contains("context") || !parsed["context"].is_string()) continue;
+            std::string ctx = parsed["context"].get<std::string>();
+            if (ctx.size() < 64) continue;
+            std::string query = parsed.value("query", "research");
+            draftTitle = query;
+            json body;
+            body["source"] = "web_research";
+            body["query"] = query;
+            body["context"] = ctx.substr(0, 4000);
+            body["timestamp"] = now;
+            body["resultCount"] = parsed.value("resultCount", 0);
+            if (parsed.contains("results") && parsed["results"].is_array()) {
+                body["sources"] = json::array();
+                size_t count = 0;
+                for (const auto& r : parsed["results"]) {
+                    if (count >= 5) break;
+                    json src;
+                    src["title"] = r.value("title", "");
+                    src["url"] = r.value("url", "");
+                    src["domain"] = r.value("domain", "");
+                    body["sources"].push_back(std::move(src));
+                    count++;
+                }
+            }
+            if (!sanitizeNaanPayload(&body, "research_draft_payload", now)) continue;
+            draftBodyText = safeDump(body);
+            usedResearch = true;
+            break;
+        }
     }
-    const std::string draftBodyText = safeDump(draftBody);
+
+    if (!usedResearch) {
+        json draftBody;
+        draftBody["event"] = "periodic_research_snapshot";
+        draftBody["agentId"] = crypto::toHex(attachedAgentIdentity_.id);
+        draftBody["tick"] = naanTickCount_.load();
+        draftBody["observatoryMessages"] = agentCoordination_.totalMessages();
+        draftBody["schedulerState"] = core::schedulingStateToString(schedule.state);
+        draftBody["timestamp"] = now;
+        if (!sanitizeNaanPayload(&draftBody, "periodic_draft_payload", now)) {
+            return false;
+        }
+        draftBodyText = safeDump(draftBody);
+        const uint64_t tick = naanTickCount_.load();
+        const uint64_t entropy = static_cast<uint64_t>(attachedAgentIdentity_.id[0]) ^
+                                 (static_cast<uint64_t>(attachedAgentIdentity_.id[7]) << 8);
+        static const std::array<const char*, 8> topics = {{
+            "distributed systems consensus",
+            "zero knowledge proof applications",
+            "quantum resistant cryptography",
+            "decentralized knowledge graphs",
+            "privacy preserving computation",
+            "mesh network protocols",
+            "autonomous agent architectures",
+            "post-quantum key exchange"
+        }};
+        draftTitle = topics[static_cast<size_t>((tick + entropy) % topics.size())];
+    }
 
     core::AgentDraftProposal proposal;
     proposal.createdAt = now;
     proposal.author = attachedAgentIdentity_.id;
-    proposal.title = "NAAN periodic research draft";
+    proposal.title = draftTitle;
     proposal.body = draftBodyText;
     const auto poeCfg = poeV1_ ? poeV1_->getConfig() : core::PoeV1Config{};
     proposal.powBits = poeCfg.powBits;
