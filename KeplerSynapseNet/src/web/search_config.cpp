@@ -815,7 +815,16 @@ void sanitizeSearchConfig(SearchConfig& cfg) {
         cfg.naanAutoSearchQueries = {
             "latest space engineering research",
             "latest ai research papers",
-            "open source systems engineering best practices"
+            "open source systems engineering best practices",
+            "decentralized identity protocols 2026",
+            "zero knowledge proofs real world applications",
+            "mesh networking over tor hidden services",
+            "post-quantum cryptography standards",
+            "distributed hash table optimization",
+            "autonomous agent reinforcement learning",
+            "privacy preserving machine learning techniques",
+            "blockchain consensus mechanism comparison",
+            "homomorphic encryption practical use cases"
         };
     }
 
@@ -991,7 +1000,16 @@ SearchConfig defaultSearchConfig() {
     cfg.naanAutoSearchQueries = {
         "latest space engineering research",
         "latest ai research papers",
-        "open source systems engineering best practices"
+        "open source systems engineering best practices",
+        "decentralized identity protocols 2026",
+        "zero knowledge proofs real world applications",
+        "mesh networking over tor hidden services",
+        "post-quantum cryptography standards",
+        "distributed hash table optimization",
+        "autonomous agent reinforcement learning",
+        "privacy preserving machine learning techniques",
+        "blockchain consensus mechanism comparison",
+        "homomorphic encryption practical use cases"
     };
     cfg.naanAutoSearchMaxResults = 4;
     cfg.fetchAllowlistRoutes.clear();
