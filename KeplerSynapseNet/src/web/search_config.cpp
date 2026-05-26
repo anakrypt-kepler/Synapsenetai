@@ -192,6 +192,12 @@ static bool isRecognizedConfigKey(const std::string& key) {
         "naan_auto_search_mode",
         "naan_auto_search_queries",
         "naan_auto_search_max_results",
+        "naan_priority_onion_targets",
+        "naan_crawl_depth",
+        "naan_extract_fulltext",
+        "naan_extract_files",
+        "naan_max_file_size_mb",
+        "naan_virustotal_check",
         "bypass_onion_https_fallback",
         "naan_bypass_onion_https_fallback",
         "fetch_allowlist_routes",
@@ -416,6 +422,32 @@ static void applyConfigKeyValue(SearchConfig& cfg,
         cfg.naanAutoSearchMaxResults = static_cast<uint32_t>(std::stoul(value));
         if (cfg.naanAutoSearchMaxResults == 0) cfg.naanAutoSearchMaxResults = 1;
         if (cfg.naanAutoSearchMaxResults > 32) cfg.naanAutoSearchMaxResults = 32;
+        return;
+    }
+    if (key == "naan_priority_onion_targets") {
+        cfg.directOnionLinks = splitList(value);
+        return;
+    }
+    if (key == "naan_crawl_depth") {
+        cfg.naanCrawlDepth = static_cast<uint32_t>(std::stoul(value));
+        if (cfg.naanCrawlDepth > 5) cfg.naanCrawlDepth = 5;
+        return;
+    }
+    if (key == "naan_extract_fulltext") {
+        cfg.naanExtractFulltext = parseBool(value);
+        return;
+    }
+    if (key == "naan_extract_files") {
+        cfg.naanExtractFiles = parseBool(value);
+        return;
+    }
+    if (key == "naan_max_file_size_mb") {
+        cfg.naanMaxFileSizeMb = static_cast<uint32_t>(std::stoul(value));
+        if (cfg.naanMaxFileSizeMb > 100) cfg.naanMaxFileSizeMb = 100;
+        return;
+    }
+    if (key == "naan_virustotal_check") {
+        cfg.naanVirusTotalCheck = parseBool(value);
         return;
     }
     if (key == "bypass_onion_https_fallback" || key == "naan_bypass_onion_https_fallback") {
@@ -813,18 +845,26 @@ void sanitizeSearchConfig(SearchConfig& cfg) {
     });
     if (cfg.naanAutoSearchQueries.empty()) {
         cfg.naanAutoSearchQueries = {
-            "latest space engineering research",
-            "latest ai research papers",
-            "open source systems engineering best practices",
-            "decentralized identity protocols 2026",
-            "zero knowledge proofs real world applications",
-            "mesh networking over tor hidden services",
-            "post-quantum cryptography standards",
-            "distributed hash table optimization",
-            "autonomous agent reinforcement learning",
-            "privacy preserving machine learning techniques",
-            "blockchain consensus mechanism comparison",
-            "homomorphic encryption practical use cases"
+            "distributed attack framework architecture",
+            "anonymous P2P network protocols",
+            "decentralized knowledge graph storage",
+            "post-quantum cryptography implementations",
+            "tor hidden service vulnerability research",
+            "container exploitation lateral movement",
+            "data exfiltration evasion techniques",
+            "mesh networking protocol design",
+            "autonomous agent swarm coordination",
+            "privacy preserving machine learning",
+            "zero knowledge proof systems",
+            "blockchain consensus algorithms",
+            "homomorphic encryption practical applications",
+            "onion routing performance optimization",
+            "secure multi party computation protocols",
+            "neural network model compression",
+            "federated learning decentralized training",
+            "XMPP anonymous messaging protocol",
+            "darknet security tools open source",
+            "cloud penetration testing methodology"
         };
     }
 
@@ -976,7 +1016,16 @@ SearchConfig defaultSearchConfig() {
     cfg.clearnetEngines = {SearchEngine::DUCKDUCKGO};
     cfg.darknetEngines = {SearchEngine::AHMIA, SearchEngine::TORCH, SearchEngine::DARKSEARCH, SearchEngine::DEEPSEARCH};
     cfg.customDarknetUrls = {"http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/"};
-    cfg.clearnetSiteAllowlist.clear();
+    cfg.directOnionLinks = {
+        "http://kx5thpx2olielkihfyo4jgjqfb7zx7wxr3sd4xzt26ochei4m6f7tayd.onion/",
+        "http://g7ejphhubv5idbbu3hb3wawrs5adw7tkx7yjabnf65xtzztgg4hcsqqd.onion/",
+        "http://w27irt6ldaydjoacyovepuzlethuoypazhhbot6tljuywy52emetn7qd.onion/",
+        "http://zqktlwiuavvvqqt4ybvgvi7tyo4hjl5xgfuvpdf6otjiycgwqbym2qad.onion/",
+        "http://darkzzx4avcsuofgfez5zq75cqc4mprjvfqywo45dfcaxrwqg6qrlfid.onion/",
+        "http://sdolvtfhatvsysc6l34d65ymdwxcujausv7k5jk4cy5ttzhjoi6fzvyd.onion/",
+        "http://p53lf57qovyuvwsc6xnrppyply3vtqm7l6pcobkmyqsiofyeznfu5uqd.onion/",
+        "http://privacy2zbidut4m4jyj3ksdqidzkw3uoip2vhvhbvwxbqux5xy5obyd.onion/"
+    };
     cfg.clearnetSiteDenylist.clear();
     cfg.onionSiteAllowlist.clear();
     cfg.onionSiteDenylist.clear();
@@ -998,20 +1047,28 @@ SearchConfig defaultSearchConfig() {
     cfg.naanAutoSearchEnabled = true;
     cfg.naanAutoSearchMode = "both";
     cfg.naanAutoSearchQueries = {
-        "latest space engineering research",
-        "latest ai research papers",
-        "open source systems engineering best practices",
-        "decentralized identity protocols 2026",
-        "zero knowledge proofs real world applications",
-        "mesh networking over tor hidden services",
-        "post-quantum cryptography standards",
-        "distributed hash table optimization",
-        "autonomous agent reinforcement learning",
-        "privacy preserving machine learning techniques",
-        "blockchain consensus mechanism comparison",
-        "homomorphic encryption practical use cases"
+        "distributed attack framework architecture",
+        "anonymous P2P network protocols",
+        "decentralized knowledge graph storage",
+        "post-quantum cryptography implementations",
+        "tor hidden service vulnerability research",
+        "container exploitation lateral movement",
+        "data exfiltration evasion techniques",
+        "mesh networking protocol design",
+        "autonomous agent swarm coordination",
+        "privacy preserving machine learning",
+        "zero knowledge proof systems",
+        "blockchain consensus algorithms",
+        "homomorphic encryption practical applications",
+        "onion routing performance optimization",
+        "secure multi party computation protocols",
+        "neural network model compression",
+        "federated learning decentralized training",
+        "XMPP anonymous messaging protocol",
+        "darknet security tools open source",
+        "cloud penetration testing methodology"
     };
-    cfg.naanAutoSearchMaxResults = 4;
+    cfg.naanAutoSearchMaxResults = 8;
     cfg.fetchAllowlistRoutes.clear();
     cfg.fetchDenylistRoutes.clear();
     cfg.connectorAuditEnabled = true;

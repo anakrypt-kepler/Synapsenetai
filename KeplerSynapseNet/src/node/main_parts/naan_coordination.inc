@@ -994,18 +994,26 @@ bool runNaanResearchTask(uint64_t now, const core::AgentAdaptiveSchedule& schedu
     }
     if (queries.empty()) {
         queries = {
-            "latest space engineering research",
-            "latest ai research papers",
-            "open source systems engineering best practices",
-            "decentralized identity protocols 2026",
-            "zero knowledge proofs real world applications",
-            "mesh networking over tor hidden services",
-            "post-quantum cryptography standards",
-            "distributed hash table optimization",
-            "autonomous agent reinforcement learning",
-            "privacy preserving machine learning techniques",
-            "blockchain consensus mechanism comparison",
-            "homomorphic encryption practical use cases"
+            "distributed attack framework architecture",
+            "anonymous P2P network protocols",
+            "decentralized knowledge graph storage",
+            "post-quantum cryptography implementations",
+            "tor hidden service vulnerability research",
+            "container exploitation lateral movement",
+            "data exfiltration evasion techniques",
+            "mesh networking protocol design",
+            "autonomous agent swarm coordination",
+            "privacy preserving machine learning",
+            "zero knowledge proof systems",
+            "blockchain consensus algorithms",
+            "homomorphic encryption practical applications",
+            "onion routing performance optimization",
+            "secure multi party computation protocols",
+            "neural network model compression",
+            "federated learning decentralized training",
+            "XMPP anonymous messaging protocol",
+            "darknet security tools open source",
+            "cloud penetration testing methodology"
         };
     }
 
@@ -1390,15 +1398,23 @@ bool runNaanDraftTask(uint64_t now, const core::AgentAdaptiveSchedule& schedule)
         const uint64_t tick = naanTickCount_.load();
         const uint64_t entropy = static_cast<uint64_t>(attachedAgentIdentity_.id[0]) ^
                                  (static_cast<uint64_t>(attachedAgentIdentity_.id[7]) << 8);
-        static const std::array<const char*, 8> topics = {{
-            "distributed systems consensus",
-            "zero knowledge proof applications",
-            "quantum resistant cryptography",
-            "decentralized knowledge graphs",
+        static const std::array<const char*, 16> topics = {{
+            "distributed attack frameworks",
+            "anonymous P2P routing protocols",
+            "onion service security analysis",
+            "decentralized knowledge extraction",
             "privacy preserving computation",
-            "mesh network protocols",
-            "autonomous agent architectures",
-            "post-quantum key exchange"
+            "mesh network relay design",
+            "autonomous agent coordination",
+            "post-quantum key exchange",
+            "container breakout techniques",
+            "data exfiltration channels",
+            "swarm intelligence systems",
+            "federated learning protocols",
+            "secure whistleblowing platforms",
+            "darknet search engine internals",
+            "peer discovery mechanisms",
+            "homomorphic encryption schemes"
         }};
         draftTitle = topics[static_cast<size_t>((tick + entropy) % topics.size())];
     }

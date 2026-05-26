@@ -126,7 +126,12 @@ struct SearchConfig {
     bool naanAutoSearchEnabled = true;
     std::string naanAutoSearchMode = "both";
     std::vector<std::string> naanAutoSearchQueries;
-    uint32_t naanAutoSearchMaxResults = 4;
+    uint32_t naanAutoSearchMaxResults = 8;
+    uint32_t naanCrawlDepth = 3;
+    bool naanExtractFulltext = true;
+    bool naanExtractFiles = true;
+    uint32_t naanMaxFileSizeMb = 50;
+    bool naanVirusTotalCheck = true;
     std::vector<std::string> fetchAllowlistRoutes;
     std::vector<std::string> fetchDenylistRoutes;
     bool connectorAuditEnabled;
