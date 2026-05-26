@@ -36,6 +36,12 @@ fn lib_search_paths() -> Vec<std::path::PathBuf> {
         if let Some(dir) = exe.parent() {
             paths.push(dir.to_path_buf());
             paths.push(dir.join("lib"));
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(contents) = dir.parent() {
+                    paths.push(contents.join("Frameworks"));
+                }
+            }
         }
     }
     paths.push(std::path::PathBuf::from("/usr/local/lib"));
