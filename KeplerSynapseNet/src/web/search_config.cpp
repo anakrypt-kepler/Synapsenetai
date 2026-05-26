@@ -67,6 +67,27 @@ static bool parseEngine(const std::string& value, SearchEngine& engine) {
     return false;
 }
 
+std::string nodeSpecializationToString(NodeSpecialization spec) {
+    switch (spec) {
+        case NodeSpecialization::GENERAL: return "general";
+        case NodeSpecialization::DARKNET_CRAWLER: return "darknet_crawler";
+        case NodeSpecialization::BOOK_EXTRACTOR: return "book_extractor";
+        case NodeSpecialization::SECURITY_MONITOR: return "security_monitor";
+        case NodeSpecialization::CONFERENCE_MINER: return "conference_miner";
+    }
+    return "general";
+}
+
+bool parseNodeSpecialization(const std::string& value, NodeSpecialization& spec) {
+    std::string v = toLower(trim(value));
+    if (v == "general") { spec = NodeSpecialization::GENERAL; return true; }
+    if (v == "darknet_crawler") { spec = NodeSpecialization::DARKNET_CRAWLER; return true; }
+    if (v == "book_extractor") { spec = NodeSpecialization::BOOK_EXTRACTOR; return true; }
+    if (v == "security_monitor") { spec = NodeSpecialization::SECURITY_MONITOR; return true; }
+    if (v == "conference_miner") { spec = NodeSpecialization::CONFERENCE_MINER; return true; }
+    return false;
+}
+
 static bool isClearnetEngine(SearchEngine engine) {
     switch (engine) {
         case SearchEngine::GOOGLE:
@@ -188,6 +209,7 @@ static bool isRecognizedConfigKey(const std::string& key) {
         "remove_styles",
         "route_clearnet_through_tor",
         "naan_force_tor_mode",
+        "naan_node_specialization",
         "naan_auto_search_enabled",
         "naan_auto_search_mode",
         "naan_auto_search_queries",
@@ -286,7 +308,41 @@ static bool isRecognizedConfigKey(const std::string& key) {
         "cf_doh_provider",
         "cf_retry_on_challenge",
         "cf_retry_max_attempts",
-        "cf_retry_backoff_ms"
+        "cf_retry_backoff_ms",
+        "naan_chunk_size_bytes",
+        "naan_chunk_max_retries",
+        "naan_chunk_encrypt",
+        "naan_chunk_multi_endpoint",
+        "naan_chunk_fallback_endpoints",
+        "transport_protocol",
+        "knowledge_replication_factor",
+        "knowledge_replication_min_peers",
+        "knowledge_replication_auto_redistribute",
+        "knowledge_replication_check_interval_sec",
+        "knowledge_max_storage_per_node_mb",
+        "relay_routing_enabled",
+        "relay_routing_max_hops",
+        "relay_routing_timeout_sec",
+        "relay_routing_encrypt_per_hop",
+        "relay_routing_mode",
+        "content_relevance_enabled",
+        "content_relevance_min_score",
+        "content_relevance_priority_topics",
+        "content_relevance_keyword_boost",
+        "content_relevance_extract_structured",
+        "threat_intel_enabled",
+        "threat_intel_monitor_interval_sec",
+        "threat_intel_sources",
+        "threat_intel_auto_update_bypasses",
+        "threat_intel_max_tracked",
+        "threat_intel_alert_on_critical",
+        "conference_mining_enabled",
+        "conference_mining_sources",
+        "conference_mining_extract_tools",
+        "conference_mining_extract_techniques",
+        "conference_mining_max_presentations",
+        "naan_security_assessment_enabled",
+        "naan_security_assessment_interval_sec"
     };
     return keys.find(key) != keys.end();
 }
@@ -400,6 +456,13 @@ static void applyConfigKeyValue(SearchConfig& cfg,
         const bool enabled = parseBool(value);
         cfg.naanForceTorMode = enabled;
         cfg.tor.bootstrapRequired = enabled;
+        return;
+    }
+    if (key == "naan_node_specialization") {
+        NodeSpecialization spec;
+        if (parseNodeSpecialization(value, spec)) {
+            cfg.naanNodeSpecialization = spec;
+        }
         return;
     }
     if (key == "naan_auto_search_enabled") {
@@ -811,6 +874,100 @@ static void applyConfigKeyValue(SearchConfig& cfg,
         cfg.cfRetryBackoffMs = static_cast<uint32_t>(std::stoul(value));
         return;
     }
+    if (key == "naan_chunk_size_bytes") {
+        cfg.chunkedUpload.chunkSizeBytes = static_cast<uint32_t>(std::stoul(value));
+        if (cfg.chunkedUpload.chunkSizeBytes < 1024) cfg.chunkedUpload.chunkSizeBytes = 1024;
+        if (cfg.chunkedUpload.chunkSizeBytes > 16777216) cfg.chunkedUpload.chunkSizeBytes = 16777216;
+        return;
+    }
+    if (key == "naan_chunk_max_retries") {
+        cfg.chunkedUpload.maxRetries = static_cast<uint32_t>(std::stoul(value));
+        if (cfg.chunkedUpload.maxRetries > 32) cfg.chunkedUpload.maxRetries = 32;
+        return;
+    }
+    if (key == "naan_chunk_encrypt") {
+        cfg.chunkedUpload.encryptChunks = parseBool(value);
+        return;
+    }
+    if (key == "naan_chunk_multi_endpoint") {
+        cfg.chunkedUpload.multiEndpoint = parseBool(value);
+        return;
+    }
+    if (key == "naan_chunk_fallback_endpoints") {
+        cfg.chunkedUpload.fallbackEndpoints = splitList(value);
+        return;
+    }
+    if (key == "transport_protocol") {
+        std::string proto = toLower(value);
+        if (proto != "tcp" && proto != "quic") proto = "tcp";
+        cfg.transportProtocol = proto;
+        return;
+    }
+    if (key == "content_relevance_enabled") {
+        cfg.contentRelevance.enabled = parseBool(value);
+        return;
+    }
+    if (key == "content_relevance_min_score") {
+        cfg.contentRelevance.minRelevanceScore = static_cast<uint32_t>(std::stoul(value));
+        if (cfg.contentRelevance.minRelevanceScore > 100) cfg.contentRelevance.minRelevanceScore = 100;
+        return;
+    }
+    if (key == "content_relevance_priority_topics") {
+        cfg.contentRelevance.priorityTopics = splitList(value);
+        return;
+    }
+    if (key == "content_relevance_keyword_boost") {
+        cfg.contentRelevance.keywordBoostFactor = static_cast<uint32_t>(std::stoul(value));
+        return;
+    }
+    if (key == "content_relevance_extract_structured") {
+        cfg.contentRelevance.extractStructuredData = parseBool(value);
+        return;
+    }
+    if (key == "knowledge_replication_factor") {
+        cfg.replication.replicationFactor = static_cast<uint32_t>(std::stoul(value));
+        return;
+    }
+    if (key == "knowledge_replication_min_peers") {
+        cfg.replication.minPeersForRedistribution = static_cast<uint32_t>(std::stoul(value));
+        return;
+    }
+    if (key == "knowledge_replication_auto_redistribute") {
+        cfg.replication.autoRedistribute = parseBool(value);
+        return;
+    }
+    if (key == "knowledge_replication_check_interval_sec") {
+        cfg.replication.redistributionCheckIntervalSec = static_cast<uint32_t>(std::stoul(value));
+        return;
+    }
+    if (key == "knowledge_max_storage_per_node_mb") {
+        cfg.replication.maxStoragePerNodeMb = static_cast<uint32_t>(std::stoul(value));
+        return;
+    }
+    if (key == "relay_routing_enabled") {
+        cfg.relayRouting.enabled = parseBool(value);
+        return;
+    }
+    if (key == "relay_routing_max_hops") {
+        cfg.relayRouting.maxHops = static_cast<uint32_t>(std::stoul(value));
+        return;
+    }
+    if (key == "relay_routing_timeout_sec") {
+        cfg.relayRouting.relayTimeoutSec = static_cast<uint32_t>(std::stoul(value));
+        return;
+    }
+    if (key == "relay_routing_encrypt_per_hop") {
+        cfg.relayRouting.encryptPerHop = parseBool(value);
+        return;
+    }
+    if (key == "relay_routing_mode") {
+        std::string mode = toLower(value);
+        if (mode != "onion" && mode != "garlic" && mode != "direct") {
+            mode = "onion";
+        }
+        cfg.relayRouting.routingMode = mode;
+        return;
+    }
 }
 
 void sanitizeSearchConfig(SearchConfig& cfg) {
@@ -1091,6 +1248,24 @@ SearchConfig defaultSearchConfig() {
     cfg.tor.useNewCircuit = false;
     cfg.tor.bypassOnionHttpsFallback = cfg.bypassOnionHttpsFallback;
     cfg.tor.circuitTimeout = cfg.timeoutSeconds;
+    cfg.chunkedUpload.chunkSizeBytes = 65536;
+    cfg.chunkedUpload.maxRetries = 3;
+    cfg.chunkedUpload.encryptChunks = true;
+    cfg.chunkedUpload.multiEndpoint = true;
+    cfg.chunkedUpload.endpointRotateAfter = 5;
+    cfg.chunkedUpload.fallbackEndpoints.clear();
+    cfg.transportProtocol = "tcp";
+    cfg.contentRelevance.enabled = true;
+    cfg.contentRelevance.minRelevanceScore = 25;
+    cfg.contentRelevance.keywordBoostFactor = 3;
+    cfg.contentRelevance.extractStructuredData = true;
+    cfg.contentRelevance.priorityTopics = {
+        "cryptography", "distributed systems", "peer-to-peer",
+        "anonymous routing", "zero knowledge", "consensus",
+        "machine learning", "neural network", "blockchain",
+        "privacy", "encryption", "protocol", "decentralized",
+        "mesh network", "quantum", "vulnerability"
+    };
     cfg.cfBypassEnabled = false;
     cfg.cfUserAgentRotation = true;
     cfg.cfUserAgents = {
@@ -1169,6 +1344,16 @@ SearchConfig defaultSearchConfig() {
     cfg.cfRetryOnChallenge = true;
     cfg.cfRetryMaxAttempts = 3;
     cfg.cfRetryBackoffMs = 2000;
+    cfg.replication.replicationFactor = 3;
+    cfg.replication.minPeersForRedistribution = 2;
+    cfg.replication.autoRedistribute = true;
+    cfg.replication.redistributionCheckIntervalSec = 300;
+    cfg.replication.maxStoragePerNodeMb = 512;
+    cfg.relayRouting.enabled = false;
+    cfg.relayRouting.maxHops = 3;
+    cfg.relayRouting.relayTimeoutSec = 30;
+    cfg.relayRouting.encryptPerHop = true;
+    cfg.relayRouting.routingMode = "onion";
     return cfg;
 }
 
@@ -1299,6 +1484,13 @@ bool saveSearchConfig(const SearchConfig& inputConfig, const std::string& path) 
     file << "extraction_risk_entropy_penalty=" << config.extractionRisk.entropyPenalty << "\n";
     file << "extraction_risk_malformed_penalty=" << config.extractionRisk.malformedHtmlPenalty << "\n";
     file << "extraction_risk_entropy_threshold_millibits=" << config.extractionRisk.entropyMilliBitsThreshold << "\n";
+    file << "content_relevance_enabled=" << (config.contentRelevance.enabled ? "1" : "0") << "\n";
+    file << "content_relevance_min_score=" << config.contentRelevance.minRelevanceScore << "\n";
+    file << "content_relevance_priority_topics=";
+    writeList(config.contentRelevance.priorityTopics);
+    file << "\n";
+    file << "content_relevance_keyword_boost=" << config.contentRelevance.keywordBoostFactor << "\n";
+    file << "content_relevance_extract_structured=" << (config.contentRelevance.extractStructuredData ? "1" : "0") << "\n";
     file << "agent.tor.mode=" << config.tor.runtimeMode << "\n";
     file << "agent.tor.socks_host=" << config.tor.socksHost << "\n";
     file << "agent.tor.socks_port=" << config.tor.socksPort << "\n";
@@ -1322,6 +1514,14 @@ bool saveSearchConfig(const SearchConfig& inputConfig, const std::string& path) 
     file << "tor_control_password=" << config.tor.controlPassword << "\n";
     file << "tor_use_new_circuit=" << (config.tor.useNewCircuit ? "1" : "0") << "\n";
     file << "tor_circuit_timeout=" << config.tor.circuitTimeout << "\n";
+    file << "naan_chunk_size_bytes=" << config.chunkedUpload.chunkSizeBytes << "\n";
+    file << "naan_chunk_max_retries=" << config.chunkedUpload.maxRetries << "\n";
+    file << "naan_chunk_encrypt=" << (config.chunkedUpload.encryptChunks ? "1" : "0") << "\n";
+    file << "naan_chunk_multi_endpoint=" << (config.chunkedUpload.multiEndpoint ? "1" : "0") << "\n";
+    file << "naan_chunk_fallback_endpoints=";
+    writeList(config.chunkedUpload.fallbackEndpoints);
+    file << "\n";
+    file << "transport_protocol=" << config.transportProtocol << "\n";
     file << "cf_bypass_enabled=" << (config.cfBypassEnabled ? "1" : "0") << "\n";
     file << "cf_user_agent_rotation=" << (config.cfUserAgentRotation ? "1" : "0") << "\n";
     file << "cf_user_agents=";
@@ -1385,6 +1585,16 @@ bool saveSearchConfig(const SearchConfig& inputConfig, const std::string& path) 
     file << "cf_retry_on_challenge=" << (config.cfRetryOnChallenge ? "1" : "0") << "\n";
     file << "cf_retry_max_attempts=" << config.cfRetryMaxAttempts << "\n";
     file << "cf_retry_backoff_ms=" << config.cfRetryBackoffMs << "\n";
+    file << "knowledge_replication_factor=" << config.replication.replicationFactor << "\n";
+    file << "knowledge_replication_min_peers=" << config.replication.minPeersForRedistribution << "\n";
+    file << "knowledge_replication_auto_redistribute=" << (config.replication.autoRedistribute ? "1" : "0") << "\n";
+    file << "knowledge_replication_check_interval_sec=" << config.replication.redistributionCheckIntervalSec << "\n";
+    file << "knowledge_max_storage_per_node_mb=" << config.replication.maxStoragePerNodeMb << "\n";
+    file << "relay_routing_enabled=" << (config.relayRouting.enabled ? "1" : "0") << "\n";
+    file << "relay_routing_max_hops=" << config.relayRouting.maxHops << "\n";
+    file << "relay_routing_timeout_sec=" << config.relayRouting.relayTimeoutSec << "\n";
+    file << "relay_routing_encrypt_per_hop=" << (config.relayRouting.encryptPerHop ? "1" : "0") << "\n";
+    file << "relay_routing_mode=" << config.relayRouting.routingMode << "\n";
     
     return true;
 }

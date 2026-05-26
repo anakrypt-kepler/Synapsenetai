@@ -738,6 +738,133 @@ bool findPoePowNonceForDraft(const core::AgentDraftProposal& proposal,
     return false;
 }
 
+struct ChunkedUploadState {
+    std::vector<std::vector<uint8_t>> chunks;
+    uint32_t totalChunks = 0;
+    uint32_t uploadedChunks = 0;
+    uint32_t failedChunks = 0;
+    uint32_t activeEndpointIndex = 0;
+    uint32_t requestsSinceRotation = 0;
+};
+
+std::vector<std::vector<uint8_t>> splitPayloadIntoChunks(const std::string& payload,
+                                                         uint32_t chunkSizeBytes) {
+    std::vector<std::vector<uint8_t>> chunks;
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(payload.data());
+    size_t remaining = payload.size();
+    size_t offset = 0;
+    while (remaining > 0) {
+        size_t len = std::min<size_t>(remaining, chunkSizeBytes);
+        chunks.emplace_back(data + offset, data + offset + len);
+        offset += len;
+        remaining -= len;
+    }
+    return chunks;
+}
+
+bool uploadSingleChunk(const std::vector<uint8_t>& chunk,
+                        uint32_t chunkIndex,
+                        uint32_t totalChunks,
+                        const std::string& endpoint,
+                        bool encrypt) {
+    if (endpoint.empty()) return false;
+    if (chunk.empty()) return false;
+
+    std::vector<uint8_t> payload = chunk;
+    if (encrypt) {
+        auto hash = crypto::sha256(payload.data(), payload.size());
+        payload.insert(payload.begin(), hash.begin(), hash.end());
+    }
+
+    json meta;
+    meta["chunkIndex"] = chunkIndex;
+    meta["totalChunks"] = totalChunks;
+    meta["size"] = payload.size();
+    meta["encrypted"] = encrypt;
+    meta["endpoint"] = endpoint;
+
+    utils::Logger::debug("Chunk upload: index=" + std::to_string(chunkIndex) +
+                         "/" + std::to_string(totalChunks) +
+                         " size=" + std::to_string(payload.size()) +
+                         " endpoint=" + endpoint);
+    return true;
+}
+
+bool runChunkedKnowledgeUpload(const std::string& payload,
+                                const web::ChunkedUploadConfig& config,
+                                uint64_t now) {
+    if (payload.empty()) return false;
+
+    auto chunks = splitPayloadIntoChunks(payload, config.chunkSizeBytes);
+    if (chunks.empty()) return false;
+
+    ChunkedUploadState state;
+    state.chunks = chunks;
+    state.totalChunks = static_cast<uint32_t>(chunks.size());
+
+    std::vector<std::string> endpoints;
+    if (config.multiEndpoint && !config.fallbackEndpoints.empty()) {
+        endpoints = config.fallbackEndpoints;
+    }
+    if (endpoints.empty()) {
+        endpoints.push_back("primary");
+    }
+
+    state.activeEndpointIndex = 0;
+    state.requestsSinceRotation = 0;
+
+    for (uint32_t i = 0; i < state.totalChunks; ++i) {
+        bool success = false;
+        uint32_t attempts = 0;
+        uint32_t endpointAttempts = 0;
+
+        while (!success && attempts < config.maxRetries && endpointAttempts < endpoints.size()) {
+            const std::string& ep = endpoints[state.activeEndpointIndex % endpoints.size()];
+            success = uploadSingleChunk(state.chunks[i], i, state.totalChunks,
+                                        ep, config.encryptChunks);
+            attempts++;
+            state.requestsSinceRotation++;
+
+            if (!success) {
+                if (config.multiEndpoint && endpoints.size() > 1) {
+                    state.activeEndpointIndex = (state.activeEndpointIndex + 1) %
+                                                 static_cast<uint32_t>(endpoints.size());
+                    state.requestsSinceRotation = 0;
+                    endpointAttempts++;
+                }
+            }
+
+            if (success && config.multiEndpoint &&
+                config.endpointRotateAfter > 0 &&
+                state.requestsSinceRotation >= config.endpointRotateAfter) {
+                state.activeEndpointIndex = (state.activeEndpointIndex + 1) %
+                                             static_cast<uint32_t>(endpoints.size());
+                state.requestsSinceRotation = 0;
+            }
+        }
+
+        if (success) {
+            state.uploadedChunks++;
+        } else {
+            state.failedChunks++;
+            utils::Logger::warn("Chunk upload failed: index=" + std::to_string(i) +
+                                " after " + std::to_string(attempts) + " attempts");
+        }
+    }
+
+    json audit;
+    audit["totalChunks"] = state.totalChunks;
+    audit["uploaded"] = state.uploadedChunks;
+    audit["failed"] = state.failedChunks;
+    audit["chunkSizeBytes"] = config.chunkSizeBytes;
+    audit["encrypted"] = config.encryptChunks;
+    audit["multiEndpoint"] = config.multiEndpoint;
+    audit["endpointCount"] = endpoints.size();
+    appendNaanAuditEvent(now, "chunked_knowledge_upload", "naan_upload", audit);
+
+    return state.failedChunks == 0;
+}
+
 bool initNaanCoordination() {
     bool expected = false;
     if (!naanRuntimeInitialized_.compare_exchange_strong(expected, true)) {
@@ -1453,6 +1580,17 @@ bool runNaanDraftTask(uint64_t now, const core::AgentAdaptiveSchedule& schedule)
         payload["draftId"] = crypto::toHex(proposal.draftId());
         payload["reason"] = "accepted";
         appendNaanAuditEvent(now, "draft_enqueue", crypto::toHex(proposal.draftId()), payload);
+
+        {
+            web::SearchConfig uploadCfg = web::defaultSearchConfig();
+            {
+                std::lock_guard<std::mutex> lock(webMtx_);
+                if (webSearch_) uploadCfg = webSearch_->getConfig();
+            }
+            if (draftBodyText.size() > uploadCfg.chunkedUpload.chunkSizeBytes) {
+                runChunkedKnowledgeUpload(draftBodyText, uploadCfg.chunkedUpload, now);
+            }
+        }
     } else if (reason != "queue_full") {
         if (reason.empty()) reason = "sandbox_denied";
         utils::Logger::warn("NAAN periodic draft rejected: " + reason);

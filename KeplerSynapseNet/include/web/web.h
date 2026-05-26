@@ -40,6 +40,81 @@ enum class ContentType {
     UNKNOWN
 };
 
+enum class NodeSpecialization {
+    GENERAL,
+    DARKNET_CRAWLER,
+    BOOK_EXTRACTOR,
+    SECURITY_MONITOR,
+    CONFERENCE_MINER
+};
+
+struct NodeTaskMarketplaceEntry {
+    NodeSpecialization specialization = NodeSpecialization::GENERAL;
+    std::string nodeId;
+    uint64_t registeredAt = 0;
+    uint64_t lastTaskAt = 0;
+    uint64_t tasksCompleted = 0;
+};
+
+std::string nodeSpecializationToString(NodeSpecialization spec);
+bool parseNodeSpecialization(const std::string& value, NodeSpecialization& spec);
+
+enum class DocumentType {
+    HTML,
+    PDF,
+    EPUB,
+    PLAINTEXT,
+    STRUCTURED_DATA,
+    UNKNOWN
+};
+
+struct ThreatIntelConfig {
+    bool enabled = true;
+    uint32_t monitorIntervalSec = 3600;
+    std::vector<std::string> threatSources;
+    bool autoUpdateBypasses = true;
+    uint32_t maxTrackedVulnerabilities = 100;
+    bool alertOnCritical = true;
+    std::string feedFormat = "auto";
+};
+
+struct ThreatEntry {
+    std::string id;
+    std::string title;
+    std::string source;
+    std::string severity;
+    uint64_t discoveredAt;
+    bool bypassAvailable;
+    std::string affectedComponent;
+};
+
+struct ConferenceMiningConfig {
+    bool enabled = true;
+    std::vector<std::string> conferenceSources;
+    bool extractToolNames = true;
+    bool extractTechniqueNames = true;
+    bool extractProtocolSpecs = true;
+    uint32_t maxPresentationsPerCrawl = 20;
+};
+
+struct ContentRelevanceConfig {
+    bool enabled = true;
+    uint32_t minRelevanceScore = 25;
+    std::vector<std::string> priorityTopics;
+    uint32_t keywordBoostFactor = 3;
+    bool extractStructuredData = true;
+};
+
+struct KnowledgeExtractionStats {
+    uint64_t totalSourcesProcessed = 0;
+    uint64_t totalBytesExtracted = 0;
+    uint64_t htmlPagesProcessed = 0;
+    uint64_t documentsProcessed = 0;
+    uint64_t topicsDiscovered = 0;
+    uint64_t highRelevanceEntries = 0;
+    uint64_t lowRelevanceFiltered = 0;
+};
+
 struct SearchResult {
     std::string title;
     std::string url;
@@ -97,6 +172,53 @@ struct TorConfig {
     uint32_t circuitTimeout;
 };
 
+struct KnowledgeReplicationConfig {
+    uint32_t replicationFactor = 3;
+    uint32_t minPeersForRedistribution = 2;
+    bool autoRedistribute = true;
+    uint32_t redistributionCheckIntervalSec = 300;
+    uint32_t maxStoragePerNodeMb = 512;
+};
+
+struct RelayRoutingConfig {
+    bool enabled = false;
+    uint32_t maxHops = 3;
+    uint32_t relayTimeoutSec = 30;
+    bool encryptPerHop = true;
+    std::string routingMode = "onion";
+};
+
+struct ChunkedUploadConfig {
+    uint32_t chunkSizeBytes = 65536;
+    uint32_t maxRetries = 3;
+    bool encryptChunks = true;
+    bool multiEndpoint = true;
+    uint32_t endpointRotateAfter = 5;
+    std::vector<std::string> fallbackEndpoints;
+};
+
+struct MessageLedgerConfig {
+    bool enabled = true;
+    bool storeHashInLedger = true;
+    bool proofOfDelivery = true;
+    std::string hashAlgorithm = "sha256";
+    uint32_t confirmationDepth = 3;
+    bool encryptMetadata = true;
+    uint32_t retentionDays = 365;
+};
+
+struct FederationConfig {
+    bool enabled = true;
+    std::string protocolVersion = "1.0";
+    uint32_t maxFederatedPeers = 64;
+    bool requireMutualAuth = true;
+    bool relayKnowledge = true;
+    bool relayMessages = false;
+    uint32_t syncIntervalSec = 60;
+    std::vector<std::string> trustedFederationPeers;
+    std::string federationMode = "open";
+};
+
 struct SearchConfig {
     std::vector<SearchEngine> clearnetEngines;
     std::vector<SearchEngine> darknetEngines;
@@ -137,6 +259,15 @@ struct SearchConfig {
     bool connectorAuditEnabled;
     std::string connectorAuditDir;
     ExtractionRiskPolicy extractionRisk;
+    ContentRelevanceConfig contentRelevance;
+    ChunkedUploadConfig chunkedUpload;
+    KnowledgeReplicationConfig replication;
+    RelayRoutingConfig relayRouting;
+    ThreatIntelConfig threatIntel;
+    ConferenceMiningConfig conferenceMining;
+    MessageLedgerConfig messageLedger;
+    FederationConfig federation;
+    std::string transportProtocol = "tcp";
 
     bool cfBypassEnabled = false;
     bool cfUserAgentRotation = true;

@@ -73,6 +73,7 @@ constexpr RpcMethodSpec kRpcMethodSpecs[] = {
     {"blocks.get", &RpcCommandHandlerProvider::handleRpcBlocksGet, false, 300},
     {"peer.announce", &RpcCommandHandlerProvider::handleRpcPeerAnnounce, false, 600},
     {"peer.directory", &RpcCommandHandlerProvider::handleRpcPeerDirectory, false, 300},
+    {"naan.security_assessment", &RpcCommandHandlerProvider::handleRpcNaanSecurityAssessment, true, 30},
 };
 
 } // namespace
