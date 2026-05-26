@@ -1428,6 +1428,22 @@ SearchConfig defaultSearchConfig() {
     cfg.conferenceMining.maxPresentationsPerCrawl = 20;
     cfg.naanSecurityAssessmentEnabled = true;
     cfg.naanSecurityAssessmentIntervalSec = 300;
+    cfg.messageLedger.enabled = true;
+    cfg.messageLedger.storeHashInLedger = true;
+    cfg.messageLedger.proofOfDelivery = true;
+    cfg.messageLedger.hashAlgorithm = "sha256";
+    cfg.messageLedger.confirmationDepth = 3;
+    cfg.messageLedger.encryptMetadata = true;
+    cfg.messageLedger.retentionDays = 365;
+    cfg.federation.enabled = true;
+    cfg.federation.protocolVersion = "1.0";
+    cfg.federation.maxFederatedPeers = 64;
+    cfg.federation.requireMutualAuth = true;
+    cfg.federation.relayKnowledge = true;
+    cfg.federation.relayMessages = false;
+    cfg.federation.syncIntervalSec = 60;
+    cfg.federation.trustedFederationPeers.clear();
+    cfg.federation.federationMode = "open";
     cfg.cfBypassEnabled = false;
     cfg.cfUserAgentRotation = true;
     cfg.cfUserAgents = {
