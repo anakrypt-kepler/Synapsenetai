@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -271,6 +272,7 @@ private:
     mutable std::string ownOnion_;
     mutable std::string onionPrivKey_;
     mutable int listenFd_ = -1;
+    mutable int controlFd_ = -1;  // held open to keep the ephemeral onion published
     mutable std::thread listenerThread_;
     mutable std::atomic<bool> listenerStop_{false};
     void startOnionService() const;
@@ -280,7 +282,21 @@ private:
     void fetchBlocksFromSeed(const std::string& seedOnion);
     std::vector<std::string> fetchPeersFromSeed(const std::string& seedOnion);
     void announcePresenceToSeed(const std::string& seedOnion);
-    mutable std::vector<std::string> discoveredPeers_;
+
+    // Decentralized peer mesh (Phase 1): direct dial + PEX + on-disk cache
+    struct KnownPeer {
+        std::string onion;
+        int64_t lastSeen = 0;     // epoch ms of last successful contact/learn
+        std::string source;       // "directory" | "inbound" | "pex" | "cache"
+        bool connected = false;   // we successfully dialed it this session
+    };
+    mutable std::mutex knownPeersMtx_;
+    mutable std::map<std::string, KnownPeer> knownPeers_;  // keyed by onion
+    void mergeKnownPeer(const std::string& onion, const std::string& source, bool connected) const;
+    std::vector<std::string> dialPeer(const std::string& onion);  // returns onions learned via PEX
+    void loadPeerCache() const;
+    void savePeerCache() const;
+
     mutable std::atomic<uint64_t> lastBlockHeight_{0};
     mutable std::atomic<uint32_t> seedPeerCount_{0};
     mutable std::thread blockFetchThread_;

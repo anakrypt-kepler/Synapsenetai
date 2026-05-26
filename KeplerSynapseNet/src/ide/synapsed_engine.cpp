@@ -326,8 +326,12 @@ void SynapsedEngine::startOnionService() const {
             resp.find("513") != std::string::npos || resp.find("550") != std::string::npos) break;
     }
 
-    send(cfd, "QUIT\r\n", 6, 0);
-    CLOSESOCK(cfd);
+    // Keep the control connection OPEN for the app's lifetime. Ephemeral ADD_ONION
+    // services are bound to the control connection that created them — closing it
+    // (QUIT) makes Tor immediately delete the onion, so the hidden service would be
+    // unreachable. Holding the socket keeps onion:8333 published until we exit, and
+    // Tor auto-removes it on disconnect (no stale onions, no re-add collisions).
+    controlFd_ = cfd;
 
     // Parse ServiceID and PrivateKey
     for (const auto& token : {std::string("250-ServiceID="), std::string("ServiceID=")}) {
@@ -352,6 +356,7 @@ void SynapsedEngine::startOnionService() const {
 
     if (ownOnion_.empty()) {
         CLOSESOCK(listenFd_); listenFd_ = -1;
+        if (controlFd_ >= 0) { CLOSESOCK(controlFd_); controlFd_ = -1; }
         return;
     }
 
@@ -366,6 +371,11 @@ void SynapsedEngine::stopListener() const {
     if (listenFd_ >= 0) {
         CLOSESOCK(listenFd_);
         listenFd_ = -1;
+    }
+    // Closing the control connection lets Tor tear down our ephemeral onion cleanly
+    if (controlFd_ >= 0) {
+        CLOSESOCK(controlFd_);
+        controlFd_ = -1;
     }
 }
 
@@ -384,34 +394,39 @@ void SynapsedEngine::p2pListenerLoop() const {
         int cfd = accept(listenFd_, (struct sockaddr*)&peer, &plen);
         if (cfd < 0) continue;
 
-        // Read peer announce: "SYNAPSE_PEER <onion_address>\n"
+        // Read one request: "SYNAPSE_PEER <onion>\n" or "GET_PEERS <onion>\n"
         char buf[512];
         ssize_t n = recv(cfd, buf, sizeof(buf) - 1, 0);
         if (n > 0) {
             buf[n] = 0;
             std::string msg(buf);
-            if (msg.find("SYNAPSE_PEER ") == 0) {
-                std::string peerAddr = trim(msg.substr(13));
-                if (!peerAddr.empty() && peerAddr.find(".onion") != std::string::npos) {
-                    // Add to known peers
-                    bool found = false;
-                    for (const auto& p : cachedPeers_) {
-                        if (p.address == peerAddr) { found = true; break; }
-                    }
-                    if (!found) {
-                        PeerEntry pe;
-                        pe.address = peerAddr;
-                        pe.transport = "tor";
-                        pe.latency_ms = 0;
-                        pe.role = "peer";
-                        pe.alive = true;
-                        cachedPeers_.push_back(pe);
-                    }
+            if (msg.find("GET_PEERS") == 0) {
+                // Register the dialer (optional onion after the verb), then share our peer list (PEX)
+                std::string rest = trim(msg.substr(9));
+                if (!rest.empty()) {
+                    std::istringstream iss(rest);
+                    std::string dialer;
+                    iss >> dialer;
+                    mergeKnownPeer(dialer, "inbound", false);
                 }
+                std::vector<std::string> onions;
+                {
+                    std::lock_guard<std::mutex> lock(knownPeersMtx_);
+                    for (const auto& kv : knownPeers_) onions.push_back(kv.first);
+                }
+                static std::mt19937 pexRng(std::random_device{}());
+                std::shuffle(onions.begin(), onions.end(), pexRng);
+                if (onions.size() > 50) onions.resize(50);  // cap response size
+                std::string reply = "PEERS";
+                for (const auto& o : onions) reply += " " + o;
+                reply += "\n";
+                send(cfd, reply.c_str(), reply.size(), 0);
+            } else if (msg.find("SYNAPSE_PEER ") == 0) {
+                std::string peerAddr = trim(msg.substr(13));
+                mergeKnownPeer(peerAddr, "inbound", false);
+                std::string reply = "SYNAPSE_ACK " + ownOnion_ + ":8333\n";
+                send(cfd, reply.c_str(), reply.size(), 0);
             }
-            // Reply with our address
-            std::string reply = "SYNAPSE_ACK " + ownOnion_ + ":8333\n";
-            send(cfd, reply.c_str(), reply.size(), 0);
         }
         CLOSESOCK(cfd);
     }
@@ -713,6 +728,131 @@ void SynapsedEngine::announcePresenceToSeed(const std::string& seedOnion) {
     CLOSESOCK(fd);
 }
 
+void SynapsedEngine::mergeKnownPeer(const std::string& onionRaw, const std::string& source, bool connected) const {
+    std::string onion = onionRaw;
+    size_t colon = onion.find(':');
+    if (colon != std::string::npos) onion = onion.substr(0, colon);
+    onion = trim(onion);
+    if (onion.empty() || onion.find(".onion") == std::string::npos) return;
+    if (onion == ownOnion_) return;  // never store self
+    std::lock_guard<std::mutex> lock(knownPeersMtx_);
+    auto& kp = knownPeers_[onion];
+    kp.onion = onion;
+    kp.lastSeen = nowMillis();
+    // prefer the strongest provenance: a direct exchange (pex/inbound) beats a directory listing
+    if (kp.source.empty() || source == "pex" || source == "inbound") kp.source = source;
+    if (connected) kp.connected = true;
+}
+
+std::vector<std::string> SynapsedEngine::dialPeer(const std::string& onion) {
+    std::vector<std::string> learned;
+    if (onion.empty() || onion == ownOnion_ || onion.find(".onion") == std::string::npos) return learned;
+
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return learned;
+    struct timeval tv{20, 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(9050);
+    inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr);
+    if (connect(fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) { CLOSESOCK(fd); return learned; }
+
+    uint8_t greeting[] = {0x05, 0x02, 0x00, 0x02};
+    send(fd, (char*)greeting, 4, 0);
+    uint8_t gresp[2];
+    if (recv(fd, (char*)gresp, 2, 0) != 2 || gresp[0] != 0x05) { CLOSESOCK(fd); return learned; }
+    if (gresp[1] == 0x02) {
+        uint8_t auth[] = {0x01, 0x00, 0x00};
+        send(fd, (char*)auth, 3, 0);
+        uint8_t aresp[2];
+        if (recv(fd, (char*)aresp, 2, 0) != 2 || aresp[1] != 0x00) { CLOSESOCK(fd); return learned; }
+    } else if (gresp[1] != 0x00) { CLOSESOCK(fd); return learned; }
+
+    // SOCKS5 connect to peer's P2P listener on port 8333
+    std::vector<uint8_t> req;
+    req.push_back(0x05); req.push_back(0x01); req.push_back(0x00); req.push_back(0x03);
+    req.push_back((uint8_t)onion.size());
+    req.insert(req.end(), onion.begin(), onion.end());
+    uint16_t p2pPort = 8333;
+    req.push_back((p2pPort >> 8) & 0xFF);
+    req.push_back(p2pPort & 0xFF);
+    send(fd, (char*)req.data(), req.size(), 0);
+
+    uint8_t resp[10];
+    ssize_t n = recv(fd, (char*)resp, sizeof(resp), 0);
+    if (n < 2 || resp[1] != 0x00) { CLOSESOCK(fd); return learned; }
+
+    // Announce self and request peers in one message
+    std::string msg = "GET_PEERS " + ownOnion_ + "\n";
+    send(fd, msg.c_str(), msg.size(), 0);
+
+    std::string response;
+    char buf[4096];
+    ssize_t r = recv(fd, buf, sizeof(buf) - 1, 0);
+    if (r > 0) { buf[r] = '\0'; response = buf; }
+    CLOSESOCK(fd);
+
+    // Successful contact: mark peer connected
+    mergeKnownPeer(onion, "pex", true);
+
+    // Parse "PEERS o1 o2 o3 ..."
+    if (response.find("PEERS") == 0) {
+        std::istringstream iss(response.substr(5));
+        std::string tok;
+        while (iss >> tok) {
+            if (tok.find(".onion") == std::string::npos) continue;
+            size_t c = tok.find(':');
+            if (c != std::string::npos) tok = tok.substr(0, c);
+            if (tok == ownOnion_) continue;
+            learned.push_back(tok);
+            mergeKnownPeer(tok, "pex", false);
+        }
+    }
+    return learned;
+}
+
+void SynapsedEngine::loadPeerCache() const {
+    std::ifstream f(dataDir_ + "/peers.dat");
+    if (!f.good()) return;
+    std::string line;
+    std::lock_guard<std::mutex> lock(knownPeersMtx_);
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        std::istringstream iss(line);
+        std::string onion; int64_t ls = 0;
+        iss >> onion >> ls;
+        if (onion.find(".onion") == std::string::npos) continue;
+        if (onion == ownOnion_) continue;
+        KnownPeer kp;
+        kp.onion = onion;
+        kp.lastSeen = ls;
+        kp.source = "cache";
+        kp.connected = false;
+        knownPeers_[onion] = kp;
+    }
+}
+
+void SynapsedEngine::savePeerCache() const {
+    std::vector<std::pair<std::string, int64_t>> entries;
+    {
+        std::lock_guard<std::mutex> lock(knownPeersMtx_);
+        for (const auto& kv : knownPeers_) entries.push_back({kv.first, kv.second.lastSeen});
+    }
+    // LRU cap: keep the 500 most-recently-seen onions
+    std::sort(entries.begin(), entries.end(),
+              [](const auto& a, const auto& b) { return a.second > b.second; });
+    if (entries.size() > 500) entries.resize(500);
+    std::string tmp = dataDir_ + "/peers.dat.tmp";
+    std::ofstream f(tmp, std::ios::trunc);
+    if (!f.good()) return;
+    for (const auto& e : entries) f << e.first << " " << e.second << "\n";
+    f.close();
+    std::rename(tmp.c_str(), (dataDir_ + "/peers.dat").c_str());
+}
+
 int SynapsedEngine::init(const std::string& configPath) {
     std::lock_guard<std::mutex> lock(mtx_);
     if (initialized_) return -1;
@@ -822,6 +962,9 @@ int SynapsedEngine::init(const std::string& configPath) {
 
         startOnionService();
 
+        // Load cached peers so we can reconnect directly without the seeds
+        loadPeerCache();
+
         // Announce to seeds and fetch blocks in background
         if (!ownOnion_.empty()) {
             std::thread([this]() {
@@ -847,21 +990,36 @@ int SynapsedEngine::init(const std::string& configPath) {
                 announcePresenceToSeed(seed2);
                 if (blockFetchStop_.load()) break;
 
-                // Discover other nodes from the seed directory (peer visibility)
+                // Discover from the seed directory, then merge into the known-peer set
                 std::vector<std::string> peers = fetchPeersFromSeed(seed1);
                 if (blockFetchStop_.load()) break;
                 auto p2 = fetchPeersFromSeed(seed2);
                 peers.insert(peers.end(), p2.begin(), p2.end());
-                {
-                    std::lock_guard<std::mutex> lock(mtx_);
-                    std::vector<std::string> uniq;
-                    for (auto& o : peers) {
-                        if (o.empty() || o == ownOnion_ || o == seed1 || o == seed2) continue;
-                        if (std::find(uniq.begin(), uniq.end(), o) == uniq.end())
-                            uniq.push_back(o);
-                    }
-                    discoveredPeers_ = uniq;
+                for (const auto& o : peers) {
+                    if (o == seed1 || o == seed2) continue;
+                    mergeKnownPeer(o, "directory", false);
                 }
+                if (blockFetchStop_.load()) break;
+
+                // Direct mesh: dial a few known peers per cycle for PEX (budget 3, rotated)
+                std::vector<std::string> dialList;
+                {
+                    std::lock_guard<std::mutex> lock(knownPeersMtx_);
+                    for (const auto& kv : knownPeers_) {
+                        if (kv.first == seed1 || kv.first == seed2) continue;
+                        dialList.push_back(kv.first);
+                    }
+                }
+                {
+                    static std::mt19937 dialRng(std::random_device{}());
+                    std::shuffle(dialList.begin(), dialList.end(), dialRng);
+                    if (dialList.size() > 3) dialList.resize(3);
+                }
+                for (const auto& o : dialList) {
+                    if (blockFetchStop_.load()) break;
+                    dialPeer(o);  // PEX: announces us, learns their peers, marks connected
+                }
+                savePeerCache();
                 if (blockFetchStop_.load()) break;
                 for (int s = 0; s < 10 && !blockFetchStop_.load(); ++s)
                     std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -983,27 +1141,39 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             emitted++;
             if (p.alive) aliveCount++;
         }
-        // Append other miners discovered through the seed nodes
-        for (const auto& onion : discoveredPeers_) {
-            bool dup = false;
-            for (const auto& p : cachedPeers_) {
-                if (!onion.empty() && p.address.find(onion) != std::string::npos) { dup = true; break; }
+        // Append mesh peers we know (directory, PEX, inbound, cache) — deduped vs seeds
+        int meshPeers = 0;
+        {
+            std::lock_guard<std::mutex> lock(knownPeersMtx_);
+            int64_t now = nowMillis();
+            for (const auto& kv : knownPeers_) {
+                const auto& kp = kv.second;
+                if (now - kp.lastSeen > 600000) continue;  // 10 min display TTL
+                bool dup = false;
+                for (const auto& p : cachedPeers_) {
+                    if (p.address.find(kp.onion) != std::string::npos) { dup = true; break; }
+                }
+                if (dup) continue;
+                std::string tag = kp.connected ? "PEX" :
+                    (kp.source == "directory" ? "DIR" :
+                     kp.source == "inbound" ? "IN" :
+                     kp.source == "cache" ? "CACHE" : "PEER");
+                if (emitted > 0) ss << ",";
+                ss << "{\"address\":\"" << jsonEscape(kp.onion) << ":8333\""
+                   << ",\"transport\":\"tor\""
+                   << ",\"latency_ms\":0"
+                   << ",\"connected_since\":\"" << tag << "\"}";
+                emitted++;
+                aliveCount++;
+                meshPeers++;
             }
-            if (dup) continue;
-            if (emitted > 0) ss << ",";
-            ss << "{\"address\":\"" << jsonEscape(onion) << ":8333\""
-               << ",\"transport\":\"tor\""
-               << ",\"latency_ms\":0"
-               << ",\"connected_since\":\"PEER\"}";
-            emitted++;
-            aliveCount++;
         }
         peerCount_ = aliveCount;
 
         ss << "],\"tor\":{\"bootstrap\":\"" << jsonEscape(ti.bootstrap)
            << "\",\"circuits\":" << ti.circuits
            << ",\"bridge_status\":\"" << (ti.connected ? "active" : "none")
-           << "\"},\"discovery\":{\"dns_queries\":0,\"peer_exchange\":" << discoveredPeers_.size() << "}"
+           << "\"},\"discovery\":{\"dns_queries\":0,\"peer_exchange\":" << meshPeers << "}"
            << ",\"bandwidth\":{\"inbound_kbps\":0,\"outbound_kbps\":0}}";
         return ss.str();
     }
@@ -1683,7 +1853,14 @@ std::string SynapsedEngine::getStatus() const {
         probeSeedNodes();
         int alive = 0;
         for (const auto& p : cachedPeers_) if (p.alive) alive++;
-        peerCount_ = alive + static_cast<int>(discoveredPeers_.size());
+        int meshCount = 0;
+        {
+            std::lock_guard<std::mutex> lock(knownPeersMtx_);
+            int64_t now = nowMillis();
+            for (const auto& kv : knownPeers_)
+                if (now - kv.second.lastSeen <= 600000) meshCount++;
+        }
+        peerCount_ = alive + meshCount;
     }
 
     int64_t uptime = nowMillis() - startTime_;
