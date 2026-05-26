@@ -142,6 +142,7 @@ struct NodeInfo {
     int ping;
     std::string version;
     bool isInbound;
+    bool online = false;
 };
 
 struct ContributionInfo {

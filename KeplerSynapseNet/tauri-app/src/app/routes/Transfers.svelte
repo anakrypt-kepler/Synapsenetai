@@ -9,7 +9,8 @@
   let memo = "";
   let sendError = "";
   let sendSuccess = "";
-  let transactions: { type: string; amount: string; timestamp: string; status: string }[] = [];
+  let sending = false;
+  let transactions: { type: string; amount: string; timestamp: string; status: string; to?: string; from?: string; txid?: string }[] = [];
   let filter = "all";
   let walletAddress = "";
   let qrSvg = "";
@@ -24,11 +25,29 @@
     } catch {}
   });
 
+  function formatTs(raw: any): string {
+    if (!raw) return "-";
+    if (typeof raw === "string" && raw.length > 4) return raw;
+    if (typeof raw === "number") {
+      const d = new Date(raw);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+    }
+    return String(raw);
+  }
+
   async function loadTransactions() {
     try {
       const result = await getTransactions(filter);
       const parsed = JSON.parse(result);
-      transactions = parsed.transactions || [];
+      transactions = (parsed.transactions || []).map((tx: any) => ({
+        type: tx.type || "unknown",
+        amount: tx.amount || "0",
+        timestamp: tx.timestamp || formatTs(tx.ts),
+        status: tx.status || "pending",
+        to: tx.to,
+        from: tx.from,
+        txid: tx.txid,
+      }));
     } catch { transactions = []; }
   }
 
@@ -39,16 +58,28 @@
       sendError = "RECIPIENT AND AMOUNT REQUIRED";
       return;
     }
+    const numAmt = parseFloat(amount);
+    if (isNaN(numAmt) || numAmt <= 0) {
+      sendError = "INVALID AMOUNT";
+      return;
+    }
+    sending = true;
     try {
-      await sendNgt(recipient, amount, memo || undefined);
-      sendSuccess = "TX SUBMITTED";
-      recipient = "";
-      amount = "";
-      memo = "";
-      await loadTransactions();
+      const raw = await sendNgt(recipient, amount, memo || undefined);
+      const resp = JSON.parse(raw);
+      if (resp.error) {
+        sendError = resp.error.toUpperCase();
+      } else {
+        sendSuccess = `TX CONFIRMED: ${resp.txid || "OK"}`;
+        recipient = "";
+        amount = "";
+        memo = "";
+        await loadTransactions();
+      }
     } catch (e: any) {
       sendError = e.message || "TX FAILED";
     }
+    sending = false;
   }
 
   function setFilter(f: string) {
@@ -78,7 +109,9 @@
     {#if sendSuccess}
       <div class="success-msg">{sendSuccess}</div>
     {/if}
-    <button class="btn-primary" on:click={handleSend}>[ SEND ]</button>
+    <button class="btn-primary" on:click={handleSend} disabled={sending}>
+      {sending ? "[ SENDING... ]" : "[ SEND ]"}
+    </button>
   </div>
 
   <div class="section-title">RECEIVE</div>
@@ -100,17 +133,18 @@
     <button class="fbtn" class:active={filter === "rewards"} on:click={() => setFilter("rewards")}>MINE</button>
   </div>
   <table>
-    <thead><tr><th>TYPE</th><th>AMOUNT</th><th>TIME</th><th>STATUS</th></tr></thead>
+    <thead><tr><th>TYPE</th><th>AMOUNT</th><th>DETAIL</th><th>TIME</th><th>STATUS</th></tr></thead>
     <tbody>
       {#each transactions as tx}
         <tr>
           <td><span class="tag">{tx.type}</span></td>
           <td>{tx.amount} NGT</td>
+          <td class="detail-cell">{tx.to ? `→ ${tx.to.slice(0,12)}…` : tx.txid ? tx.txid : "-"}</td>
           <td>{tx.timestamp}</td>
-          <td>{tx.status}</td>
+          <td><span class="status-{tx.status}">{tx.status}</span></td>
         </tr>
       {:else}
-        <tr><td colspan="4" class="empty-row">NO TRANSACTIONS</td></tr>
+        <tr><td colspan="5" class="empty-row">NO TRANSACTIONS</td></tr>
       {/each}
     </tbody>
   </table>
@@ -158,5 +192,23 @@
     text-align: center;
     color: var(--text-secondary);
     padding: 16px;
+  }
+
+  .detail-cell {
+    font-size: 7px;
+    color: var(--text-secondary);
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .status-confirmed { color: #00c853; }
+  .status-pending { color: #ffc107; }
+  .status-failed { color: #f44; }
+
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 </style>

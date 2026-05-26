@@ -34,10 +34,8 @@
     } catch {}
   }
 
-  // Connections = everyone except our own LOCAL entry
-  $: connectionCount = peers.filter((p) => p.connected_since !== "LOCAL").length;
-  // ONLINE once at least one seed is reachable (responded) — that means we're on the network
-  $: isOnline = peers.some((p) => p.connected_since === "SEED" && p.online);
+  $: connectionCount = peers.filter((p) => p.connected_since !== "LOCAL" && p.connected_since !== "local").length;
+  $: isOnline = peers.some((p) => (p.connected_since === "SEED" || p.connected_since === "seed") && p.online);
 </script>
 
 <div class="content-area">
@@ -48,17 +46,18 @@
     </span>
   </div>
   <table>
-    <thead><tr><th>ADDRESS</th><th>TYPE</th><th>PING</th><th>SINCE</th></tr></thead>
+    <thead><tr><th></th><th>ADDRESS</th><th>TYPE</th><th>PING</th><th>SINCE</th></tr></thead>
     <tbody>
       {#each peers as peer}
         <tr>
+          <td class="dot-cell"><span class="peer-dot {peer.online ? 'online' : 'offline'}">{peer.online ? "●" : "○"}</span></td>
           <td><code>{peer.address}</code></td>
           <td>{peer.transport}</td>
           <td>{peer.latency_ms}ms</td>
           <td>{peer.connected_since}</td>
         </tr>
       {:else}
-        <tr><td colspan="4" class="empty-row">NO PEERS</td></tr>
+        <tr><td colspan="5" class="empty-row">NO PEERS</td></tr>
       {/each}
     </tbody>
   </table>
@@ -153,6 +152,24 @@
 
   .net-status.connecting {
     color: var(--text-secondary);
+  }
+
+  .dot-cell {
+    width: 14px;
+    text-align: center;
+    padding: 0 2px;
+  }
+
+  .peer-dot {
+    font-size: 10px;
+  }
+
+  .peer-dot.online {
+    color: #00c853;
+  }
+
+  .peer-dot.offline {
+    color: #555;
   }
 
   .peer-map {

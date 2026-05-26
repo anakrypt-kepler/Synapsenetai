@@ -69,6 +69,7 @@ TuiCoreSnapshot buildTuiCoreSnapshot(const TuiCoreSnapshotBuilderHooks& hooks) {
             nodeInfo.ping = 50;
             nodeInfo.version = std::to_string(peer.version);
             nodeInfo.isInbound = !peer.isOutbound;
+            nodeInfo.online = true;
             snapshot.peers.push_back(std::move(nodeInfo));
         }
     }

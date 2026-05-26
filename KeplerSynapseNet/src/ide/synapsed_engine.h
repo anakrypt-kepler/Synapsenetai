@@ -311,6 +311,7 @@ private:
     std::atomic<bool> naanStop_{false};
     std::thread naanThread_;
     std::string naanState_ = "off";
+    mutable std::string naanCurrentTask_;
     int naanTickInterval_ = 45;
     double naanBudgetPerEpoch_ = 100.0;
     double naanSpentThisEpoch_ = 0.0;

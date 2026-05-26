@@ -2372,7 +2372,7 @@ void TUI::Impl::drawPeers() {
     int boxX = 3;
     drawBox(row, boxX, 3, boxW, "Connected Nodes");
     int inner = row + 2;
-    mvprintw(inner++, boxX + 2, "%-18s %-30s %-12s %-24s", "NODE ID", "PEER", "TRANSPORT", "RAW");
+    mvprintw(inner++, boxX + 2, "  %-18s %-30s %-12s %-24s", "NODE ID", "PEER", "TRANSPORT", "RAW");
     mvwhline(stdscr, inner++, boxX + 1, ACS_HLINE, boxW - 2);
 
     int y = inner;
@@ -2380,11 +2380,15 @@ void TUI::Impl::drawPeers() {
     int shown = 0;
     for (const auto& p : state.peers) {
         if (shown >= maxRows) break;
+        int dotColor = p.online ? 1 : 7;
+        attron(COLOR_PAIR(dotColor));
+        mvprintw(y, boxX + 2, "%s", p.online ? "\xe2\x97\x8f" : "\xe2\x97\x8b");
+        attroff(COLOR_PAIR(dotColor));
         std::string id = truncEnd(p.id, 18);
         std::string displayAddr = truncEnd(p.displayAddress.empty() ? p.address : p.displayAddress, 30);
         std::string transport = truncEnd(p.transport.empty() ? std::string("clearnet") : p.transport, 12);
         std::string rawAddr = truncEnd(p.rawAddress.empty() ? (p.address + ":" + std::to_string(p.port)) : p.rawAddress, 24);
-        mvprintw(y, boxX + 2, "%-18s %-30s %-12s %-24s", id.c_str(), displayAddr.c_str(), transport.c_str(), rawAddr.c_str());
+        mvprintw(y, boxX + 5, "%-18s %-30s %-12s %-24s", id.c_str(), displayAddr.c_str(), transport.c_str(), rawAddr.c_str());
         y++; shown++;
     }
 

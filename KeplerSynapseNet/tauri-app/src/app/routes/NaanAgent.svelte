@@ -9,6 +9,9 @@
   let submissionHistory: { title: string; result: string; ngt_earned: string }[] = [];
   let observatory: { agent: string; task: string; status: string }[] = [];
   let agentLog: { ts: number; msg: string }[] = [];
+  let lastBypass: { cve: string; protection: string; method: string; transport: string; ttfb_ms: number; http: number; bytes: number; ts: number } | null = null;
+  let bypassCounters: Record<string, number> = {};
+  let totalNgt = 0;
 
   let topicPreferences = "";
   let researchSources = "both";
@@ -35,7 +38,9 @@
         approval_rate: (parsed.approval_rate != null ? Math.round(parsed.approval_rate) + "%" : "0%"),
       };
       currentTask = parsed.current_task || "";
-      draftQueue = parsed.draft_queue || [];
+      totalNgt = parsed.total_ngt || 0;
+      lastBypass = parsed.last_bypass || null;
+      bypassCounters = parsed.bypass_counters || {};
       submissionHistory = (parsed.history || []).map((h: any) => ({
         title: h.title, result: h.status, ngt_earned: h.ngt?.toFixed(2) || "0",
       }));
@@ -71,6 +76,8 @@
     const d = new Date(ts);
     return `${d.getHours().toString().padStart(2,"0")}:${d.getMinutes().toString().padStart(2,"0")}:${d.getSeconds().toString().padStart(2,"0")}`;
   }
+
+  $: bypassList = Object.entries(bypassCounters).sort((a, b) => b[1] - a[1]);
 </script>
 
 <div class="content-area">
@@ -93,7 +100,7 @@
     </div>
   </div>
 
-  <div class="grid-3">
+  <div class="grid-4">
     <div class="card">
       <div class="card-header">BAND</div>
       <div class="card-value">{agentScore.band}</div>
@@ -106,6 +113,10 @@
       <div class="card-header">RATE</div>
       <div class="card-value">{agentScore.approval_rate}</div>
     </div>
+    <div class="card">
+      <div class="card-header">EARNED</div>
+      <div class="card-value ngt-val">{totalNgt.toFixed(2)} NGT</div>
+    </div>
   </div>
 
   <div class="card">
@@ -113,7 +124,32 @@
     <div class="task-txt">{currentTask || "IDLE"}</div>
   </div>
 
-  <div class="section-title">AGENT CHAT (READ-ONLY)</div>
+  {#if lastBypass && lastBypass.cve}
+    <div class="section-title">LAST BYPASS</div>
+    <div class="card bypass-card">
+      <div class="bypass-row"><span class="bp-label">CVE</span><span class="bp-val cve-id">{lastBypass.cve}</span></div>
+      <div class="bypass-row"><span class="bp-label">PROTECTION</span><span class="bp-val">{lastBypass.protection}</span></div>
+      <div class="bypass-row"><span class="bp-label">METHOD</span><span class="bp-val">{lastBypass.method}</span></div>
+      <div class="bypass-row"><span class="bp-label">TRANSPORT</span><span class="bp-val">{lastBypass.transport}</span></div>
+      <div class="bypass-row"><span class="bp-label">TTFB</span><span class="bp-val">{lastBypass.ttfb_ms}ms</span></div>
+      <div class="bypass-row"><span class="bp-label">HTTP</span><span class="bp-val">{lastBypass.http}</span></div>
+      <div class="bypass-row"><span class="bp-label">BYTES</span><span class="bp-val">{lastBypass.bytes}</span></div>
+    </div>
+  {/if}
+
+  {#if bypassList.length > 0}
+    <div class="section-title">BYPASS COUNTERS</div>
+    <div class="card counter-grid">
+      {#each bypassList as [cve, count]}
+        <div class="counter-item">
+          <span class="cve-id">{cve}</span>
+          <span class="counter-val">{count}x</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  <div class="section-title">AGENT LOG</div>
   <div class="chat-box">
     {#each agentLog as entry}
       <div class="chat-line">
@@ -124,22 +160,6 @@
       <div class="chat-line empty">NO AGENT ACTIVITY</div>
     {/each}
   </div>
-
-  <div class="section-title">OBSERVATORY</div>
-  <table>
-    <thead><tr><th>AGENT</th><th>TASK</th><th>STATUS</th></tr></thead>
-    <tbody>
-      {#each observatory as agent}
-        <tr>
-          <td><code>{agent.agent}</code></td>
-          <td>{agent.task}</td>
-          <td><span class="tag">{agent.status}</span></td>
-        </tr>
-      {:else}
-        <tr><td colspan="3" class="empty-row">NO AGENTS</td></tr>
-      {/each}
-    </tbody>
-  </table>
 
   <div class="section-title">CONFIG</div>
   <div class="card">
@@ -189,11 +209,72 @@
   .status-lbl.cooldown { color: var(--warn); }
   .status-lbl.quarantine { color: var(--err); }
 
+  .grid-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .ngt-val {
+    color: #00c853;
+    font-size: 10px;
+  }
+
   .task-txt {
     font-size: 10px;
     color: var(--text-primary);
     margin-top: 4px;
     line-height: 1.6;
+  }
+
+  .bypass-card {
+    font-size: 9px;
+  }
+
+  .bypass-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .bypass-row:last-child {
+    border-bottom: none;
+  }
+
+  .bp-label {
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+
+  .bp-val {
+    color: var(--text-primary);
+  }
+
+  .cve-id {
+    color: #f44;
+    font-weight: 700;
+  }
+
+  .counter-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .counter-item {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    font-size: 8px;
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+  }
+
+  .counter-val {
+    color: #00c853;
+    font-weight: 700;
   }
 
   .chat-box {

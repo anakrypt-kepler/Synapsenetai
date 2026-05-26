@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <ctime>
 #include <regex>
 
 #define SYSTEM_IGNORE(cmd) do { (void)!system(cmd); } while(0)
@@ -203,7 +204,7 @@ void SynapsedEngine::probeSeedNodes() const {
         : (ownOnion_ + ":8333");
     self.transport = "tor";
     self.latency_ms = 0;
-    self.role = "local";
+    self.role = "LOCAL";
     self.alive = true;
     peers.push_back(self);
 
@@ -211,7 +212,7 @@ void SynapsedEngine::probeSeedNodes() const {
         PeerEntry pe;
         pe.address = std::string(s.addr) + ":" + std::to_string(s.port);
         pe.transport = "tor";
-        pe.role = "seed";
+        pe.role = "SEED";
 
         auto t0 = std::chrono::steady_clock::now();
         pe.alive = probeSocks5(s.addr, s.port);
@@ -1380,13 +1381,20 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         }
         std::string txId = sha256Hex(walletAddress_ + recipient +
             std::to_string(amt) + std::to_string(nowMillis()));
+        int64_t txTs = nowMillis();
+        time_t rawt = (time_t)(txTs / 1000);
+        struct tm tmBuf;
+        localtime_r(&rawt, &tmBuf);
+        char tsBuf[32];
+        strftime(tsBuf, sizeof(tsBuf), "%Y-%m-%d %H:%M", &tmBuf);
         std::ofstream txf(dataDir_ + "/tx_history.jsonl", std::ios::app);
         if (txf.good()) {
             txf << "{\"txid\":\"" << txId.substr(0, 16)
                 << "\",\"type\":\"sent\",\"amount\":\"" << std::fixed << std::setprecision(2) << amt
                 << "\",\"to\":\"" << jsonEscape(recipient)
                 << "\",\"from\":\"" << jsonEscape(walletAddress_)
-                << "\",\"ts\":" << nowMillis()
+                << "\",\"timestamp\":\"" << tsBuf
+                << "\",\"ts\":" << txTs
                 << ",\"status\":\"confirmed\"}\n";
         }
         return "{\"ok\":true,\"txid\":\"" + txId.substr(0, 16) + "\"}";
@@ -1427,7 +1435,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                 if (!first) ss << ",";
                 first = false;
                 ss << "{\"type\":\"reward\",\"amount\":\"" << std::fixed << std::setprecision(2) << h.ngt
-                   << "\",\"timestamp\":\"" << jsonEscape(h.title)
+                   << "\",\"timestamp\":\"" << jsonEscape(h.title.substr(0, 32))
                    << "\",\"status\":\"" << jsonEscape(h.status) << "\"}";
             }
         }
@@ -5794,7 +5802,7 @@ std::string SynapsedEngine::naanStatus() const {
            << "\",\"ngt\":" << naanHist_[i].ngt << "}";
     }
     ss << "]"
-       << ",\"current_task\":\"" << (naanRunning_.load() ? "researching" : "") << "\""
+       << ",\"current_task\":\"" << jsonEscape(naanRunning_.load() ? naanCurrentTask_ : std::string("")) << "\""
        << ",\"config\":{\"topics\":\"";
     for (size_t i = 0; i < cfgTopics_.size(); i++) {
         if (i) ss << ", ";
@@ -5914,6 +5922,13 @@ void SynapsedEngine::naanLoop() {
 
         std::string url = topicToUrl(topic);
         bool isOnion = url.find(".onion") != std::string::npos;
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            naanCurrentTask_ = "fetching [" + topic + "] via " + (isOnion ? "tor" : "clearnet");
+            NaanLogEntry fetchLog{nowMillis(), ">> fetching [" + topic + "] " + (isOnion ? "onion" : "clearnet")};
+            naanLog_.push_back(fetchLog);
+            if (naanLog_.size() > 80) naanLog_.erase(naanLog_.begin());
+        }
         std::string html = fetchWithRetry(url, 3);
 
         BypassReport br;
@@ -5929,6 +5944,15 @@ void SynapsedEngine::naanLoop() {
 
         std::vector<std::string> titles;
         if (!html.empty()) titles = extractTitles(html);
+
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            if (html.empty()) {
+                naanCurrentTask_ = "fetch failed [" + topic + "]";
+            } else {
+                naanCurrentTask_ = "extracted " + std::to_string(titles.size()) + " entries from [" + topic + "]";
+            }
+        }
 
         std::string chosenTitle;
         if (!titles.empty()) {
