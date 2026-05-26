@@ -1,4 +1,4 @@
-web::NodeSpecialization resolveNodeSpecialization() const {
+web::NodeSpecialization resolveNodeSpecialization() {
     std::lock_guard<std::mutex> lock(webMtx_);
     if (!webSearch_) return web::NodeSpecialization::GENERAL;
     return webSearch_->getConfig().naanNodeSpecialization;
