@@ -133,10 +133,20 @@ TxInput TxInput::deserialize(const std::vector<uint8_t>& data) {
     return inp;
 }
 
+static constexpr uint8_t TXOUT_TRAILER_V1_CONFIDENTIAL = 0x01;
+static constexpr uint32_t TXOUT_MAX_CONFIDENTIAL_FIELD_SIZE = 4096;
+
 std::vector<uint8_t> TxOutput::serialize() const {
     std::vector<uint8_t> out;
     writeU64(out, amount);
     writeString(out, address);
+    if (!commitment.empty() || !ephemeralPub.empty()) {
+        out.push_back(TXOUT_TRAILER_V1_CONFIDENTIAL);
+        writeU32(out, static_cast<uint32_t>(commitment.size()));
+        out.insert(out.end(), commitment.begin(), commitment.end());
+        writeU32(out, static_cast<uint32_t>(ephemeralPub.size()));
+        out.insert(out.end(), ephemeralPub.begin(), ephemeralPub.end());
+    }
     return out;
 }
 
@@ -148,6 +158,21 @@ TxOutput TxOutput::deserialize(const std::vector<uint8_t>& data) {
     outp.amount = readU64(p);
     p += 8;
     if (!readStringSafe(p, end, outp.address)) return TxOutput{};
+    if (end - p >= 1 && *p == TXOUT_TRAILER_V1_CONFIDENTIAL) {
+        ++p;
+        if (static_cast<size_t>(end - p) < sizeof(uint32_t)) return TxOutput{};
+        uint32_t cLen = readU32(p); p += 4;
+        if (cLen > TXOUT_MAX_CONFIDENTIAL_FIELD_SIZE) return TxOutput{};
+        if (static_cast<size_t>(end - p) < cLen) return TxOutput{};
+        outp.commitment.assign(p, p + cLen);
+        p += cLen;
+        if (static_cast<size_t>(end - p) < sizeof(uint32_t)) return TxOutput{};
+        uint32_t eLen = readU32(p); p += 4;
+        if (eLen > TXOUT_MAX_CONFIDENTIAL_FIELD_SIZE) return TxOutput{};
+        if (static_cast<size_t>(end - p) < eLen) return TxOutput{};
+        outp.ephemeralPub.assign(p, p + eLen);
+        p += eLen;
+    }
     if (p != end) return TxOutput{};
     return outp;
 }

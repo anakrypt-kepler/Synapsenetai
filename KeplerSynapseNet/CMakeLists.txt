@@ -363,6 +363,8 @@ set(CRYPTO_SOURCES
     src/crypto/address.cpp
     src/crypto/crypto.cpp
     src/crypto/keys.cpp
+    src/crypto/ring_signature.cpp
+    src/crypto/confidential_tx.cpp
 )
 
 set(DATABASE_SOURCES

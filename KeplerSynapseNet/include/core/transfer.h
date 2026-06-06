@@ -30,7 +30,11 @@ struct TxInput {
 struct TxOutput {
     uint64_t amount;
     std::string address;
-    
+    std::vector<uint8_t> commitment;
+    std::vector<uint8_t> ephemeralPub;
+
+    bool isConfidential() const { return !commitment.empty(); }
+
     std::vector<uint8_t> serialize() const;
     static TxOutput deserialize(const std::vector<uint8_t>& data);
 };
