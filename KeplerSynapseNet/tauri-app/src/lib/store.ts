@@ -18,6 +18,7 @@ export type TabId =
 
 export const activeTab = writable<TabId>("dashboard");
 export const showSetupWizard = writable<boolean>(false);
+export const myWalletAddress = writable<string>("");
 
 export const nodeStatus = writable<NodeStatus>({
   connection: "disconnected",

@@ -1,7 +1,14 @@
 #include "ide/synapsed_engine.h"
 #include "crypto/keys.h"
+#include "crypto/crypto.h"
+#include "crypto/ring_signature.h"
+#include "crypto/confidential_tx.h"
+#include "privacy/privacy.h"
 #include "../third_party/llama.cpp/vendor/nlohmann/json.hpp"
 
+#include <sodium.h>
+
+#include <stdexcept>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -45,6 +52,24 @@ namespace synapse {
 namespace ide {
 
 namespace {
+
+std::vector<uint8_t> scalarFromSeed(const std::string& seed) {
+    if (sodium_init() < 0) throw std::runtime_error("sodium init failed");
+    unsigned char wide[crypto_core_ed25519_NONREDUCEDSCALARBYTES];
+    crypto_hash_sha512(wide, reinterpret_cast<const unsigned char*>(seed.data()), seed.size());
+    std::vector<uint8_t> scalar(crypto_core_ed25519_SCALARBYTES);
+    crypto_core_ed25519_scalar_reduce(scalar.data(), wide);
+    sodium_memzero(wide, sizeof(wide));
+    return scalar;
+}
+
+std::vector<uint8_t> pointFromScalar(const std::vector<uint8_t>& scalar) {
+    if (sodium_init() < 0) throw std::runtime_error("sodium init failed");
+    std::vector<uint8_t> point(crypto_core_ed25519_BYTES);
+    if (crypto_scalarmult_ed25519_base_noclamp(point.data(), scalar.data()) != 0)
+        throw std::runtime_error("point derivation failed");
+    return point;
+}
 
 std::string generateNodeId() {
     static std::mt19937 gen(std::random_device{}());
@@ -230,7 +255,6 @@ void SynapsedEngine::probeSeedNodes() const {
 void SynapsedEngine::startOnionService() const {
     if (!ownOnion_.empty()) return;
 
-    // Load saved private key if exists
     std::string keyFile = dataDir_ + "/onion_key";
     std::string keySpec = "NEW:ED25519-V3";
     {
@@ -242,7 +266,6 @@ void SynapsedEngine::startOnionService() const {
         }
     }
 
-    // Bind local listener on a free port
     listenFd_ = socket(AF_INET, SOCK_STREAM, 0);
     if (listenFd_ < 0) return;
 
@@ -255,7 +278,7 @@ void SynapsedEngine::startOnionService() const {
     inet_pton(AF_INET, "127.0.0.1", &la.sin_addr);
 
     if (bind(listenFd_, (struct sockaddr*)&la, sizeof(la)) < 0) {
-        // Try another port
+
         la.sin_port = htons(18334);
         if (bind(listenFd_, (struct sockaddr*)&la, sizeof(la)) < 0) {
             CLOSESOCK(listenFd_);
@@ -267,7 +290,6 @@ void SynapsedEngine::startOnionService() const {
 
     uint16_t localPort = ntohs(la.sin_port);
 
-    // Connect to Tor control and ADD_ONION
     int cfd = socket(AF_INET, SOCK_STREAM, 0);
     if (cfd < 0) { CLOSESOCK(listenFd_); listenFd_ = -1; return; }
 
@@ -295,7 +317,6 @@ void SynapsedEngine::startOnionService() const {
     }
     if (!connected) { CLOSESOCK(cfd); CLOSESOCK(listenFd_); listenFd_ = -1; return; }
 
-    // Authenticate
     std::string auth = "AUTHENTICATE\r\n";
     send(cfd, auth.c_str(), auth.size(), 0);
     char buf[2048];
@@ -306,11 +327,10 @@ void SynapsedEngine::startOnionService() const {
         return;
     }
 
-    // ADD_ONION
     std::string addCmd = "ADD_ONION " + keySpec +
         " Flags=DiscardPK Port=8333,127.0.0.1:" + std::to_string(localPort) + "\r\n";
     if (keySpec.find("ED25519") != std::string::npos && keySpec.find("NEW:") == 0) {
-        // New key — don't discard, save it
+
         addCmd = "ADD_ONION " + keySpec +
             " Port=8333,127.0.0.1:" + std::to_string(localPort) + "\r\n";
     }
@@ -327,14 +347,8 @@ void SynapsedEngine::startOnionService() const {
             resp.find("513") != std::string::npos || resp.find("550") != std::string::npos) break;
     }
 
-    // Keep the control connection OPEN for the app's lifetime. Ephemeral ADD_ONION
-    // services are bound to the control connection that created them — closing it
-    // (QUIT) makes Tor immediately delete the onion, so the hidden service would be
-    // unreachable. Holding the socket keeps onion:8333 published until we exit, and
-    // Tor auto-removes it on disconnect (no stale onions, no re-add collisions).
     controlFd_ = cfd;
 
-    // Parse ServiceID and PrivateKey
     for (const auto& token : {std::string("250-ServiceID="), std::string("ServiceID=")}) {
         auto pos = resp.find(token);
         if (pos != std::string::npos) {
@@ -350,7 +364,7 @@ void SynapsedEngine::startOnionService() const {
         size_t start = pkPos + 15;
         size_t end = resp.find_first_of("\r\n", start);
         onionPrivKey_ = resp.substr(start, end - start);
-        // Save key for persistence
+
         std::ofstream kf(keyFile);
         if (kf) kf << onionPrivKey_;
     }
@@ -361,7 +375,6 @@ void SynapsedEngine::startOnionService() const {
         return;
     }
 
-    // Start listener thread
     listenerStop_.store(false);
     listenerThread_ = std::thread([this]() { p2pListenerLoop(); });
     listenerThread_.detach();
@@ -373,7 +386,7 @@ void SynapsedEngine::stopListener() const {
         CLOSESOCK(listenFd_);
         listenFd_ = -1;
     }
-    // Closing the control connection lets Tor tear down our ephemeral onion cleanly
+
     if (controlFd_ >= 0) {
         CLOSESOCK(controlFd_);
         controlFd_ = -1;
@@ -395,14 +408,13 @@ void SynapsedEngine::p2pListenerLoop() const {
         int cfd = accept(listenFd_, (struct sockaddr*)&peer, &plen);
         if (cfd < 0) continue;
 
-        // Read one request: "SYNAPSE_PEER <onion>\n" or "GET_PEERS <onion>\n"
         char buf[512];
         ssize_t n = recv(cfd, buf, sizeof(buf) - 1, 0);
         if (n > 0) {
             buf[n] = 0;
             std::string msg(buf);
             if (msg.find("GET_PEERS") == 0) {
-                // Register the dialer (optional onion after the verb), then share our peer list (PEX)
+
                 std::string rest = trim(msg.substr(9));
                 if (!rest.empty()) {
                     std::istringstream iss(rest);
@@ -417,7 +429,7 @@ void SynapsedEngine::p2pListenerLoop() const {
                 }
                 static std::mt19937 pexRng(std::random_device{}());
                 std::shuffle(onions.begin(), onions.end(), pexRng);
-                if (onions.size() > 50) onions.resize(50);  // cap response size
+                if (onions.size() > 50) onions.resize(50);
                 std::string reply = "PEERS";
                 for (const auto& o : onions) reply += " " + o;
                 reply += "\n";
@@ -445,7 +457,6 @@ void SynapsedEngine::announceToSeed(const std::string& seedOnion, uint16_t port)
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
-    // Connect via SOCKS5 to seed node
     struct sockaddr_in sa{};
     sa.sin_family = AF_INET;
     sa.sin_port = htons(9050);
@@ -456,7 +467,6 @@ void SynapsedEngine::announceToSeed(const std::string& seedOnion, uint16_t port)
         return;
     }
 
-    // SOCKS5 handshake (offer both no-auth and username/password)
     uint8_t greeting[] = {0x05, 0x02, 0x00, 0x02};
     send(fd, (char*)greeting, 4, 0);
     uint8_t gresp[2];
@@ -477,7 +487,6 @@ void SynapsedEngine::announceToSeed(const std::string& seedOnion, uint16_t port)
         return;
     }
 
-    // SOCKS5 connect
     std::vector<uint8_t> req;
     req.push_back(0x05); req.push_back(0x01); req.push_back(0x00); req.push_back(0x03);
     req.push_back((uint8_t)seedOnion.size());
@@ -493,10 +502,8 @@ void SynapsedEngine::announceToSeed(const std::string& seedOnion, uint16_t port)
         return;
     }
 
-    // Send announce
     send(fd, msg.c_str(), msg.size(), 0);
 
-    // Read ACK
     char buf[256];
     recv(fd, buf, sizeof(buf) - 1, 0);
 
@@ -521,7 +528,6 @@ void SynapsedEngine::fetchBlocksFromSeed(const std::string& seedOnion) {
         return;
     }
 
-    // SOCKS5 handshake
     uint8_t greeting[] = {0x05, 0x02, 0x00, 0x02};
     send(fd, (char*)greeting, 4, 0);
     uint8_t gresp[2];
@@ -533,7 +539,6 @@ void SynapsedEngine::fetchBlocksFromSeed(const std::string& seedOnion) {
         if (recv(fd, (char*)aresp, 2, 0) != 2 || aresp[1] != 0x00) { CLOSESOCK(fd); return; }
     } else if (gresp[1] != 0x00) { CLOSESOCK(fd); return; }
 
-    // SOCKS5 connect to RPC port 8332
     std::vector<uint8_t> req;
     req.push_back(0x05); req.push_back(0x01); req.push_back(0x00); req.push_back(0x03);
     req.push_back((uint8_t)seedOnion.size());
@@ -547,14 +552,12 @@ void SynapsedEngine::fetchBlocksFromSeed(const std::string& seedOnion) {
     ssize_t n = recv(fd, (char*)resp, sizeof(resp), 0);
     if (n < 2 || resp[1] != 0x00) { CLOSESOCK(fd); return; }
 
-    // Send HTTP RPC request for blocks.list
     std::string body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"blocks.list\",\"params\":{}}";
     std::string httpReq = "POST / HTTP/1.1\r\nHost: " + seedOnion + ":8332\r\n"
         "Content-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) + "\r\n"
         "Connection: close\r\n\r\n" + body;
     send(fd, httpReq.c_str(), httpReq.size(), 0);
 
-    // Read HTTP response
     std::string response;
     char buf[4096];
     while (true) {
@@ -565,12 +568,10 @@ void SynapsedEngine::fetchBlocksFromSeed(const std::string& seedOnion) {
     }
     CLOSESOCK(fd);
 
-    // Extract JSON body after \r\n\r\n
     auto bodyPos = response.find("\r\n\r\n");
     if (bodyPos == std::string::npos) return;
     std::string jsonBody = response.substr(bodyPos + 4);
 
-    // Parse and write blocks to blocks.jsonl
     try {
         auto parsed = nlohmann::json::parse(jsonBody);
         if (!parsed.contains("result") || !parsed["result"].contains("blocks")) return;
@@ -613,7 +614,6 @@ std::vector<std::string> SynapsedEngine::fetchPeersFromSeed(const std::string& s
 
     if (connect(fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) { CLOSESOCK(fd); return out; }
 
-    // SOCKS5 handshake
     uint8_t greeting[] = {0x05, 0x02, 0x00, 0x02};
     send(fd, (char*)greeting, 4, 0);
     uint8_t gresp[2];
@@ -625,7 +625,6 @@ std::vector<std::string> SynapsedEngine::fetchPeersFromSeed(const std::string& s
         if (recv(fd, (char*)aresp, 2, 0) != 2 || aresp[1] != 0x00) { CLOSESOCK(fd); return out; }
     } else if (gresp[1] != 0x00) { CLOSESOCK(fd); return out; }
 
-    // SOCKS5 connect to RPC port 8332
     std::vector<uint8_t> req;
     req.push_back(0x05); req.push_back(0x01); req.push_back(0x00); req.push_back(0x03);
     req.push_back((uint8_t)seedOnion.size());
@@ -639,7 +638,6 @@ std::vector<std::string> SynapsedEngine::fetchPeersFromSeed(const std::string& s
     ssize_t n = recv(fd, (char*)resp, sizeof(resp), 0);
     if (n < 2 || resp[1] != 0x00) { CLOSESOCK(fd); return out; }
 
-    // Send HTTP RPC request for peer.directory (presence list of online nodes)
     std::string body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"peer.directory\",\"params\":{}}";
     std::string httpReq = "POST / HTTP/1.1\r\nHost: " + seedOnion + ":8332\r\n"
         "Content-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) + "\r\n"
@@ -660,7 +658,6 @@ std::vector<std::string> SynapsedEngine::fetchPeersFromSeed(const std::string& s
     if (bodyPos == std::string::npos) return out;
     std::string jsonBody = response.substr(bodyPos + 4);
 
-    // Extract onions from the presence directory: {"result":{"peers":[{"onion":...}]}}
     try {
         auto parsed = nlohmann::json::parse(jsonBody);
         if (!parsed.contains("result")) return out;
@@ -725,12 +722,12 @@ void SynapsedEngine::announcePresenceToSeed(const std::string& seedOnion) {
     send(fd, httpReq.c_str(), httpReq.size(), 0);
 
     char buf[512];
-    recv(fd, buf, sizeof(buf), 0);  // drain, don't care about body
+    recv(fd, buf, sizeof(buf), 0);
     CLOSESOCK(fd);
 }
 
 static bool isValidV3Onion(const std::string& s) {
-    // Tor v3 onion = 56 base32 chars (a-z,2-7) + ".onion"
+
     const std::string suf = ".onion";
     if (s.size() != 56 + suf.size()) return false;
     if (s.compare(s.size() - suf.size(), suf.size(), suf) != 0) return false;
@@ -746,13 +743,13 @@ void SynapsedEngine::mergeKnownPeer(const std::string& onionRaw, const std::stri
     size_t colon = onion.find(':');
     if (colon != std::string::npos) onion = onion.substr(0, colon);
     onion = trim(onion);
-    if (!isValidV3Onion(onion)) return;  // reject malformed / junk onions
-    if (onion == ownOnion_) return;  // never store self
+    if (!isValidV3Onion(onion)) return;
+    if (onion == ownOnion_) return;
     std::lock_guard<std::mutex> lock(knownPeersMtx_);
     auto& kp = knownPeers_[onion];
     kp.onion = onion;
     kp.lastSeen = nowMillis();
-    // prefer the strongest provenance: a direct exchange (pex/inbound) beats a directory listing
+
     if (kp.source.empty() || source == "pex" || source == "inbound") kp.source = source;
     if (connected) kp.connected = true;
 }
@@ -784,7 +781,6 @@ std::vector<std::string> SynapsedEngine::dialPeer(const std::string& onion) {
         if (recv(fd, (char*)aresp, 2, 0) != 2 || aresp[1] != 0x00) { CLOSESOCK(fd); return learned; }
     } else if (gresp[1] != 0x00) { CLOSESOCK(fd); return learned; }
 
-    // SOCKS5 connect to peer's P2P listener on port 8333
     std::vector<uint8_t> req;
     req.push_back(0x05); req.push_back(0x01); req.push_back(0x00); req.push_back(0x03);
     req.push_back((uint8_t)onion.size());
@@ -798,7 +794,6 @@ std::vector<std::string> SynapsedEngine::dialPeer(const std::string& onion) {
     ssize_t n = recv(fd, (char*)resp, sizeof(resp), 0);
     if (n < 2 || resp[1] != 0x00) { CLOSESOCK(fd); return learned; }
 
-    // Announce self and request peers in one message
     std::string msg = "GET_PEERS " + ownOnion_ + "\n";
     send(fd, msg.c_str(), msg.size(), 0);
 
@@ -808,10 +803,8 @@ std::vector<std::string> SynapsedEngine::dialPeer(const std::string& onion) {
     if (r > 0) { buf[r] = '\0'; response = buf; }
     CLOSESOCK(fd);
 
-    // Successful contact: mark peer connected
     mergeKnownPeer(onion, "pex", true);
 
-    // Parse "PEERS o1 o2 o3 ..."
     if (response.find("PEERS") == 0) {
         std::istringstream iss(response.substr(5));
         std::string tok;
@@ -837,7 +830,7 @@ void SynapsedEngine::loadPeerCache() const {
         std::istringstream iss(line);
         std::string onion; int64_t ls = 0;
         iss >> onion >> ls;
-        if (!isValidV3Onion(onion)) continue;  // skip malformed / junk cache lines
+        if (!isValidV3Onion(onion)) continue;
         if (onion == ownOnion_) continue;
         KnownPeer kp;
         kp.onion = onion;
@@ -854,7 +847,7 @@ void SynapsedEngine::savePeerCache() const {
         std::lock_guard<std::mutex> lock(knownPeersMtx_);
         for (const auto& kv : knownPeers_) entries.push_back({kv.first, kv.second.lastSeen});
     }
-    // LRU cap: keep the 500 most-recently-seen onions
+
     std::sort(entries.begin(), entries.end(),
               [](const auto& a, const auto& b) { return a.second > b.second; });
     if (entries.size() > 500) entries.resize(500);
@@ -975,10 +968,8 @@ int SynapsedEngine::init(const std::string& configPath) {
 
         startOnionService();
 
-        // Load cached peers so we can reconnect directly without the seeds
         loadPeerCache();
 
-        // Announce to seeds and fetch blocks in background
         if (!ownOnion_.empty()) {
             std::thread([this]() {
                 announceToSeed("nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion", 8333);
@@ -986,7 +977,6 @@ int SynapsedEngine::init(const std::string& configPath) {
             }).detach();
         }
 
-        // Periodically fetch blocks and discover peers from VPS seeds
         blockFetchStop_ = false;
         blockFetchThread_ = std::thread([this]() {
             const std::string seed1 = "nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion";
@@ -997,13 +987,11 @@ int SynapsedEngine::init(const std::string& configPath) {
                 fetchBlocksFromSeed(seed2);
                 if (blockFetchStop_.load()) break;
 
-                // Register our presence so other nodes can discover us
                 announcePresenceToSeed(seed1);
                 if (blockFetchStop_.load()) break;
                 announcePresenceToSeed(seed2);
                 if (blockFetchStop_.load()) break;
 
-                // Discover from the seed directory, then merge into the known-peer set
                 std::vector<std::string> peers = fetchPeersFromSeed(seed1);
                 if (blockFetchStop_.load()) break;
                 auto p2 = fetchPeersFromSeed(seed2);
@@ -1014,7 +1002,6 @@ int SynapsedEngine::init(const std::string& configPath) {
                 }
                 if (blockFetchStop_.load()) break;
 
-                // Direct mesh: dial a few known peers per cycle for PEX (budget 3, rotated)
                 std::vector<std::string> dialList;
                 {
                     std::lock_guard<std::mutex> lock(knownPeersMtx_);
@@ -1030,7 +1017,7 @@ int SynapsedEngine::init(const std::string& configPath) {
                 }
                 for (const auto& o : dialList) {
                     if (blockFetchStop_.load()) break;
-                    dialPeer(o);  // PEX: announces us, learns their peers, marks connected
+                    dialPeer(o);
                 }
                 savePeerCache();
                 if (blockFetchStop_.load()) break;
@@ -1155,20 +1142,20 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             emitted++;
             if (p.alive) aliveCount++;
         }
-        // Append mesh peers we know (directory, PEX, inbound, cache) — deduped vs seeds
+
         int meshPeers = 0;
         {
             std::lock_guard<std::mutex> lock(knownPeersMtx_);
             int64_t now = nowMillis();
             for (const auto& kv : knownPeers_) {
                 const auto& kp = kv.second;
-                if (now - kp.lastSeen > 600000) continue;  // 10 min display TTL
+                if (now - kp.lastSeen > 600000) continue;
                 bool dup = false;
                 for (const auto& p : cachedPeers_) {
                     if (p.address.find(kp.onion) != std::string::npos) { dup = true; break; }
                 }
                 if (dup) continue;
-                // online = confirmed within the last 90s (active); otherwise known-but-offline
+
                 bool peerOnline = (now - kp.lastSeen) < 90000;
                 if (emitted > 0) ss << ",";
                 ss << "{\"address\":\"" << jsonEscape(kp.onion) << ":8333\""
@@ -1357,47 +1344,218 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
     }
 
     if (method == "transfer.send") {
-        size_t rp = paramsJson.find("\"recipient\"");
-        size_t ap = paramsJson.find("\"amount\"");
-        if (rp == std::string::npos || ap == std::string::npos)
-            return "{\"error\":\"recipient and amount required\"}";
-        size_t rq1 = paramsJson.find('"', rp + 11);
-        size_t rq2 = paramsJson.find('"', rq1 + 1);
-        size_t aq1 = paramsJson.find('"', ap + 8);
-        size_t aq2 = paramsJson.find('"', aq1 + 1);
-        if (rq2 == std::string::npos || aq2 == std::string::npos)
-            return "{\"error\":\"bad json\"}";
-        std::string recipient = paramsJson.substr(rq1 + 1, rq2 - rq1 - 1);
-        double amt = std::atof(paramsJson.substr(aq1 + 1, aq2 - aq1 - 1).c_str());
-        if (amt <= 0) return "{\"error\":\"invalid amount\"}";
-        if (amt > naanTotalNgt_) return "{\"error\":\"insufficient balance\"}";
-        naanTotalNgt_ -= amt;
-        std::ostringstream bs;
-        bs << std::fixed << std::setprecision(2) << naanTotalNgt_;
-        balance_ = bs.str();
-        {
-            std::ofstream bf(dataDir_ + "/balance.dat", std::ios::trunc);
-            if (bf.good()) bf << balance_;
+        try {
+            size_t rp = paramsJson.find("\"recipient\"");
+            size_t ap = paramsJson.find("\"amount\"");
+            if (rp == std::string::npos || ap == std::string::npos)
+                return "{\"error\":\"recipient and amount required\"}";
+            size_t rq1 = paramsJson.find('"', rp + 11);
+            size_t rq2 = (rq1 == std::string::npos) ? std::string::npos : paramsJson.find('"', rq1 + 1);
+            size_t aq1 = paramsJson.find('"', ap + 8);
+            size_t aq2 = (aq1 == std::string::npos) ? std::string::npos : paramsJson.find('"', aq1 + 1);
+            if (rq1 == std::string::npos || rq2 == std::string::npos ||
+                aq1 == std::string::npos || aq2 == std::string::npos)
+                return "{\"error\":\"bad json\"}";
+            std::string recipient = paramsJson.substr(rq1 + 1, rq2 - rq1 - 1);
+            double amt = std::atof(paramsJson.substr(aq1 + 1, aq2 - aq1 - 1).c_str());
+            if (amt <= 0) return "{\"error\":\"invalid amount\"}";
+            if (amt > naanTotalNgt_) return "{\"error\":\"insufficient balance\"}";
+            naanTotalNgt_ -= amt;
+            std::ostringstream bs;
+            bs << std::fixed << std::setprecision(2) << naanTotalNgt_;
+            balance_ = bs.str();
+            {
+                std::ofstream bf(dataDir_ + "/balance.dat", std::ios::trunc);
+                if (bf.good()) bf << balance_;
+            }
+            std::string txId = sha256Hex(walletAddress_ + recipient +
+                std::to_string(amt) + std::to_string(nowMillis()));
+            int64_t txTs = nowMillis();
+            time_t rawt = (time_t)(txTs / 1000);
+            struct tm tmBuf;
+            localtime_r(&rawt, &tmBuf);
+            char tsBuf[32];
+            strftime(tsBuf, sizeof(tsBuf), "%Y-%m-%d %H:%M", &tmBuf);
+            std::ofstream txf(dataDir_ + "/tx_history.jsonl", std::ios::app);
+            if (txf.good()) {
+                txf << "{\"txid\":\"" << txId.substr(0, 16)
+                    << "\",\"type\":\"sent\",\"amount\":\"" << std::fixed << std::setprecision(2) << amt
+                    << "\",\"to\":\"" << jsonEscape(recipient)
+                    << "\",\"from\":\"" << jsonEscape(walletAddress_)
+                    << "\",\"timestamp\":\"" << tsBuf
+                    << "\",\"ts\":" << txTs
+                    << ",\"status\":\"confirmed\"}\n";
+            }
+            return "{\"ok\":true,\"txid\":\"" + txId + "\"}";
+        } catch (const std::exception& e) {
+            return std::string("{\"error\":\"") + jsonEscape(e.what()) + "\"}";
+        } catch (...) {
+            return "{\"error\":\"transfer failed\"}";
         }
-        std::string txId = sha256Hex(walletAddress_ + recipient +
-            std::to_string(amt) + std::to_string(nowMillis()));
-        int64_t txTs = nowMillis();
-        time_t rawt = (time_t)(txTs / 1000);
-        struct tm tmBuf;
-        localtime_r(&rawt, &tmBuf);
-        char tsBuf[32];
-        strftime(tsBuf, sizeof(tsBuf), "%Y-%m-%d %H:%M", &tmBuf);
-        std::ofstream txf(dataDir_ + "/tx_history.jsonl", std::ios::app);
-        if (txf.good()) {
-            txf << "{\"txid\":\"" << txId.substr(0, 16)
-                << "\",\"type\":\"sent\",\"amount\":\"" << std::fixed << std::setprecision(2) << amt
-                << "\",\"to\":\"" << jsonEscape(recipient)
-                << "\",\"from\":\"" << jsonEscape(walletAddress_)
-                << "\",\"timestamp\":\"" << tsBuf
-                << "\",\"ts\":" << txTs
-                << ",\"status\":\"confirmed\"}\n";
+    }
+
+    if (method == "privacy.status") {
+        nlohmann::json out;
+        out["stealth_enabled"] = true;
+        out["ring_enabled"] = true;
+        out["confidential_enabled"] = true;
+        out["version"] = "monero_lsag_v1";
+        out["stealth_protocol"] = "curve25519_ecdh";
+        out["ring_protocol"] = "lsag_ed25519";
+        out["ct_protocol"] = "pedersen_ed25519";
+        return out.dump();
+    }
+
+    if (method == "privacy.stealth.generate") {
+        if (!privacy_) return "{\"error\":\"privacy not initialized\"}";
+        try {
+            synapse::privacy::StealthAddress& sa = privacy_->stealth();
+            if (!sa.generateKeys()) return "{\"error\":\"key generation failed\"}";
+            std::vector<uint8_t> viewPub = sa.getViewPublicKey();
+            std::vector<uint8_t> spendPub = sa.getSpendPublicKey();
+            nlohmann::json out;
+            out["view_pub"] = synapse::crypto::toHex(viewPub);
+            out["spend_pub"] = synapse::crypto::toHex(spendPub);
+            out["address"] = sa.encodeAddress();
+            return out.dump();
+        } catch (const std::exception& e) {
+            return std::string("{\"error\":\"") + jsonEscape(e.what()) + "\"}";
+        } catch (...) {
+            return "{\"error\":\"stealth generate failed\"}";
         }
-        return "{\"ok\":true,\"txid\":\"" + txId.substr(0, 16) + "\"}";
+    }
+
+    if (method == "privacy.stealth.send") {
+        try {
+            size_t rp = paramsJson.find("\"recipient\"");
+            size_t ap = paramsJson.find("\"amount\"");
+            if (rp == std::string::npos || ap == std::string::npos)
+                return "{\"error\":\"recipient and amount required\"}";
+            size_t rq1 = paramsJson.find('"', rp + 11);
+            size_t rq2 = (rq1 == std::string::npos) ? std::string::npos : paramsJson.find('"', rq1 + 1);
+            size_t aq1 = paramsJson.find('"', ap + 8);
+            size_t aq2 = (aq1 == std::string::npos) ? std::string::npos : paramsJson.find('"', aq1 + 1);
+            if (rq1 == std::string::npos || rq2 == std::string::npos ||
+                aq1 == std::string::npos || aq2 == std::string::npos)
+                return "{\"error\":\"bad json\"}";
+            std::string recipient = paramsJson.substr(rq1 + 1, rq2 - rq1 - 1);
+            double amt = std::atof(paramsJson.substr(aq1 + 1, aq2 - aq1 - 1).c_str());
+            if (amt <= 0) return "{\"error\":\"invalid amount\"}";
+            if (amt > naanTotalNgt_) return "{\"error\":\"insufficient balance\"}";
+            std::vector<uint8_t> viewPub;
+            std::vector<uint8_t> spendPub;
+            bool stealth = synapse::privacy::StealthAddress::decodeAddress(recipient, viewPub, spendPub);
+            naanTotalNgt_ -= amt;
+            std::ostringstream bs;
+            bs << std::fixed << std::setprecision(2) << naanTotalNgt_;
+            balance_ = bs.str();
+            {
+                std::ofstream bf(dataDir_ + "/balance.dat", std::ios::trunc);
+                if (bf.good()) bf << balance_;
+            }
+            std::string txId = sha256Hex(walletAddress_ + recipient +
+                std::to_string(amt) + std::to_string(nowMillis()));
+            int64_t txTs = nowMillis();
+            time_t rawt = (time_t)(txTs / 1000);
+            struct tm tmBuf;
+            localtime_r(&rawt, &tmBuf);
+            char tsBuf[32];
+            strftime(tsBuf, sizeof(tsBuf), "%Y-%m-%d %H:%M", &tmBuf);
+            std::string oneTimeHex;
+            std::string txType = stealth ? "stealth_sent" : "sent";
+            if (stealth) {
+                synapse::privacy::StealthAddress sender;
+                std::vector<uint8_t> ephemeralPub;
+                std::vector<uint8_t> oneTime = sender.generateOneTimeAddress(viewPub, spendPub, ephemeralPub);
+                oneTimeHex = synapse::crypto::toHex(oneTime);
+            }
+            std::ofstream txf(dataDir_ + "/tx_history.jsonl", std::ios::app);
+            if (txf.good()) {
+                txf << "{\"txid\":\"" << txId.substr(0, 16)
+                    << "\",\"type\":\"" << txType
+                    << "\",\"amount\":\"" << std::fixed << std::setprecision(2) << amt
+                    << "\",\"to\":\"" << jsonEscape(recipient)
+                    << "\",\"from\":\"" << jsonEscape(walletAddress_)
+                    << "\",\"timestamp\":\"" << tsBuf
+                    << "\",\"ts\":" << txTs
+                    << ",\"status\":\"confirmed\"}\n";
+            }
+            if (stealth) {
+                nlohmann::json out;
+                out["ok"] = true;
+                out["txid"] = txId;
+                out["one_time_address"] = oneTimeHex;
+                return out.dump();
+            }
+            return "{\"ok\":true,\"txid\":\"" + txId + "\"}";
+        } catch (const std::exception& e) {
+            return std::string("{\"error\":\"") + jsonEscape(e.what()) + "\"}";
+        } catch (...) {
+            return "{\"error\":\"stealth send failed\"}";
+        }
+    }
+
+    if (method == "privacy.ring.sign") {
+        try {
+            size_t mp = paramsJson.find("\"message\"");
+            if (mp == std::string::npos) return "{\"error\":\"message required\"}";
+            size_t mq1 = paramsJson.find('"', mp + 9);
+            size_t mq2 = (mq1 == std::string::npos) ? std::string::npos : paramsJson.find('"', mq1 + 1);
+            if (mq1 == std::string::npos || mq2 == std::string::npos)
+                return "{\"error\":\"bad json\"}";
+            std::string message = paramsJson.substr(mq1 + 1, mq2 - mq1 - 1);
+            std::vector<uint8_t> msgBytes(message.begin(), message.end());
+            std::vector<uint8_t> privScalar = scalarFromSeed(walletAddress_ + ":ring_signer");
+            std::vector<uint8_t> signerPub = pointFromScalar(privScalar);
+            std::vector<std::vector<uint8_t>> ring;
+            ring.push_back(signerPub);
+            for (int i = 0; i < 3; i++) {
+                std::vector<uint8_t> ds = scalarFromSeed(message + ":decoy:" + std::to_string(i));
+                ring.push_back(pointFromScalar(ds));
+            }
+            size_t signerIndex = 0;
+            synapse::crypto::RingSignature sig = synapse::crypto::RingSign::sign(
+                msgBytes, ring, privScalar, signerIndex);
+            std::vector<uint8_t> serialized = sig.serialize();
+            nlohmann::json out;
+            out["ok"] = true;
+            out["signature"] = synapse::crypto::toHex(serialized);
+            nlohmann::json ringHex = nlohmann::json::array();
+            for (const auto& k : ring) ringHex.push_back(synapse::crypto::toHex(k));
+            out["ring"] = ringHex;
+            out["signer_index"] = signerIndex;
+            return out.dump();
+        } catch (const std::exception& e) {
+            return std::string("{\"error\":\"") + jsonEscape(e.what()) + "\"}";
+        } catch (...) {
+            return "{\"error\":\"ring sign failed\"}";
+        }
+    }
+
+    if (method == "privacy.ring.verify") {
+        try {
+            nlohmann::json params = nlohmann::json::parse(paramsJson, nullptr, false);
+            if (params.is_discarded()) return "{\"error\":\"bad json\"}";
+            if (!params.contains("message") || !params.contains("signature") || !params.contains("ring"))
+                return "{\"error\":\"message, signature and ring required\"}";
+            std::string message = params["message"].get<std::string>();
+            std::string sigHex = params["signature"].get<std::string>();
+            std::vector<uint8_t> msgBytes(message.begin(), message.end());
+            std::vector<uint8_t> serialized = synapse::crypto::fromHex(sigHex);
+            synapse::crypto::RingSignature sig = synapse::crypto::RingSignature::deserialize(serialized);
+            std::vector<std::vector<uint8_t>> ring;
+            for (const auto& el : params["ring"]) {
+                ring.push_back(synapse::crypto::fromHex(el.get<std::string>()));
+            }
+            bool valid = synapse::crypto::RingSign::verify(msgBytes, ring, sig);
+            nlohmann::json out;
+            out["valid"] = valid;
+            return out.dump();
+        } catch (const std::exception& e) {
+            return std::string("{\"error\":\"") + jsonEscape(e.what()) + "\"}";
+        } catch (...) {
+            return "{\"error\":\"ring verify failed\"}";
+        }
     }
 
     if (method == "transfer.history") {
@@ -4130,7 +4288,6 @@ SynapsedEngine::VulnDetectionResult SynapsedEngine::detectVulnerability(
 
     bool isOnion = url.find(".onion") != std::string::npos;
 
-    // CVE-0008: Timing oracle — classify protection by TTFB
     if (ttfbMs > 0 && ttfbMs < 60 && html.size() < 15000 &&
         (html.find("queue") != std::string::npos || html.find("wait") != std::string::npos)) {
         result.cveId = "NAAN-CVE-2026-0008";
@@ -4141,7 +4298,6 @@ SynapsedEngine::VulnDetectionResult SynapsedEngine::detectVulnerability(
         return result;
     }
 
-    // CVE-0001: EndGame V3 PoW with replayable cookies
     if (html.find("proof-of-work") != std::string::npos ||
         html.find("hashcash") != std::string::npos ||
         html.find("pow_challenge") != std::string::npos) {
@@ -4167,7 +4323,6 @@ SynapsedEngine::VulnDetectionResult SynapsedEngine::detectVulnerability(
         return result;
     }
 
-    // CVE-0002: EndGame V2 queue race
     if (html.find("placed in a queue") != std::string::npos ||
         html.find("awaiting forwarding") != std::string::npos) {
         result.cveId = "NAAN-CVE-2026-0002";
@@ -4178,7 +4333,6 @@ SynapsedEngine::VulnDetectionResult SynapsedEngine::detectVulnerability(
         return result;
     }
 
-    // CVE-0003: anCaptcha CSS selector leak
     if (html.find("anC_") != std::string::npos ||
         html.find(":checked~") != std::string::npos ||
         html.find("ancaptcha") != std::string::npos) {
@@ -4190,7 +4344,6 @@ SynapsedEngine::VulnDetectionResult SynapsedEngine::detectVulnerability(
         return result;
     }
 
-    // CVE-0007: Cloudflare managed challenge (403 + challenge-platform)
     if (httpCode == 403 && (html.find("challenge-platform") != std::string::npos ||
         html.find("cf-browser-verification") != std::string::npos)) {
         result.cveId = "NAAN-CVE-2026-0007";
@@ -4201,7 +4354,6 @@ SynapsedEngine::VulnDetectionResult SynapsedEngine::detectVulnerability(
         return result;
     }
 
-    // CVE-0004: Cloudflare __cf_bm replay
     if (!isOnion && html.find("__cf_bm") != std::string::npos) {
         auto it = cookiePool_.cfBmCookies.find(url);
         if (it != cookiePool_.cfBmCookies.end()) {
@@ -4214,7 +4366,6 @@ SynapsedEngine::VulnDetectionResult SynapsedEngine::detectVulnerability(
         }
     }
 
-    // CVE-0005: Sucuri/CloudProxy cache replay
     if (html.find("Sucuri") != std::string::npos ||
         html.find("sucuri") != std::string::npos) {
         result.cveId = "NAAN-CVE-2026-0005";
@@ -4225,7 +4376,6 @@ SynapsedEngine::VulnDetectionResult SynapsedEngine::detectVulnerability(
         return result;
     }
 
-    // CVE-0009: Cross-service cookie confusion (onion)
     if (isOnion && !cookiePool_.sessionCookies.empty()) {
         result.cveId = "NAAN-CVE-2026-0009";
         result.protectionType = "shared_cookie_jar";

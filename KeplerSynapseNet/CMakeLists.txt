@@ -9,6 +9,7 @@ option(USE_LLAMA_CPP "Enable llama.cpp GGML backend" ON)
 option(USE_SECP256K1 "Use libsecp256k1 for signatures" ON)
 option(BUILD_PRIVACY "Build with privacy layer" OFF)
 option(BUILD_TESTS "Build tests" ON)
+option(SYNAPSE_PRIVACY_TESTS "Build privacy primitive unit tests" OFF)
 
 option(SYNAPSE_FETCH_LIBOQS "Fetch liboqs automatically when the system library is unavailable" ON)
 option(SYNAPSE_REQUIRE_REAL_PQC "Require real liboqs-backed PQC (warn if unavailable)" ON)
@@ -611,6 +612,40 @@ install(FILES include/synapsed_ffi.h DESTINATION include)
 if(BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+if(SYNAPSE_PRIVACY_TESTS)
+    add_library(crypto_lib STATIC
+        src/crypto/crypto.cpp
+        src/crypto/address.cpp
+        src/crypto/keys.cpp
+        src/crypto/ring_signature.cpp
+        src/crypto/confidential_tx.cpp
+        src/privacy/stealth_address.cpp
+        ${QUANTUM_SOURCES}
+    )
+    target_include_directories(crypto_lib PUBLIC include ${SODIUM_INCLUDE_DIRS})
+    target_link_libraries(crypto_lib PUBLIC Threads::Threads OpenSSL::Crypto ${SODIUM_LIBRARIES})
+    if(HAS_SECP256K1)
+        target_compile_definitions(crypto_lib PUBLIC SYNAPSE_USE_SECP256K1=1)
+        target_link_libraries(crypto_lib PUBLIC secp256k1)
+    endif()
+    if(HAS_LIBOQS)
+        target_compile_definitions(crypto_lib PUBLIC USE_LIBOQS=1)
+        target_link_libraries(crypto_lib PUBLIC ${OQS_TARGET})
+        if(liboqs_BINARY_DIR)
+            target_include_directories(crypto_lib PUBLIC ${liboqs_BINARY_DIR}/include)
+        endif()
+        if(liboqs_SOURCE_DIR)
+            target_include_directories(crypto_lib PUBLIC ${liboqs_SOURCE_DIR}/src)
+        endif()
+    endif()
+
+    add_executable(privacy_test
+        tests/privacy/privacy_test.cpp
+    )
+    target_include_directories(privacy_test PRIVATE include ${SODIUM_INCLUDE_DIRS})
+    target_link_libraries(privacy_test PRIVATE crypto_lib ${SODIUM_LIBRARIES})
 endif()
 
 # Install

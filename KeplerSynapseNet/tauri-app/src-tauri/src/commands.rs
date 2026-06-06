@@ -476,3 +476,42 @@ pub fn poe_submit_code(patch: String) -> Result<String, String> {
     let params = serde_json::json!({ "patch": patch }).to_string();
     ffi::rpc_call("poe.submit_code", &params)
 }
+
+#[tauri::command]
+pub fn privacy_stealth_generate() -> Result<String, String> {
+    ffi::rpc_call("privacy.stealth.generate", "{}")
+}
+
+#[tauri::command]
+pub fn privacy_stealth_send(recipient: String, amount: String, memo: Option<String>) -> Result<String, String> {
+    let params = serde_json::json!({
+        "recipient": recipient,
+        "amount": amount,
+        "memo": memo.unwrap_or_default()
+    }).to_string();
+    ffi::rpc_call("privacy.stealth.send", &params)
+}
+
+#[tauri::command]
+pub fn privacy_ring_sign(message: String, ring_size: u32) -> Result<String, String> {
+    let params = serde_json::json!({
+        "message": message,
+        "ring_size": ring_size
+    }).to_string();
+    ffi::rpc_call("privacy.ring.sign", &params)
+}
+
+#[tauri::command]
+pub fn privacy_ring_verify(message: String, signature: String, ring: Vec<String>) -> Result<String, String> {
+    let params = serde_json::json!({
+        "message": message,
+        "signature": signature,
+        "ring": ring
+    }).to_string();
+    ffi::rpc_call("privacy.ring.verify", &params)
+}
+
+#[tauri::command]
+pub fn privacy_status() -> Result<String, String> {
+    ffi::rpc_call("privacy.status", "{}")
+}

@@ -108,6 +108,26 @@ export async function poeSubmitCode(patch: string): Promise<string> {
   return invoke<string>("poe_submit_code", { patch });
 }
 
+export async function privacyStealthGenerate(): Promise<string> {
+  return invoke<string>("privacy_stealth_generate");
+}
+
+export async function privacyStealthSend(recipient: string, amount: string, memo?: string): Promise<string> {
+  return invoke<string>("privacy_stealth_send", { recipient, amount, memo });
+}
+
+export async function privacyRingSign(message: string, ringSize: number): Promise<string> {
+  return invoke<string>("privacy_ring_sign", { message, ringSize });
+}
+
+export async function privacyRingVerify(message: string, signature: string, ring: string[]): Promise<string> {
+  return invoke<string>("privacy_ring_verify", { message, signature, ring });
+}
+
+export async function privacyStatus(): Promise<string> {
+  return invoke<string>("privacy_status");
+}
+
 export interface SetupConfig {
   wallet_mode: string;
   seed_phrase: string | null;

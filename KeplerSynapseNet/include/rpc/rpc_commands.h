@@ -75,8 +75,13 @@ public:
     virtual std::string handleRpcNaanThreatIntel(const std::string& params) = 0;
     virtual std::string handleRpcNaanMessageLedger(const std::string& params) = 0;
     virtual std::string handleRpcNodeFederationStatus(const std::string& params) = 0;
+    virtual std::string handleRpcPrivacyStealthGenerate(const std::string& params) = 0;
+    virtual std::string handleRpcPrivacyStealthSend(const std::string& params) = 0;
+    virtual std::string handleRpcPrivacyRingSign(const std::string& params) = 0;
+    virtual std::string handleRpcPrivacyVerify(const std::string& params) = 0;
+    virtual std::string handleRpcPrivacyStatus(const std::string& params) = 0;
 };
 
 void registerCoreRpcMethods(web::RpcServer& server, RpcCommandHandlerProvider& provider);
 
-} // namespace synapse::rpc
+}

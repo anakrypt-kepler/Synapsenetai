@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { rpcCall } from "../../lib/rpc";
-  import { nodeStatus } from "../../lib/store";
+  import { nodeStatus, myWalletAddress } from "../../lib/store";
 
   interface BlockEntry {
     height: number;
@@ -40,9 +40,19 @@
   let producers: ProducerStat[] = [];
   let tab: "chain" | "producers" = "chain";
   let pollHandle: ReturnType<typeof setInterval> | null = null;
+  let myAddressLocal = "";
+  $: myAddress = $myWalletAddress || myAddressLocal;
 
   onMount(async () => {
     await loadBlocks();
+    try {
+      const info = JSON.parse(await rpcCall("wallet.info", "{}"));
+      myAddressLocal = info.address || "";
+    } catch {}
+    try {
+      const wa = JSON.parse(await rpcCall("wallet.address", "{}"));
+      myAddressLocal = myAddressLocal || wa.address || "";
+    } catch {}
     pollHandle = setInterval(loadBlocks, 5000);
   });
 
@@ -71,6 +81,11 @@
     selectedBlock = null;
   }
 
+  function isMyBlock(producer: string): boolean {
+    if (!myAddress || !producer) return false;
+    return producer === myAddress || producer.startsWith(myAddress.slice(0, 12));
+  }
+
   function shortHash(h: string): string {
     if (!h || h.length < 16) return h || "---";
     return h.slice(0, 8) + ".." + h.slice(-6);
@@ -91,7 +106,8 @@
     const map: Record<string, string> = {
       "knowledge": "KNOW", "transfer": "TX", "validation": "VOTE",
       "poe_entry": "POE", "poe_vote": "PVOTE", "genesis": "GEN",
-      "model_register": "MODEL", "penalty": "SLASH", "identity_bind": "ID"
+      "model_register": "MODEL", "penalty": "SLASH", "identity_bind": "ID",
+      "stealth_sent": "PRIV", "ring_signed": "RING", "confidential": "CT"
     };
     return map[t] || t.toUpperCase();
   }
@@ -131,7 +147,11 @@
       <div class="detail-grid">
         <div class="detail-row"><span class="dl">HASH</span><code class="dv">{selectedBlock.hash}</code></div>
         <div class="detail-row"><span class="dl">PREV</span><code class="dv">{selectedBlock.prev_hash}</code></div>
-        <div class="detail-row"><span class="dl">PRODUCER</span><code class="dv">{selectedBlock.producer}</code></div>
+        <div class="detail-row">
+          <span class="dl">PRODUCER</span>
+          <code class="dv">{selectedBlock.producer}</code>
+          {#if isMyBlock(selectedBlock.producer)}<span class="mine-badge">MINE</span>{/if}
+        </div>
         <div class="detail-row"><span class="dl">TIME</span><span class="dv">{fmtTime(selectedBlock.timestamp)}</span></div>
         <div class="detail-row"><span class="dl">DIFFICULTY</span><span class="dv">{selectedBlock.difficulty}</span></div>
         <div class="detail-row"><span class="dl">NONCE</span><span class="dv">{selectedBlock.nonce}</span></div>
@@ -160,10 +180,13 @@
       <thead><tr><th>#</th><th>HASH</th><th>PRODUCER</th><th>EVENTS</th><th>TIME</th><th></th></tr></thead>
       <tbody>
         {#each blocks as block}
-          <tr>
+          <tr class:own-block={isMyBlock(block.producer)}>
             <td class="blk-h">{block.height}</td>
             <td><code>{shortHash(block.hash)}</code></td>
-            <td><code>{shortAddr(block.producer)}</code></td>
+            <td>
+              <code>{shortAddr(block.producer)}</code>
+              {#if isMyBlock(block.producer)}<span class="mine-badge">MINE</span>{/if}
+            </td>
             <td>{block.events}</td>
             <td>{fmtTime(block.timestamp)}</td>
             <td><button class="btn-link" on:click={() => viewBlock(block.height)}>VIEW</button></td>
@@ -180,7 +203,7 @@
       <thead><tr><th>#</th><th>ADDRESS</th><th>BLOCKS</th><th>LAST BLOCK</th></tr></thead>
       <tbody>
         {#each producers as p, i}
-          <tr>
+          <tr class:own-producer={isMyBlock(p.address)}>
             <td>{i + 1}</td>
             <td><code>{shortAddr(p.address)}</code></td>
             <td class="blk-count">{p.blocks}</td>
@@ -299,5 +322,25 @@
     text-align: center;
     color: var(--text-secondary);
     padding: 16px;
+  }
+
+  .own-block {
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    border-left: 2px solid var(--text-primary);
+  }
+
+  .own-producer {
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  }
+
+  .mine-badge {
+    font-size: 7px;
+    padding: 1px 5px;
+    background: var(--text-primary);
+    color: #000;
+    letter-spacing: 0.5px;
+    margin-left: 4px;
+    display: inline-block;
+    vertical-align: middle;
   }
 </style>

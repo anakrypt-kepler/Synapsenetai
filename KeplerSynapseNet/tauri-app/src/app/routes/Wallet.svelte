@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { nodeStatus } from "../../lib/store";
+  import { nodeStatus, myWalletAddress } from "../../lib/store";
   import { rpcCall } from "../../lib/rpc";
   import { generateQRSvg } from "../../lib/qr";
 
@@ -15,6 +15,7 @@
       const result = await rpcCall("wallet.info", "{}");
       const info = JSON.parse(result);
       walletAddress = info.address || "";
+      if (walletAddress) myWalletAddress.set(walletAddress);
       if (walletAddress) qrSvg = generateQRSvg(walletAddress, 3);
     } catch {}
     loading = false;

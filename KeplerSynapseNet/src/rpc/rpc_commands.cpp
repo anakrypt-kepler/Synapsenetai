@@ -79,9 +79,14 @@ constexpr RpcMethodSpec kRpcMethodSpecs[] = {
     {"naan.security_assessment", &RpcCommandHandlerProvider::handleRpcNaanSecurityAssessment, true, 30},
     {"naan.message_ledger", &RpcCommandHandlerProvider::handleRpcNaanMessageLedger, false, 300},
     {"node.federation_status", &RpcCommandHandlerProvider::handleRpcNodeFederationStatus, false, 300},
+    {"privacy.stealth.generate", &RpcCommandHandlerProvider::handleRpcPrivacyStealthGenerate, false, 60},
+    {"privacy.stealth.send", &RpcCommandHandlerProvider::handleRpcPrivacyStealthSend, true, 30},
+    {"privacy.ring.sign", &RpcCommandHandlerProvider::handleRpcPrivacyRingSign, true, 30},
+    {"privacy.ring.verify", &RpcCommandHandlerProvider::handleRpcPrivacyVerify, false, 300},
+    {"privacy.status", &RpcCommandHandlerProvider::handleRpcPrivacyStatus, false, 300},
 };
 
-} // namespace
+}
 
 void registerCoreRpcMethods(web::RpcServer& server, RpcCommandHandlerProvider& provider) {
     for (const auto& spec : kRpcMethodSpecs) {
@@ -95,4 +100,4 @@ void registerCoreRpcMethods(web::RpcServer& server, RpcCommandHandlerProvider& p
     }
 }
 
-} // namespace synapse::rpc
+}

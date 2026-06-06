@@ -33,6 +33,11 @@ fn main() {
             commands::update_settings,
             commands::check_updates,
             commands::poe_submit_code,
+            commands::privacy_stealth_generate,
+            commands::privacy_stealth_send,
+            commands::privacy_ring_sign,
+            commands::privacy_ring_verify,
+            commands::privacy_status,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run synapsenet app");

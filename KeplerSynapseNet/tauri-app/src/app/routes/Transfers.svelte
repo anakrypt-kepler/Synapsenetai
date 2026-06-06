@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { nodeStatus } from "../../lib/store";
-  import { sendNgt, getTransactions, rpcCall } from "../../lib/rpc";
+  import { sendNgt, getTransactions, rpcCall, privacyStealthSend, privacyStatus } from "../../lib/rpc";
   import { generateQRSvg } from "../../lib/qr";
 
   let recipient = "";
@@ -10,6 +10,8 @@
   let sendError = "";
   let sendSuccess = "";
   let sending = false;
+  let privacyMode = false;
+  let privacyInfo: { stealth_enabled: boolean; ring_enabled: boolean; confidential_enabled: boolean } | null = null;
   let transactions: { type: string; amount: string; timestamp: string; status: string; to?: string; from?: string; txid?: string }[] = [];
   let filter = "all";
   let walletAddress = "";
@@ -17,6 +19,7 @@
 
   onMount(async () => {
     await loadTransactions();
+    await loadPrivacyStatus();
     try {
       const result = await rpcCall("wallet.info", "{}");
       const info = JSON.parse(result);
@@ -24,6 +27,20 @@
       if (walletAddress) qrSvg = generateQRSvg(walletAddress, 2);
     } catch {}
   });
+
+  async function loadPrivacyStatus() {
+    try {
+      const raw = await privacyStatus();
+      const parsed = JSON.parse(raw);
+      privacyInfo = {
+        stealth_enabled: !!parsed.stealth_enabled,
+        ring_enabled: !!parsed.ring_enabled,
+        confidential_enabled: !!parsed.confidential_enabled,
+      };
+    } catch {
+      privacyInfo = null;
+    }
+  }
 
   function formatTs(raw: any): string {
     if (!raw) return "-";
@@ -65,7 +82,9 @@
     }
     sending = true;
     try {
-      const raw = await sendNgt(recipient, amount, memo || undefined);
+      const raw = privacyMode
+        ? await privacyStealthSend(recipient, amount, memo || undefined)
+        : await sendNgt(recipient, amount, memo || undefined);
       const resp = JSON.parse(raw);
       if (resp.error) {
         sendError = resp.error.toUpperCase();
@@ -90,6 +109,16 @@
 
 <div class="content-area">
   <div class="section-title">SEND NGT</div>
+  <div class="section-title">PRIVACY MODE</div>
+  <div class="privacy-bar">
+    <button class="fbtn" class:active={!privacyMode} on:click={() => privacyMode = false}>STANDARD</button>
+    <button class="fbtn" class:active={privacyMode} on:click={() => privacyMode = true}>ANONYMOUS</button>
+    {#if privacyInfo}
+      <span class="privacy-badge" class:enabled={privacyInfo.stealth_enabled}>STEALTH</span>
+      <span class="privacy-badge" class:enabled={privacyInfo.ring_enabled}>RING</span>
+      <span class="privacy-badge" class:enabled={privacyInfo.confidential_enabled}>CT</span>
+    {/if}
+  </div>
   <div class="card">
     <div class="form-group">
       <label>RECIPIENT</label>
@@ -201,6 +230,27 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .privacy-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+
+  .privacy-badge {
+    font-size: 7px;
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    letter-spacing: 1px;
+  }
+
+  .privacy-badge.enabled {
+    color: #00c853;
+    border-color: #00c853;
   }
 
   .status-confirmed { color: #00c853; }

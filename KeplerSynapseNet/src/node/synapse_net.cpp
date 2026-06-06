@@ -112,6 +112,8 @@
 #include "utils/single_instance.h"
 #include "utils/utils.h"
 #include "privacy/privacy.h"
+#include "crypto/ring_signature.h"
+#include "crypto/confidential_tx.h"
 #include "python/sandbox.h"
 #include "quantum/application_signature.h"
 #include "quantum/quantum_security.h"
@@ -189,32 +191,32 @@ class SynapseNet : public tui::TuiCommandHandlerProvider, public rpc::RpcCommand
 public:
     SynapseNet() : running_(false), startTime_(0), syncProgress_(0.0), torSessionDisplayId_(makeTorSessionDisplayId()) {}
     ~SynapseNet() { shutdown(); }
-    
+
     bool initialize(const NodeConfig& config) {
         config_ = config;
         for (char& c : config_.poeValidatorMode) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         if (config_.poeValidatorMode != "stake") config_.poeValidatorMode = "static";
         if (config_.poeMinStake.empty()) config_.poeMinStake = "0";
         utils::Config::instance().setDataDir(config_.dataDir);
-        
+
 	        utils::Logger::init(config_.dataDir + "/synapsenet.log");
 	        utils::Logger::enableConsole(!config_.tui);
 	        setLogLevel(config_.logLevel);
 	        utils::Logger::info("SynapseNet v0.1.0 starting...");
 	        utils::Logger::info("Data directory: " + config_.dataDir);
-        
+
         if (!config_.tui) std::cout << "Loading configuration..." << std::endl;
         if (!loadConfiguration()) {
             utils::Logger::error("Failed to load configuration");
             return false;
         }
-        
+
         if (!config_.tui) std::cout << "Initializing database..." << std::endl;
         if (!initDatabase()) return false;
-        
+
         if (!config_.tui) std::cout << "Initializing crypto..." << std::endl;
         if (!initCrypto()) return false;
-        
+
         if (!config_.tui) std::cout << "Initializing quantum security..." << std::endl;
         if (!initQuantumSecurity()) return false;
 
@@ -222,7 +224,7 @@ public:
             if (!config_.tui) std::cout << "Initializing network..." << std::endl;
             if (!initNetwork()) return false;
         }
-        
+
 	        if (!config_.tui) std::cout << "Initializing core..." << std::endl;
 	        if (!initCore()) return false;
 
@@ -247,7 +249,7 @@ public:
             if (!config_.tui) std::cout << "Initializing mempool..." << std::endl;
             if (!initMempool()) return false;
         }
-        
+
         utils::Logger::info("All subsystems initialized successfully");
         if (!config_.tui) std::cout << "Initialization complete!" << std::endl;
         return true;
@@ -2117,6 +2119,141 @@ std::string handleRpcNodeFederationStatus(const std::string& paramsJson) {
     return result.dump();
 }
 
+std::string handleRpcPrivacyStealthGenerate(const std::string& paramsJson) {
+    (void)paramsJson;
+    json result;
+    privacy::StealthAddress stealth;
+    if (!stealth.generateKeys()) {
+        result["error"] = "stealth key generation failed";
+        return result.dump();
+    }
+    result["address"] = stealth.encodeAddress();
+    result["viewPublicKey"] = crypto::toHex(stealth.getViewPublicKey());
+    result["spendPublicKey"] = crypto::toHex(stealth.getSpendPublicKey());
+    result["scheme"] = "curve25519-ecdh";
+    return result.dump();
+}
+
+std::string handleRpcPrivacyStealthSend(const std::string& paramsJson) {
+    json result;
+    json params = parseRpcParams(paramsJson);
+    const std::string recipient = params.value("recipient", std::string());
+    const std::string amount = params.value("amount", std::string());
+    const std::string memo = params.value("memo", std::string());
+    if (recipient.empty() || amount.empty()) {
+        result["error"] = "recipient and amount required";
+        return result.dump();
+    }
+    std::vector<uint8_t> viewPub;
+    std::vector<uint8_t> spendPub;
+    if (!privacy::StealthAddress::decodeAddress(recipient, viewPub, spendPub)) {
+        result["error"] = "invalid stealth address";
+        return result.dump();
+    }
+    privacy::StealthAddress stealth;
+    if (!stealth.generateKeys()) {
+        result["error"] = "ephemeral key generation failed";
+        return result.dump();
+    }
+    std::vector<uint8_t> ephemeralPub;
+    std::vector<uint8_t> oneTime = stealth.generateOneTimeAddress(viewPub, spendPub, ephemeralPub);
+    if (oneTime.empty()) {
+        result["error"] = "one-time address derivation failed";
+        return result.dump();
+    }
+    result["oneTimeAddress"] = crypto::toHex(oneTime);
+    result["ephemeralPublicKey"] = crypto::toHex(ephemeralPub);
+    result["amount"] = amount;
+    result["memo"] = memo;
+    result["stealth"] = true;
+    result["status"] = "prepared";
+    return result.dump();
+}
+
+std::string handleRpcPrivacyRingSign(const std::string& paramsJson) {
+    json result;
+    json params = parseRpcParams(paramsJson);
+    const std::string message = params.value("message", std::string());
+    uint32_t ringSize = params.value("ring_size", static_cast<uint32_t>(11));
+    if (message.empty()) {
+        result["error"] = "message required";
+        return result.dump();
+    }
+    if (ringSize < 2) {
+        ringSize = 2;
+    }
+    std::vector<uint8_t> messageBytes(message.begin(), message.end());
+    std::vector<std::vector<uint8_t>> ring;
+    std::vector<uint8_t> privateKey = crypto::randomBytes(32);
+    std::vector<uint8_t> signerPub = crypto::randomBytes(32);
+    size_t signerIndex = 0;
+    for (uint32_t i = 0; i < ringSize; ++i) {
+        if (i == signerIndex) {
+            ring.push_back(signerPub);
+        } else {
+            ring.push_back(crypto::randomBytes(32));
+        }
+    }
+    crypto::RingSignature sig = crypto::RingSign::sign(messageBytes, ring, privateKey, signerIndex);
+    json ringJson = json::array();
+    for (const auto& member : ring) {
+        ringJson.push_back(crypto::toHex(member));
+    }
+    result["signature"] = crypto::toHex(sig.serialize());
+    result["keyImage"] = crypto::toHex(sig.keyImage);
+    result["ring"] = ringJson;
+    result["ringSize"] = ringSize;
+    result["scheme"] = "lsag";
+    return result.dump();
+}
+
+std::string handleRpcPrivacyVerify(const std::string& paramsJson) {
+    json result;
+    json params = parseRpcParams(paramsJson);
+    const std::string message = params.value("message", std::string());
+    const std::string signatureHex = params.value("signature", std::string());
+    if (message.empty() || signatureHex.empty()) {
+        result["error"] = "message and signature required";
+        return result.dump();
+    }
+    std::vector<uint8_t> messageBytes(message.begin(), message.end());
+    std::vector<std::vector<uint8_t>> ring;
+    if (params.contains("ring") && params["ring"].is_array()) {
+        for (const auto& entry : params["ring"]) {
+            if (entry.is_string()) {
+                ring.push_back(crypto::fromHex(entry.get<std::string>()));
+            }
+        }
+    }
+    bool valid = false;
+    try {
+        crypto::RingSignature sig = crypto::RingSignature::deserialize(crypto::fromHex(signatureHex));
+        valid = crypto::RingSign::verify(messageBytes, ring, sig);
+    } catch (const std::exception& e) {
+        result["error"] = e.what();
+        result["valid"] = false;
+        return result.dump();
+    }
+    result["valid"] = valid;
+    result["ringSize"] = ring.size();
+    result["scheme"] = "lsag";
+    return result.dump();
+}
+
+std::string handleRpcPrivacyStatus(const std::string& paramsJson) {
+    (void)paramsJson;
+    json result;
+    result["stealth_enabled"] = config_.privacyMode;
+    result["ring_enabled"] = config_.privacyMode;
+    result["confidential_enabled"] = config_.privacyMode;
+    result["privacyMode"] = config_.privacyMode;
+    result["ringSize"] = 11;
+    result["stealthScheme"] = "curve25519-ecdh";
+    result["ringScheme"] = "lsag";
+    result["confidentialScheme"] = "pedersen";
+    return result.dump();
+}
+
 std::string handleRpcNodeReplicationStatus(const std::string& paramsJson) {
     (void)paramsJson;
     json result;
@@ -2174,7 +2311,7 @@ std::string handleRpcNodePeers(const std::string& paramsJson) {
 std::string handleRpcPeerAnnounce(const std::string& paramsJson) {
     auto params = parseRpcParams(paramsJson);
     std::string onion = params.value("onion", std::string());
-    // basic validation: must look like an onion hostname
+
     if (onion.size() < 16 || onion.find(".onion") == std::string::npos) {
         return "{\"error\":\"invalid onion\"}";
     }
@@ -2182,7 +2319,7 @@ std::string handleRpcPeerAnnounce(const std::string& paramsJson) {
     {
         std::lock_guard<std::mutex> lock(presenceMtx_);
         presenceMap_[onion] = now;
-        // prune stale (> 600s) and cap directory size
+
         for (auto it = presenceMap_.begin(); it != presenceMap_.end();) {
             if (now - it->second > 600) it = presenceMap_.erase(it);
             else ++it;
@@ -2419,17 +2556,17 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
 	        (void)args;
 	        return synapse::runCliLocally(config_, *this);
     }
-    
+
     int run() {
         running_ = true;
         startTime_ = std::time(nullptr);
-        
+
         utils::Logger::info("Node starting...");
-        
+
         const char* kiro_env = std::getenv("KIRO_SESSION");
         bool in_kiro = (kiro_env != nullptr);
         bool interactive = isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
-        
+
         const bool daemonRuntime = config_.daemon || in_kiro || !interactive;
         g_daemonMode = daemonRuntime;
         if (daemonRuntime) {
@@ -2442,11 +2579,11 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             }
             return runDaemon();
         }
-        
+
         if (!config_.tui) std::cout << "Starting with TUI..." << std::endl;
         return runWithTUI();
     }
-    
+
     void shutdown() {
         const bool wasRunning = running_.exchange(false);
         const bool hasWork =
@@ -2460,7 +2597,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         (void)persistNaanSchedulerState(shutdownReason);
         (void)persistNaanCrashState(shutdownReason);
         naanRuntimeInitialized_.store(false);
-        
+
 	        if (network_) network_->stop();
 	        if (discovery_) discovery_->stop();
 	        if (rpc_) rpc_->stop();
@@ -2480,21 +2617,21 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             }
 	        if (quantumManager_) quantumManager_->shutdown();
 	        if (db_) db_->close();
-        
+
         node::stopNodeThreads(networkThread_, consensusThread_, maintenanceThread_, syncThread_);
-        
+
         saveState();
-        
+
         utils::Config::instance().save(config_.dataDir + "/synapsenet.conf");
         utils::Logger::info("Shutdown complete (reason=" + shutdownReason + ")");
         utils::Logger::shutdown();
     }
-    
+
     void reload() {
         utils::Logger::info("Reloading configuration...");
         loadConfiguration();
     }
-    
+
     NodeStats getStats() const {
         NodeStats stats;
         stats.uptime = std::time(nullptr) - startTime_;
@@ -2506,17 +2643,17 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
 	        stats.modelRequests = modelRequests_.load();
 	        return stats;
 	    }
-    
+
     SystemInfo getSystemInfo() const {
         SystemInfo info;
         info.osName = "Unknown";
         info.cpuCores = std::thread::hardware_concurrency();
         return info;
     }
-    
+
     bool isRunning() const { return running_; }
     const NodeConfig& getConfig() const { return config_; }
-    
+
 	private:
 	    void saveState() {}
 
@@ -2578,16 +2715,16 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         else if (level == "error") utils::Logger::setLevel(utils::LogLevel::ERROR);
         else utils::Logger::setLevel(utils::LogLevel::INFO);
     }
-    
+
     bool loadConfiguration() {
-        std::string configPath = config_.configPath.empty() ? 
+        std::string configPath = config_.configPath.empty() ?
             config_.dataDir + "/synapsenet.conf" : config_.configPath;
-        
+
         if (!utils::Config::instance().load(configPath)) {
             utils::Logger::info("No config file found, using defaults");
             utils::Config::instance().loadDefaults();
         }
-        
+
         auto& cfg = utils::Config::instance();
         auto readBoundedU32 = [&](const std::string& key, int fallback, uint32_t minValue, uint32_t maxValue) {
             int64_t v = cfg.getInt64(key, fallback);
@@ -2760,34 +2897,34 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         }
 
         refreshTorRoutePolicy(true);
-        
+
         return true;
     }
-    
+
     bool initDatabase() {
         if (config_.amnesia) {
             utils::Logger::info("Amnesia mode: using in-memory database");
             return true;
         }
-        
+
         std::string dbPath = config_.dataDir + "/chaindata";
         std::filesystem::create_directories(dbPath);
-        
+
         db_ = std::make_unique<database::Database>();
         if (!db_->open(dbPath + "/chain.db")) {
             utils::Logger::error("Failed to open database at " + dbPath);
             return false;
         }
-        
+
         utils::Logger::info("Database initialized: " + dbPath);
         return true;
     }
-    
+
     bool initCrypto() {
         keys_ = std::make_unique<crypto::Keys>();
-        
+
         std::string walletPath = config_.dataDir + "/wallet.dat";
-        
+
         if (std::filesystem::exists(walletPath)) {
             if (!keys_->load(walletPath, "")) {
                 utils::Logger::error("Failed to load wallet");
@@ -2809,7 +2946,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             }
             utils::Logger::info("New wallet created");
         }
-        
+
         if (keys_->isValid()) {
             address_ = keys_->getAddress();
             utils::Logger::info("Wallet address: " + address_.substr(0, 16) + "...");
@@ -2817,7 +2954,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         }
         return true;
     }
-    
+
     bool initQuantumSecurity() {
         std::string requestedLevel = config_.securityLevel;
         std::transform(requestedLevel.begin(), requestedLevel.end(), requestedLevel.begin(),
@@ -2844,9 +2981,9 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             utils::Logger::info("Quantum security: disabled");
             return true;
         }
-        
+
         quantumManager_ = std::make_unique<quantum::QuantumManager>();
-        
+
         quantum::SecurityLevel level = quantum::SecurityLevel::STANDARD;
         if (config_.securityLevel == "high") {
             level = quantum::SecurityLevel::HIGH;
@@ -2855,12 +2992,12 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         } else if (config_.securityLevel == "quantum-ready") {
             level = quantum::SecurityLevel::QUANTUM_READY;
         }
-        
+
         if (!quantumManager_->init(level)) {
             utils::Logger::error("Failed to initialize quantum security");
             return false;
         }
-        
+
         utils::Logger::info(
             "Quantum security initialized: level=" + config_.securityLevel +
             " capability=" + node::quantumCapabilityMode() +
@@ -2869,11 +3006,11 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             " sphincs=" + node::quantumSphincsImplementationMode());
         return true;
     }
-    
+
     bool initNetwork() {
         network_ = std::make_unique<network::Network>();
         discovery_ = std::make_unique<network::Discovery>();
-        
+
         network::NetworkConfig netCfg;
         netCfg.maxPeers = config_.maxPeers;
         netCfg.maxInbound = config_.maxInbound;
@@ -2930,14 +3067,14 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             }
         }
         network_->setConfig(netCfg);
-        
+
         network::DiscoveryConfig discCfg;
         discCfg.maxPeers = config_.maxPeers;
         discCfg.minPeers = std::min<uint32_t>(8, config_.maxOutbound);
         discCfg.bootstrapQuarantineSeconds = static_cast<uint32_t>(std::max<int64_t>(
             30, utils::Config::instance().getInt64("network.discovery.bootstrap_quarantine_seconds", 600)));
         discovery_->setConfig(discCfg);
-        
+
         if (config_.networkUseHardcodedBootstrap) {
             if (config_.testnet) {
                 discovery_->addBootstrap("testnet-seed1.synapsenet.io", 18333);
@@ -2965,7 +3102,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         } else if (config_.regtest) {
             utils::Logger::info("Regtest mode: no bootstrap nodes");
         }
-        
+
         for (const auto& node : config_.seedNodes) {
             size_t colonPos = node.find(':');
             if (colonPos != std::string::npos) {
@@ -2988,25 +3125,25 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                 utils::Logger::warn("Fewer than 2 DNS seeds configured; bootstrap may not survive a single seed failure");
             }
         }
-        
+
         network_->onMessage([this](const std::string& peerId, const network::Message& msg) {
             handleMessage(peerId, msg);
         });
-        
+
         network_->onPeerConnected([this](const network::Peer& peer) {
             handlePeerConnected(peer);
         });
-        
+
         network_->onPeerDisconnected([this](const network::Peer& peer) {
             handlePeerDisconnected(peer);
         });
-        
+
         discovery_->setSendMessageCallback([this](const std::string& peerId, const std::string& command, const std::vector<uint8_t>& payload) -> bool {
             if (!network_) return false;
             auto msg = makeMessage(command, payload);
             return network_->send(peerId, msg);
         });
-        
+
         discovery_->setGetConnectedPeersCallback([this]() -> std::vector<std::string> {
             if (!network_) return {};
             std::vector<std::string> peerIds;
@@ -3017,7 +3154,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             }
             return peerIds;
         });
-        
+
         std::string externalIP = config_.bindAddress;
         if (externalIP == "0.0.0.0" || externalIP.empty()) {
             externalIP = "";
@@ -3025,7 +3162,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         if (!externalIP.empty()) {
             discovery_->setExternalAddress(externalIP);
         }
-        
+
         uint16_t port = config_.testnet ? 18333 : config_.port;
         if (!network_->start(port)) {
             utils::Logger::info("Network offline mode - port " + std::to_string(port) + " unavailable");
@@ -3043,10 +3180,10 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                 utils::Logger::warn("NAAN Tor-required mode active: outbound P2P discovery is suspended (degraded)");
             }
         }
-        
+
         return true;
     }
-    
+
     bool initCore() {
         if (!config_.tui) std::cout << "Creating core components..." << std::endl;
         ledger_ = std::make_unique<core::Ledger>();
@@ -3054,7 +3191,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         transfer_ = std::make_unique<core::TransferManager>();
         consensus_ = std::make_unique<core::Consensus>();
         poeV1_ = std::make_unique<core::PoeV1Engine>();
-        
+
         if (!config_.tui) std::cout << "Creating directories..." << std::endl;
         std::string ledgerPath = config_.dataDir + "/ledger";
         std::string knowledgePath = config_.dataDir + "/knowledge";
@@ -3076,26 +3213,26 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             std::filesystem::remove(transferPath + "/transfer.db-shm", ec);
             utils::Logger::info("NGT balances reset (transfer DB cleared)");
         }
-        
+
         if (!config_.tui) std::cout << "Opening ledger..." << std::endl;
         if (!ledger_->open(ledgerPath + "/ledger.db")) {
             utils::Logger::error("Failed to open ledger");
             return false;
         }
         if (!config_.tui) std::cout << "Ledger opened successfully" << std::endl;
-        
+
         if (!config_.tui) std::cout << "Opening knowledge DB..." << std::endl;
         if (!knowledge_->open(knowledgePath + "/knowledge.db")) {
             utils::Logger::error("Failed to open knowledge DB");
             return false;
         }
-        
+
         if (!config_.tui) std::cout << "Opening transfer DB..." << std::endl;
         if (!transfer_->open(transferPath + "/transfer.db")) {
             utils::Logger::error("Failed to open transfer DB");
             return false;
         }
-        
+
         if (!config_.tui) std::cout << "Opening consensus DB..." << std::endl;
         if (!consensus_->open(consensusPath + "/consensus.db")) {
             utils::Logger::error("Failed to open consensus DB");
@@ -3278,7 +3415,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         } else {
             autoPoeEpochLastRunAt_.store(0);
         }
-        
+
         if (!config_.tui) std::cout << "Setting up callbacks..." << std::endl;
         networkHeight_ = ledger_->height();
 
@@ -3287,7 +3424,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                 return signHash(hash);
             });
         }
-        
+
         if (!config_.tui) std::cout << "Setting up knowledge callbacks..." << std::endl;
         knowledge_->onNewEntry([this](const core::KnowledgeEntry& entry) {
             std::string h = crypto::toHex(entry.hash);
@@ -3298,7 +3435,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             }
             if (suppressCallbacks_) return;
             broadcastInv(synapse::InvType::KNOWLEDGE, entry.hash);
-            
+
             if (keys_ && keys_->isValid() && ledger_) {
                 core::Event ev{};
                 ev.timestamp = entry.timestamp;
@@ -3311,7 +3448,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                 ledger_->append(ev);
             }
         });
-        
+
         if (!config_.tui) std::cout << "Setting up transfer callbacks..." << std::endl;
         transfer_->onNewTransaction([this](const core::Transaction& tx) {
             std::string h = crypto::toHex(tx.txid);
@@ -3321,7 +3458,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             }
             if (suppressCallbacks_) return;
             broadcastInv(synapse::InvType::TX, tx.txid);
-            
+
             if (keys_ && keys_->isValid() && ledger_) {
                 core::Event ev{};
                 ev.timestamp = tx.timestamp;
@@ -3334,7 +3471,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                 ledger_->append(ev);
             }
         });
-        
+
         if (!config_.tui) std::cout << "Setting up ledger callbacks..." << std::endl;
         ledger_->onNewBlock([this](const core::Block& block) {
             {
@@ -3343,12 +3480,12 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             }
             broadcastInv(synapse::InvType::BLOCK, block.hash);
         });
-        
+
         utils::Logger::info("Core subsystems initialized");
         if (!config_.tui) std::cout << "Core initialization complete!" << std::endl;
         return true;
     }
-    
+
 	    bool initModel() {
 	        modelLoader_ = std::make_unique<model::ModelLoader>();
 	        modelAccess_ = std::make_unique<model::ModelAccess>();
@@ -3392,15 +3529,15 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                     );
                 }
             }
-        
+
         std::string modelDir = config_.dataDir + "/models";
         std::filesystem::create_directories(modelDir);
-        
+
         auto models = modelLoader_->listModels(modelDir);
         if (!models.empty()) {
             utils::Logger::info("Found " + std::to_string(models.size()) + " local models");
         }
-        
+
 	        return true;
 	    }
 
@@ -3521,13 +3658,13 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             webSearch_->init(cfg);
             return true;
         }
-	    
+
 	    bool initPrivacy() {
 	        if (!config_.privacyMode) {
 	            utils::Logger::info("Privacy mode: disabled");
 	            return true;
         }
-        
+
         privacy_ = std::make_unique<privacy::Privacy>();
         privacy::PrivacyConfig privConfig;
         privConfig.useTor = true;
@@ -3547,7 +3684,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         privConfig.onionServiceDir = onionPolicy.serviceDir;
         privConfig.onionVirtualPort = onionPolicy.virtualPort;
         privConfig.onionTargetPort = onionPolicy.targetPort;
-        
+
         if (!privacy_->init(privConfig)) {
             if (agentTorRequired_.load()) {
                 utils::Logger::warn("Failed to initialize privacy layer; entering deterministic degraded mode");
@@ -3557,7 +3694,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             utils::Logger::error("Failed to initialize privacy layer");
             return false;
         }
-        
+
         const bool torRequired = agentTorRequired_.load();
         bool privacyEnabled = privacy_->enable(privacy::PrivacyMode::FULL);
         const auto recovery = core::runTorPrivacyEnableRecovery(
@@ -3601,7 +3738,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             utils::Logger::error("Failed to enable Tor");
             return false;
         }
-        
+
         std::string onion = privacy_->getOnionAddress();
         agentTorDegraded_.store(false);
         if (torBootstrapRecoveryRetries > 0) {
@@ -3617,7 +3754,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         }
         return true;
     }
-    
+
     bool initRPC() {
         if (config_.rpcPort == 0) {
             utils::Logger::info("RPC server: disabled");
@@ -3627,7 +3764,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         if (!initializeRpcAuth()) {
             return false;
         }
-        
+
         rpc_ = std::make_unique<web::RpcServer>();
         if (config_.rpcAuthRequired) {
             rpc_->setAuthCallback([this](const std::string& token) {
@@ -3693,11 +3830,11 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         }
 
         rpc::registerCoreRpcMethods(*rpc_, *this);
-	        
+
 	        utils::Logger::info("RPC server started on port " + std::to_string(config_.rpcPort));
 	        return true;
 	    }
-    
+
     bool initMempool() {
         if (transfer_) {
             transfer_->setMaxMempoolSize(static_cast<size_t>(config_.maxMempool) * 1024);
@@ -3714,18 +3851,18 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         const char* term = std::getenv("TERM");
         bool stdin_tty = isatty(STDIN_FILENO);
         bool stdout_tty = isatty(STDOUT_FILENO);
-        
+
         if (!term) {
             std::cerr << "TERM environment variable not set. Try: export TERM=xterm-256color\n";
             return 1;
         }
-        
+
         if (!stdin_tty || !stdout_tty) {
             std::cerr << "Not running in a proper terminal. TUI requires an interactive terminal.\n";
             std::cerr << "Running in daemon mode instead...\n";
             return runDaemon();
         }
-        
+
         tui::TUI ui;
         if (!ui.init()) {
             utils::Logger::error("Failed to initialize TUI");
@@ -3738,14 +3875,14 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         }
 
         utils::Logger::enableConsole(false);
-        
+
         if (network_ && network_->getPort() != 0) {
             ui.setNetworkPort(network_->getPort());
             ui.setNetworkOnline(true);
         } else {
             ui.setNetworkOnline(false);
         }
-        
+
         node::startNodeThreads(
             networkThread_,
             consensusThread_,
@@ -3757,7 +3894,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             [this]() { syncLoop(); });
 
         tui::registerCoreTuiCommandHandler(ui, *this);
-        
+
         std::unordered_set<std::string> notifiedKnowledgePaid;
         tui::TuiUpdateHooks updateHooks;
         updateHooks.shouldKeepRunning = [this]() { return running_.load() && g_running.load(); };
@@ -3997,19 +4134,19 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             return tui::buildAgentEvents(hooks);
         };
         std::thread updateThread = tui::startTuiUpdateThread(ui, updateHooks);
-        
+
         ui.run();
-        
+
         running_ = false;
         updateThread.join();
         node::stopNodeThreads(networkThread_, consensusThread_, maintenanceThread_, syncThread_);
         ui.shutdown();
         utils::Logger::enableConsole(true);
-        
+
         return 0;
 #endif
     }
-    
+
     int runDaemon() {
         node::DaemonRuntimeAdapterInputs inputs;
         inputs.config = &config_;
@@ -4043,7 +4180,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         inputs.networkOnline = [this]() { return network_ && network_->getPort() != 0; };
         return node::runDaemonRuntimeAdapter(inputs);
     }
-    
+
     void networkLoop() {
         node::NetworkRuntimeAdapterInputs inputs;
         inputs.config = &config_;
@@ -4072,7 +4209,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         inputs.configuredTorSocksPort = [this]() { return configuredTorSocksPort(); };
         node::runNetworkRuntimeAdapter(inputs);
     }
-    
+
     void consensusLoop() {
         node::runConsensusRuntimeAdapter(
             [this]() { return running_.load() && g_running.load(); },
@@ -4082,7 +4219,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                 }
             });
     }
-    
+
 		    void maintenanceLoop() {
                 node::MaintenanceLoopHooks hooks;
                 hooks.config = &config_;
@@ -4171,7 +4308,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                 };
                 node::runMaintenanceLoop(hooks);
 	    }
-    
+
     void syncLoop() {
         node::SyncRuntimeAdapterInputs inputs;
         inputs.shouldKeepRunning = [this]() { return running_.load() && g_running.load(); };
@@ -4193,14 +4330,14 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         for (int i = 0; i < 8; i++) out[i] = static_cast<uint8_t>((val >> (i * 8)) & 0xff);
         return out;
     }
-    
+
     static uint64_t deserializeU64(const std::vector<uint8_t>& data) {
         if (data.size() < 8) return 0;
         uint64_t val = 0;
         for (int i = 0; i < 8; i++) val |= static_cast<uint64_t>(data[i]) << (i * 8);
         return val;
     }
-    
+
     network::Message makeMessage(const std::string& command, const std::vector<uint8_t>& payload) {
         network::Message msg;
         msg.command = command;
@@ -4208,7 +4345,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         msg.timestamp = std::time(nullptr);
         return msg;
     }
-    
+
     crypto::Signature signHash(const crypto::Hash256& hash) {
         crypto::Signature sig{};
         if (!keys_ || !keys_->isValid()) return sig;
@@ -4219,7 +4356,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         sig = crypto::sign(hash, priv);
         return sig;
     }
-    
+
     void updateSignerFromKeys() {
         if (keys_ && keys_->isValid() && ledger_) {
             ledger_->setSigner([this](const crypto::Hash256& hash) {
@@ -4227,7 +4364,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             });
         }
     }
-    
+
     void buildBlockFromPending() {
         if (!ledger_) return;
         auto events = ledger_->getPendingEvents();
@@ -4318,7 +4455,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             }
         }
     }
-    
+
     void sendVersion(const std::string& peerId) {
         if (!network_) return;
         synapse::VersionMessage v{};
@@ -4335,13 +4472,13 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         auto msg = makeMessage("version", v.serialize());
         network_->send(peerId, msg);
     }
-    
+
     void sendVerack(const std::string& peerId) {
         if (!network_) return;
         auto msg = makeMessage("verack", {});
         network_->send(peerId, msg);
     }
-    
+
     void sendGetAddr(const std::string& peerId) {
         if (!network_) return;
         auto msg = makeMessage("getaddr", {});
@@ -4353,7 +4490,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         auto msg = makeMessage("mempool", {});
         network_->send(peerId, msg);
     }
-    
+
 	    void sendGetBlock(const std::string& peerId, uint64_t height) {
 	        if (!network_) return;
 	        auto msg = makeMessage("getblock", serializeU64(height));
@@ -4668,7 +4805,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
 	    }
 
 #include "node/main_parts/net_message_handlers.inc"
-    
+
     void handlePeerConnected(const network::Peer& peer) {
         const bool torRequired = agentTorRequired_.load();
         if (torRequired) {
@@ -4703,12 +4840,12 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
 
         utils::Logger::info("Peer connected: " + peer.id);
         sendVersion(peer.id);
-        
+
         if (discovery_ && isDiscoveryEligiblePeerAddress(peer.address)) {
             discovery_->markPeerSuccess(peer.address);
         }
     }
-    
+
 	    void handlePeerDisconnected(const network::Peer& peer) {
 	        utils::Logger::info("Peer disconnected: " + peer.id);
 	        {
@@ -4723,11 +4860,11 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
 	            std::lock_guard<std::mutex> lock(poeSyncMtx_);
 	            poeSync_.erase(peer.id);
 	        }
-	        
+
 	        if (discovery_ && isDiscoveryEligiblePeerAddress(peer.address)) {
 	            discovery_->markPeerFailed(peer.address);
 	        }
-	        
+
 	        uint64_t maxHeight = 0;
 	        {
 	            std::lock_guard<std::mutex> lock(peerHeightsMtx_);
@@ -4749,7 +4886,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         }
         return 0;
     }
-    
+
     uint64_t getDiskUsage() const {
         uint64_t total = 0;
         try {
@@ -4762,7 +4899,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         } catch (...) {}
         return total;
     }
-    
+
     std::atomic<bool> running_;
     bool offlineMode_ = false;
     uint64_t startTime_;
@@ -4779,7 +4916,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
     uint64_t poeSelfValidatorBootstrapLastEvaluatedAt_ = 0;
     std::string poeSelfValidatorBootstrapMode_ = "disabled";
     std::string poeSelfValidatorBootstrapStatusReason_ = "bootstrap_not_initialized";
-    
+
     std::unique_ptr<database::Database> db_;
     std::unique_ptr<crypto::Keys> keys_;
     std::unique_ptr<network::Network> network_;
@@ -4806,7 +4943,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             mutable std::mutex torBridgeProviderMetaMtx_;
             json torBridgeProviderMeta_ = json::object();
             std::atomic<uint64_t> torBridgeProviderMetaUpdatedAt_{0};
-	    
+
 	    mutable std::mutex peerHeightsMtx_;
 	    std::unordered_map<std::string, uint64_t> peerHeights_;
         mutable std::mutex peerHelloMtx_;
@@ -4996,7 +5133,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         std::string localOfferId_;
         uint64_t remotePricePerRequestAtoms_ = 0;
         std::unordered_map<std::string, ProviderSession> providerSessions_;
-    
+
     std::thread networkThread_;
     std::thread consensusThread_;
     std::thread maintenanceThread_;
@@ -5007,12 +5144,12 @@ std::string formatBytes(uint64_t bytes) {
     const char* units[] = {"B", "KB", "MB", "GB", "TB"};
     int unit = 0;
     double size = static_cast<double>(bytes);
-    
+
     while (size >= 1024 && unit < 4) {
         size /= 1024;
         unit++;
     }
-    
+
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(2) << size << " " << units[unit];
     return oss.str();
@@ -5023,7 +5160,7 @@ std::string formatUptime(uint64_t seconds) {
     uint64_t hours = (seconds % 86400) / 3600;
     uint64_t mins = (seconds % 3600) / 60;
     uint64_t secs = seconds % 60;
-    
+
     std::ostringstream oss;
     if (days > 0) oss << days << "d ";
     if (hours > 0 || days > 0) oss << hours << "h ";
@@ -5032,9 +5169,6 @@ std::string formatUptime(uint64_t seconds) {
     return oss.str();
 }
 
-// ---------------------------------------------------------------------------
-// Factory / lifecycle helpers (called from main.cpp via synapse_net.h)
-// ---------------------------------------------------------------------------
 void SynapseNetDeleter::operator()(SynapseNet* p) const { delete p; }
 
 SynapseNetPtr createSynapseNet() {

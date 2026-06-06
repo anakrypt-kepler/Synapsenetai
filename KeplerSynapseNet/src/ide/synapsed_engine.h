@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -11,6 +12,9 @@
 #include <vector>
 
 namespace synapse {
+namespace privacy {
+class PrivacyManager;
+}
 namespace ide {
 
 using EventCallback = std::function<void(const char* event_type, const char* payload_json)>;
@@ -272,7 +276,7 @@ private:
     mutable std::string ownOnion_;
     mutable std::string onionPrivKey_;
     mutable int listenFd_ = -1;
-    mutable int controlFd_ = -1;  // held open to keep the ephemeral onion published
+    mutable int controlFd_ = -1;
     mutable std::thread listenerThread_;
     mutable std::atomic<bool> listenerStop_{false};
     void startOnionService() const;
@@ -283,17 +287,16 @@ private:
     std::vector<std::string> fetchPeersFromSeed(const std::string& seedOnion);
     void announcePresenceToSeed(const std::string& seedOnion);
 
-    // Decentralized peer mesh (Phase 1): direct dial + PEX + on-disk cache
     struct KnownPeer {
         std::string onion;
-        int64_t lastSeen = 0;     // epoch ms of last successful contact/learn
-        std::string source;       // "directory" | "inbound" | "pex" | "cache"
-        bool connected = false;   // we successfully dialed it this session
+        int64_t lastSeen = 0;
+        std::string source;
+        bool connected = false;
     };
     mutable std::mutex knownPeersMtx_;
-    mutable std::map<std::string, KnownPeer> knownPeers_;  // keyed by onion
+    mutable std::map<std::string, KnownPeer> knownPeers_;
     void mergeKnownPeer(const std::string& onion, const std::string& source, bool connected) const;
-    std::vector<std::string> dialPeer(const std::string& onion);  // returns onions learned via PEX
+    std::vector<std::string> dialPeer(const std::string& onion);
     void loadPeerCache() const;
     void savePeerCache() const;
 
@@ -323,6 +326,7 @@ private:
     int naanSubmissions_ = 0;
     int naanApproved_ = 0;
     double naanTotalNgt_ = 0.0;
+    std::unique_ptr<synapse::privacy::PrivacyManager> privacy_;
 
     std::unordered_map<std::string, std::vector<EventCallback>> subscribers_;
 };
