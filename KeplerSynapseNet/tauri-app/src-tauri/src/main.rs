@@ -37,6 +37,7 @@ fn main() {
             commands::privacy_stealth_send,
             commands::privacy_ring_sign,
             commands::privacy_ring_verify,
+            commands::privacy_view_scan,
             commands::privacy_status,
         ])
         .run(tauri::generate_context!())

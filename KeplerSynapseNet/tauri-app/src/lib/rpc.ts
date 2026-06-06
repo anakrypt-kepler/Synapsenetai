@@ -124,6 +124,10 @@ export async function privacyRingVerify(message: string, signature: string, ring
   return invoke<string>("privacy_ring_verify", { message, signature, ring });
 }
 
+export async function privacyViewScan(viewPriv: string, spendPub: string): Promise<string> {
+  return invoke<string>("privacy_view_scan", { viewPriv, spendPub });
+}
+
 export async function privacyStatus(): Promise<string> {
   return invoke<string>("privacy_status");
 }

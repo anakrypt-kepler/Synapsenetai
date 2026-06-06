@@ -4449,6 +4449,60 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                 blockTxs.push_back(tx);
             }
             if (!blockTxs.empty()) {
+                std::vector<std::vector<uint8_t>> blockKeyImages;
+                {
+                    std::lock_guard<std::mutex> kiLock(usedKeyImagesMtx_);
+                    for (const auto& tx : blockTxs) {
+                        std::vector<crypto::PedersenCommitment> inputCommits;
+                        std::vector<crypto::PedersenCommitment> outputCommits;
+                        bool rangeOk = true;
+                        for (const auto& outp : tx.outputs) {
+                            if (!outp.isConfidential()) continue;
+                            crypto::PedersenCommitment c;
+                            c.commitment = outp.commitment;
+                            if (!crypto::ConfidentialTx::rangeCheck(c)) {
+                                rangeOk = false;
+                                break;
+                            }
+                            outputCommits.push_back(c);
+                        }
+                        if (!rangeOk) {
+                            utils::Logger::error("Block rejected: confidential output range check failed");
+                            return;
+                        }
+                        for (const auto& inp : tx.inputs) {
+                            core::Transaction prev = transfer_->getTransaction(inp.prevTxHash);
+                            if (inp.outputIndex < prev.outputs.size()) {
+                                const auto& prevOut = prev.outputs[inp.outputIndex];
+                                if (prevOut.isConfidential()) {
+                                    crypto::PedersenCommitment c;
+                                    c.commitment = prevOut.commitment;
+                                    inputCommits.push_back(c);
+                                }
+                            }
+                            std::vector<uint8_t> kiData;
+                            kiData.insert(kiData.end(), inp.pubKey.begin(), inp.pubKey.end());
+                            kiData.insert(kiData.end(), inp.prevTxHash.begin(), inp.prevTxHash.end());
+                            kiData.insert(kiData.end(), inp.signature.begin(), inp.signature.end());
+                            crypto::Hash256 kih = crypto::sha256(kiData);
+                            std::vector<uint8_t> keyImage(kih.begin(), kih.end());
+                            if (crypto::RingSign::isDoubleSpend(keyImage, usedKeyImages_)) {
+                                utils::Logger::error("Block rejected: double-spend detected");
+                                return;
+                            }
+                            blockKeyImages.push_back(keyImage);
+                        }
+                        if (!inputCommits.empty() && !outputCommits.empty()) {
+                            if (!crypto::ConfidentialTx::verifyBalance(inputCommits, outputCommits, tx.fee)) {
+                                utils::Logger::error("Block rejected: confidential balance check failed");
+                                return;
+                            }
+                        }
+                    }
+                    for (const auto& ki : blockKeyImages) {
+                        usedKeyImages_.push_back(ki);
+                    }
+                }
                 if (!transfer_->applyBlockTransactionsFromBlock(blockTxs, block.height, block.hash)) {
                     utils::Logger::error("Failed to apply block transfer events (local mined block)");
                 }
@@ -4952,6 +5006,8 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
     std::unordered_set<std::string> knownTxs_;
     std::unordered_set<std::string> knownKnowledge_;
 	    std::unordered_set<std::string> knownBlocks_;
+    mutable std::mutex usedKeyImagesMtx_;
+    std::vector<std::vector<uint8_t>> usedKeyImages_;
 		    std::unordered_set<std::string> knownPoeEntries_;
 		    std::unordered_set<std::string> knownPoeVotes_;
 		    std::unordered_set<std::string> knownPoeEpochs_;

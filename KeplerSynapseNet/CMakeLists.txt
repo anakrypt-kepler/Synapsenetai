@@ -646,6 +646,12 @@ if(SYNAPSE_PRIVACY_TESTS)
     )
     target_include_directories(privacy_test PRIVATE include ${SODIUM_INCLUDE_DIRS})
     target_link_libraries(privacy_test PRIVATE crypto_lib ${SODIUM_LIBRARIES})
+
+    add_executable(privacy_integration_test
+        tests/privacy/privacy_integration_test.cpp
+    )
+    target_include_directories(privacy_integration_test PRIVATE include ${SODIUM_INCLUDE_DIRS})
+    target_link_libraries(privacy_integration_test PRIVATE crypto_lib ${SODIUM_LIBRARIES})
 endif()
 
 # Install

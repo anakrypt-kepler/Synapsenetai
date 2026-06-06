@@ -23,6 +23,7 @@
 #include <iomanip>
 #include <mutex>
 #include <random>
+#include <set>
 #include <sstream>
 #include <thread>
 #include <unordered_map>
@@ -960,6 +961,11 @@ int SynapsedEngine::init(const std::string& configPath) {
 
     generateTorrc();
 
+    privacy_ = std::make_unique<synapse::privacy::PrivacyManager>();
+    privacy_->init();
+    privacy_->enablePrivacyMode(true);
+    synapse::crypto::RingSign::loadKeyImages(dataDir_ + "/key_images.dat");
+
     auto ti = queryTorControl();
     if (ti.connected) {
         connectionType_ = "tor";
@@ -1462,13 +1468,46 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             char tsBuf[32];
             strftime(tsBuf, sizeof(tsBuf), "%Y-%m-%d %H:%M", &tmBuf);
             std::string oneTimeHex;
+            std::string ephemeralHex;
             std::string txType = stealth ? "stealth_sent" : "sent";
+            nlohmann::json outputs = nlohmann::json::array();
             if (stealth) {
                 synapse::privacy::StealthAddress sender;
                 std::vector<uint8_t> ephemeralPub;
                 std::vector<uint8_t> oneTime = sender.generateOneTimeAddress(viewPub, spendPub, ephemeralPub);
                 oneTimeHex = synapse::crypto::toHex(oneTime);
+                ephemeralHex = synapse::crypto::toHex(ephemeralPub);
+                nlohmann::json realOut;
+                realOut["type"] = "real";
+                realOut["one_time_address"] = oneTimeHex;
+                realOut["ephemeral_pub"] = ephemeralHex;
+                outputs.push_back(realOut);
+                for (int d = 0; d < 4; ++d) {
+                    synapse::privacy::StealthAddress decoyRecipient;
+                    decoyRecipient.generateKeys();
+                    std::vector<uint8_t> decoyViewPub = decoyRecipient.getViewPublicKey();
+                    std::vector<uint8_t> decoySpendPub = decoyRecipient.getSpendPublicKey();
+                    synapse::privacy::StealthAddress decoySender;
+                    std::vector<uint8_t> decoyEphPub;
+                    std::vector<uint8_t> decoyOneTime =
+                        decoySender.generateOneTimeAddress(decoyViewPub, decoySpendPub, decoyEphPub);
+                    nlohmann::json decoyOut;
+                    decoyOut["type"] = "decoy";
+                    decoyOut["one_time_address"] = synapse::crypto::toHex(decoyOneTime);
+                    decoyOut["ephemeral_pub"] = synapse::crypto::toHex(decoyEphPub);
+                    outputs.push_back(decoyOut);
+                }
             }
+            std::vector<uint8_t> blinding(crypto_core_ed25519_SCALARBYTES);
+            {
+                std::vector<uint8_t> rnd = synapse::crypto::randomBytes(crypto_core_ed25519_NONREDUCEDSCALARBYTES);
+                crypto_core_ed25519_scalar_reduce(blinding.data(), rnd.data());
+            }
+            uint64_t atomicAmount = static_cast<uint64_t>(amt * 1e8);
+            synapse::crypto::PedersenCommitment commitment =
+                synapse::crypto::ConfidentialTx::commit(atomicAmount, blinding);
+            std::string commitmentHex = synapse::crypto::toHex(commitment.commitment);
+            std::string blindingHex = synapse::crypto::toHex(blinding);
             std::ofstream txf(dataDir_ + "/tx_history.jsonl", std::ios::app);
             if (txf.good()) {
                 txf << "{\"txid\":\"" << txId.substr(0, 16)
@@ -1478,16 +1517,30 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                     << "\",\"from\":\"" << jsonEscape(walletAddress_)
                     << "\",\"timestamp\":\"" << tsBuf
                     << "\",\"ts\":" << txTs
-                    << ",\"status\":\"confirmed\"}\n";
+                    << ",\"commitment\":\"" << commitmentHex << "\""
+                    << ",\"blinding\":\"" << blindingHex << "\"";
+                if (stealth) {
+                    txf << ",\"ephemeral_pub\":\"" << ephemeralHex << "\""
+                        << ",\"one_time_address\":\"" << oneTimeHex << "\""
+                        << ",\"outputs\":" << outputs.dump();
+                }
+                txf << ",\"status\":\"confirmed\"}\n";
             }
             if (stealth) {
                 nlohmann::json out;
                 out["ok"] = true;
                 out["txid"] = txId;
                 out["one_time_address"] = oneTimeHex;
+                out["ephemeral_pub"] = ephemeralHex;
+                out["commitment"] = commitmentHex;
+                out["outputs"] = outputs;
                 return out.dump();
             }
-            return "{\"ok\":true,\"txid\":\"" + txId + "\"}";
+            nlohmann::json out;
+            out["ok"] = true;
+            out["txid"] = txId;
+            out["commitment"] = commitmentHex;
+            return out.dump();
         } catch (const std::exception& e) {
             return std::string("{\"error\":\"") + jsonEscape(e.what()) + "\"}";
         } catch (...) {
@@ -1507,15 +1560,66 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             std::vector<uint8_t> msgBytes(message.begin(), message.end());
             std::vector<uint8_t> privScalar = scalarFromSeed(walletAddress_ + ":ring_signer");
             std::vector<uint8_t> signerPub = pointFromScalar(privScalar);
+            std::string signerPubHex = synapse::crypto::toHex(signerPub);
+
+            std::vector<std::vector<uint8_t>> pool;
+            {
+                std::set<std::string> seen;
+                std::ifstream hf(dataDir_ + "/tx_history.jsonl");
+                std::string line;
+                while (hf.good() && std::getline(hf, line) && pool.size() < 20) {
+                    size_t kp = line.find("\"one_time_address\"");
+                    while (kp != std::string::npos && pool.size() < 20) {
+                        size_t q1 = line.find('"', kp + 18);
+                        size_t q2 = (q1 == std::string::npos) ? std::string::npos : line.find('"', q1 + 1);
+                        if (q1 == std::string::npos || q2 == std::string::npos) break;
+                        std::string hex = line.substr(q1 + 1, q2 - q1 - 1);
+                        kp = line.find("\"one_time_address\"", q2);
+                        if (hex.size() != crypto_core_ed25519_BYTES * 2) continue;
+                        if (hex == signerPubHex) continue;
+                        if (seen.count(hex)) continue;
+                        std::vector<uint8_t> pt = synapse::crypto::fromHex(hex);
+                        if (pt.size() != crypto_core_ed25519_BYTES) continue;
+                        if (crypto_core_ed25519_is_valid_point(pt.data()) != 1) continue;
+                        seen.insert(hex);
+                        pool.push_back(pt);
+                    }
+                }
+            }
+
+            std::vector<std::vector<uint8_t>> decoys;
+            std::set<size_t> usedIdx;
+            while (decoys.size() < 3 && usedIdx.size() < pool.size()) {
+                std::vector<uint8_t> rb = synapse::crypto::randomBytes(4);
+                uint32_t r = static_cast<uint32_t>(rb[0]) |
+                             (static_cast<uint32_t>(rb[1]) << 8) |
+                             (static_cast<uint32_t>(rb[2]) << 16) |
+                             (static_cast<uint32_t>(rb[3]) << 24);
+                size_t idx = r % pool.size();
+                if (usedIdx.count(idx)) continue;
+                usedIdx.insert(idx);
+                decoys.push_back(pool[idx]);
+            }
+            for (int i = decoys.size(); i < 3; ++i) {
+                std::vector<uint8_t> ds = scalarFromSeed(message + ":decoy:" + std::to_string(i));
+                decoys.push_back(pointFromScalar(ds));
+            }
+
             std::vector<std::vector<uint8_t>> ring;
             ring.push_back(signerPub);
-            for (int i = 0; i < 3; i++) {
-                std::vector<uint8_t> ds = scalarFromSeed(message + ":decoy:" + std::to_string(i));
-                ring.push_back(pointFromScalar(ds));
-            }
+            for (const auto& d : decoys) ring.push_back(d);
+
             size_t signerIndex = 0;
+            {
+                std::vector<uint8_t> rb = synapse::crypto::randomBytes(1);
+                size_t target = static_cast<size_t>(rb[0]) % ring.size();
+                std::swap(ring[signerIndex], ring[target]);
+                signerIndex = target;
+            }
+
             synapse::crypto::RingSignature sig = synapse::crypto::RingSign::sign(
                 msgBytes, ring, privScalar, signerIndex);
+            synapse::crypto::RingSign::saveKeyImages(dataDir_ + "/key_images.dat");
             std::vector<uint8_t> serialized = sig.serialize();
             nlohmann::json out;
             out["ok"] = true;
@@ -1555,6 +1659,89 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             return std::string("{\"error\":\"") + jsonEscape(e.what()) + "\"}";
         } catch (...) {
             return "{\"error\":\"ring verify failed\"}";
+        }
+    }
+
+    if (method == "privacy.view.scan") {
+        try {
+            nlohmann::json params = nlohmann::json::parse(paramsJson, nullptr, false);
+            if (params.is_discarded()) return "{\"error\":\"bad json\"}";
+            if (!params.contains("view_priv") || !params.contains("spend_pub"))
+                return "{\"error\":\"view_priv and spend_pub required\"}";
+            std::vector<uint8_t> viewPriv = synapse::crypto::fromHex(params["view_priv"].get<std::string>());
+            std::vector<uint8_t> spendPub = synapse::crypto::fromHex(params["spend_pub"].get<std::string>());
+            if (viewPriv.size() != crypto_core_ed25519_SCALARBYTES)
+                return "{\"error\":\"view_priv must be a 32 byte scalar\"}";
+            if (spendPub.size() != crypto_core_ed25519_BYTES)
+                return "{\"error\":\"spend_pub must be a 32 byte point\"}";
+
+            nlohmann::json owned = nlohmann::json::array();
+            std::ifstream hf(dataDir_ + "/tx_history.jsonl");
+            std::string line;
+            while (hf.good() && std::getline(hf, line)) {
+                size_t ep = line.find("\"ephemeral_pub\"");
+                size_t op = line.find("\"one_time_address\"");
+                if (ep == std::string::npos || op == std::string::npos) continue;
+                size_t eq1 = line.find('"', ep + 15);
+                size_t eq2 = (eq1 == std::string::npos) ? std::string::npos : line.find('"', eq1 + 1);
+                size_t oq1 = line.find('"', op + 18);
+                size_t oq2 = (oq1 == std::string::npos) ? std::string::npos : line.find('"', oq1 + 1);
+                if (eq1 == std::string::npos || eq2 == std::string::npos ||
+                    oq1 == std::string::npos || oq2 == std::string::npos) continue;
+                std::string ephHex = line.substr(eq1 + 1, eq2 - eq1 - 1);
+                std::string oneHex = line.substr(oq1 + 1, oq2 - oq1 - 1);
+                std::vector<uint8_t> ephPub = synapse::crypto::fromHex(ephHex);
+                std::vector<uint8_t> oneTime = synapse::crypto::fromHex(oneHex);
+                if (ephPub.size() != crypto_core_ed25519_BYTES ||
+                    oneTime.size() != crypto_core_ed25519_BYTES) continue;
+                if (crypto_core_ed25519_is_valid_point(ephPub.data()) != 1) continue;
+
+                std::vector<uint8_t> shared(crypto_core_ed25519_BYTES);
+                if (crypto_scalarmult_ed25519_noclamp(shared.data(), viewPriv.data(), ephPub.data()) != 0)
+                    continue;
+                std::vector<uint8_t> firstHash(crypto_hash_sha256_BYTES);
+                crypto_hash_sha256(firstHash.data(), shared.data(), shared.size());
+                std::vector<uint8_t> secondHash(crypto_hash_sha256_BYTES);
+                crypto_hash_sha256(secondHash.data(), firstHash.data(), firstHash.size());
+                std::vector<uint8_t> wide(crypto_core_ed25519_NONREDUCEDSCALARBYTES);
+                std::memcpy(wide.data(), firstHash.data(), crypto_hash_sha256_BYTES);
+                std::memcpy(wide.data() + crypto_hash_sha256_BYTES, secondHash.data(), crypto_hash_sha256_BYTES);
+                std::vector<uint8_t> scalar(crypto_core_ed25519_SCALARBYTES);
+                crypto_core_ed25519_scalar_reduce(scalar.data(), wide.data());
+                std::vector<uint8_t> hG(crypto_core_ed25519_BYTES);
+                if (crypto_scalarmult_ed25519_base_noclamp(hG.data(), scalar.data()) != 0)
+                    continue;
+                std::vector<uint8_t> derived(crypto_core_ed25519_BYTES);
+                if (crypto_core_ed25519_add(derived.data(), hG.data(), spendPub.data()) != 0)
+                    continue;
+
+                if (sodium_memcmp(derived.data(), oneTime.data(), crypto_core_ed25519_BYTES) == 0) {
+                    nlohmann::json entry;
+                    size_t tp = line.find("\"txid\"");
+                    if (tp != std::string::npos) {
+                        size_t tq1 = line.find('"', tp + 6);
+                        size_t tq2 = (tq1 == std::string::npos) ? std::string::npos : line.find('"', tq1 + 1);
+                        if (tq1 != std::string::npos && tq2 != std::string::npos)
+                            entry["txid"] = line.substr(tq1 + 1, tq2 - tq1 - 1);
+                    }
+                    size_t amp = line.find("\"amount\"");
+                    if (amp != std::string::npos) {
+                        size_t amq1 = line.find('"', amp + 8);
+                        size_t amq2 = (amq1 == std::string::npos) ? std::string::npos : line.find('"', amq1 + 1);
+                        if (amq1 != std::string::npos && amq2 != std::string::npos)
+                            entry["amount"] = line.substr(amq1 + 1, amq2 - amq1 - 1);
+                    }
+                    entry["one_time_address"] = oneHex;
+                    owned.push_back(entry);
+                }
+            }
+            nlohmann::json out;
+            out["owned"] = owned;
+            return out.dump();
+        } catch (const std::exception& e) {
+            return std::string("{\"error\":\"") + jsonEscape(e.what()) + "\"}";
+        } catch (...) {
+            return "{\"error\":\"view scan failed\"}";
         }
     }
 

@@ -512,6 +512,15 @@ pub fn privacy_ring_verify(message: String, signature: String, ring: Vec<String>
 }
 
 #[tauri::command]
+pub fn privacy_view_scan(view_priv: String, spend_pub: String) -> Result<String, String> {
+    let params = serde_json::json!({
+        "view_priv": view_priv,
+        "spend_pub": spend_pub
+    }).to_string();
+    ffi::rpc_call("privacy.view.scan", &params)
+}
+
+#[tauri::command]
 pub fn privacy_status() -> Result<String, String> {
     ffi::rpc_call("privacy.status", "{}")
 }

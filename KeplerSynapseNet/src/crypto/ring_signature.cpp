@@ -2,8 +2,13 @@
 
 #include <sodium.h>
 
+#include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <mutex>
+#include <set>
 #include <stdexcept>
+#include <string>
 
 namespace synapse {
 namespace crypto {
@@ -103,6 +108,36 @@ std::vector<uint8_t> pointAdd(const std::vector<uint8_t>& a, const std::vector<u
         throw std::runtime_error("ed25519 point addition failed");
     }
     return out;
+}
+
+std::mutex& keyImageMutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::set<std::string>& keyImageStore() {
+    static std::set<std::string> store;
+    return store;
+}
+
+std::string toHexString(const std::vector<uint8_t>& data) {
+    static const char* digits = "0123456789abcdef";
+    std::string out;
+    out.reserve(data.size() * 2);
+    for (uint8_t b : data) {
+        out.push_back(digits[(b >> 4) & 0x0F]);
+        out.push_back(digits[b & 0x0F]);
+    }
+    return out;
+}
+
+std::string trimLine(const std::string& s) {
+    size_t end = s.size();
+    while (end > 0 && (s[end - 1] == '\r' || s[end - 1] == '\n' ||
+                       s[end - 1] == ' ' || s[end - 1] == '\t')) {
+        --end;
+    }
+    return s.substr(0, end);
 }
 
 }
@@ -228,6 +263,8 @@ RingSignature RingSign::sign(
     sig.c0 = challenges[0];
     sig.responses = responses;
 
+    recordKeyImage(keyImage);
+
     secureZero(secret.data(), secret.size());
     secureZero(alpha.data(), alpha.size());
 
@@ -298,6 +335,52 @@ bool RingSign::isDoubleSpend(
         }
     }
     return false;
+}
+
+bool RingSign::isDoubleSpend(const std::vector<uint8_t>& keyImage) {
+    if (keyImage.empty()) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(keyImageMutex());
+    return keyImageStore().count(toHexString(keyImage)) != 0;
+}
+
+void RingSign::recordKeyImage(const std::vector<uint8_t>& keyImage) {
+    if (keyImage.empty()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(keyImageMutex());
+    keyImageStore().insert(toHexString(keyImage));
+}
+
+void RingSign::loadKeyImages(const std::string& path) {
+    std::ifstream in(path);
+    if (!in.good()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(keyImageMutex());
+    std::string line;
+    while (std::getline(in, line)) {
+        std::string trimmed = trimLine(line);
+        if (!trimmed.empty()) {
+            keyImageStore().insert(trimmed);
+        }
+    }
+}
+
+void RingSign::saveKeyImages(const std::string& path) {
+    std::lock_guard<std::mutex> lock(keyImageMutex());
+    std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        if (!out.good()) {
+            return;
+        }
+        for (const auto& image : keyImageStore()) {
+            out << image << "\n";
+        }
+    }
+    std::rename(tmp.c_str(), path.c_str());
 }
 
 }

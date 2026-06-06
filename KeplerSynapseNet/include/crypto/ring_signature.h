@@ -3,6 +3,7 @@
 #include <vector>
 #include <cstdint>
 #include <cstddef>
+#include <string>
 
 #include "crypto/crypto.h"
 
@@ -36,6 +37,10 @@ public:
         const std::vector<uint8_t>& keyImage,
         const std::vector<std::vector<uint8_t>>& usedKeyImages
     );
+    static bool isDoubleSpend(const std::vector<uint8_t>& keyImage);
+    static void recordKeyImage(const std::vector<uint8_t>& keyImage);
+    static void loadKeyImages(const std::string& path);
+    static void saveKeyImages(const std::string& path);
 private:
     static std::vector<uint8_t> hashToPoint(const std::vector<uint8_t>& data);
     static std::vector<uint8_t> hashToScalar(const std::vector<uint8_t>& data);
