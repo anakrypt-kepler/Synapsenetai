@@ -256,6 +256,8 @@ void configureNaanScorePolicy() {
 
     naanScoreStatePath_ = config_.dataDir + "/naan/score.state";
     naanScoreDecayStatePath_ = config_.dataDir + "/naan/score_decay.state";
+    // Canonical, absolute path for persisted dashboard counters.
+    naanCountersStatePath_ = config_.dataDir + "/naan/counters.state";
 }
 
 void configureNaanAdaptiveScheduler() {
@@ -754,6 +756,12 @@ std::vector<core::AgentSubmissionBatchItem> runNaanPipelineDrain(uint64_t atTime
 
     applyNaanScoreStep(accepted, rejected, violations, atTimestamp, "pipeline_drain");
     naanLastPipelineTs_.store(atTimestamp);
+    // Persist immediately after a pipeline run: these submitted/approved/
+    // rejected totals are the user-visible "work" counters and change infrequently,
+    // so flushing here guarantees they survive even an abrupt restart.
+    if (!batch.empty()) {
+        (void)persistNaanCountersState("pipeline_drain");
+    }
 
     uint64_t prunedSubmitted = 0;
     {
@@ -1006,6 +1014,27 @@ bool initNaanCoordination() {
     std::string scoreLoadReason;
     if (!loadNaanScoreState(&scoreLoadReason)) {
         return failInit("Failed to initialize NAAN score state: " + scoreLoadReason);
+    }
+
+    // Rehydrate dashboard/pipeline/task-run counters from disk so the
+    // network-intelligence dashboard keeps its accumulated totals across restarts.
+    std::string countersLoadReason;
+    (void)loadNaanCountersState(&countersLoadReason);
+    // The deterministic scheduler already persists its own monotonic tick in
+    // scheduler.state. Reconcile naanTickCount_ with it so the displayed tick
+    // count never regresses even if counters.state is older or missing.
+    {
+        const uint64_t schedulerTick = naanTaskScheduler_.snapshot().tick;
+        if (schedulerTick > naanTickCount_.load()) {
+            naanTickCount_.store(schedulerTick);
+        }
+    }
+    utils::Logger::info("NAAN counters state: " + countersLoadReason +
+        " (ticks=" + std::to_string(naanTickCount_.load()) +
+        ", pipelineRuns=" + std::to_string(naanPipelineRuns_.load()) + ")");
+    // Seed the file on first run so a subsequent restart finds a valid checkpoint.
+    if (countersLoadReason == "not_found") {
+        (void)persistNaanCountersState("startup_seed");
     }
 
     configureNaanConnectorAbuseGuard();
@@ -1788,6 +1817,9 @@ void tickNaanCoordination(uint64_t now) {
 
     if (decision.scheduled || (tickValue % 30 == 0)) {
         (void)persistNaanSchedulerState("tick");
+        // Flush dashboard counters on the same cadence (~every 30 ticks)
+        // so at most a few ticks of work is lost if the process is SIGKILLed.
+        (void)persistNaanCountersState("tick");
     }
 }
 

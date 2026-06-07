@@ -1200,6 +1200,105 @@ bool persistNaanSchedulerState(const std::string& context) {
     return true;
 }
 
+// Hydrate the in-memory dashboard/pipeline/task-run counters from disk.
+// Root cause of the "counters reset to 0 after restart" bug: these atomics were
+// declared with {0} initializers and never loaded back from any state file, even
+// though the underlying knowledge/audit data on disk was preserved. We persist
+// them to naan/counters.state and rehydrate here at startup. Returns true even
+// when the file is missing (fresh seed); only a malformed file is treated as a
+// soft failure (logged, counters left at 0) so startup is never blocked.
+bool loadNaanCountersState(std::string* reason = nullptr) {
+    if (naanCountersStatePath_.empty()) {
+        if (reason) *reason = "path_empty";
+        return true;
+    }
+    std::ifstream in(naanCountersStatePath_);
+    if (!in.good()) {
+        if (reason) *reason = "not_found";
+        return true;
+    }
+    std::string line;
+    if (!std::getline(in, line)) {
+        if (reason) *reason = "empty";
+        return true;
+    }
+    std::stringstream ss(line);
+    std::string token;
+    std::vector<std::string> parts;
+    while (std::getline(ss, token, ',')) parts.push_back(token);
+    // Format v1: tag,ticks,pipelineRuns,pipelineApproved,pipelineSubmitted,
+    //            pipelineRejected,lastPipelineTs,taskResearch,taskVerify,
+    //            taskReview,taskDraft,taskSubmit  (12 fields)
+    if (parts.size() < 12 || parts[0] != "v1") {
+        if (reason) *reason = "invalid_format";
+        utils::Logger::warn("NAAN counters state malformed; starting counters at 0");
+        return true;
+    }
+    auto parseU64 = [](const std::string& s, uint64_t fallback) -> uint64_t {
+        try { return std::stoull(s); } catch (...) { return fallback; }
+    };
+    naanTickCount_.store(parseU64(parts[1], 0));
+    naanPipelineRuns_.store(parseU64(parts[2], 0));
+    naanPipelineApproved_.store(parseU64(parts[3], 0));
+    naanPipelineSubmitted_.store(parseU64(parts[4], 0));
+    naanPipelineRejected_.store(parseU64(parts[5], 0));
+    naanLastPipelineTs_.store(parseU64(parts[6], 0));
+    naanTaskResearchRuns_.store(parseU64(parts[7], 0));
+    naanTaskVerifyRuns_.store(parseU64(parts[8], 0));
+    naanTaskReviewRuns_.store(parseU64(parts[9], 0));
+    naanTaskDraftRuns_.store(parseU64(parts[10], 0));
+    naanTaskSubmitRuns_.store(parseU64(parts[11], 0));
+    if (reason) *reason = "loaded";
+    return true;
+}
+
+// Persist the dashboard/pipeline/task-run counters using an atomic
+// write (write to a temporary file in the same directory, then rename) so a
+// SIGKILL mid-write cannot corrupt the canonical file or lose the prior value.
+bool persistNaanCountersState(const std::string& context) {
+    if (naanCountersStatePath_.empty()) return true;
+    std::error_code ec;
+    std::filesystem::path p(naanCountersStatePath_);
+    if (p.has_parent_path()) {
+        std::filesystem::create_directories(p.parent_path(), ec);
+        if (ec) {
+            utils::Logger::warn("Failed to persist NAAN counters state (" + context + "): mkdir_failed");
+            return false;
+        }
+    }
+    const std::string tmpPath = naanCountersStatePath_ + ".tmp";
+    {
+        std::ofstream out(tmpPath, std::ios::trunc);
+        if (!out.good()) {
+            utils::Logger::warn("Failed to persist NAAN counters state (" + context + "): open_failed");
+            return false;
+        }
+        out << "v1,"
+            << naanTickCount_.load() << ","
+            << naanPipelineRuns_.load() << ","
+            << naanPipelineApproved_.load() << ","
+            << naanPipelineSubmitted_.load() << ","
+            << naanPipelineRejected_.load() << ","
+            << naanLastPipelineTs_.load() << ","
+            << naanTaskResearchRuns_.load() << ","
+            << naanTaskVerifyRuns_.load() << ","
+            << naanTaskReviewRuns_.load() << ","
+            << naanTaskDraftRuns_.load() << ","
+            << naanTaskSubmitRuns_.load();
+        out.flush();
+        if (!out.good()) {
+            utils::Logger::warn("Failed to persist NAAN counters state (" + context + "): write_failed");
+            return false;
+        }
+    }
+    std::filesystem::rename(tmpPath, naanCountersStatePath_, ec);
+    if (ec) {
+        utils::Logger::warn("Failed to persist NAAN counters state (" + context + "): rename_failed");
+        return false;
+    }
+    return true;
+}
+
 #include "node/main_parts/naan_coordination.inc"
 
 UpdateManifestAccept acceptUpdateManifest(const core::UpdateManifest& manifest, bool relay, std::string* reason = nullptr) {
@@ -2595,6 +2694,9 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         const std::string shutdownReason = shutdownReasonFromSignalState();
         utils::Logger::info("Initiating shutdown sequence (reason=" + shutdownReason + ")");
         (void)persistNaanSchedulerState(shutdownReason);
+        // Final flush of dashboard counters on graceful shutdown
+        // (SIGTERM/SIGINT) so the latest totals are durable before exit.
+        (void)persistNaanCountersState(shutdownReason);
         (void)persistNaanCrashState(shutdownReason);
         naanRuntimeInitialized_.store(false);
 
@@ -5053,6 +5155,9 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
 		    std::atomic<uint64_t> naanConsistencyLastAt_{0};
 		    std::string naanScoreStatePath_{};
 		    std::string naanScoreDecayStatePath_{};
+		    // Persistent path for dashboard/pipeline/task-run counters so they
+		    // survive daemon restarts (previously these atomics reset to 0 on startup).
+		    std::string naanCountersStatePath_{};
 		    std::atomic<uint64_t> naanScoreLastDecayTs_{0};
 		    std::atomic<uint64_t> naanScoreLastViolationTick_{0};
 		    std::atomic<uint8_t> naanLastScoreBand_{0};
