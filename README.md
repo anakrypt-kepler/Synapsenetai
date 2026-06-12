@@ -13,7 +13,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/SynapseNet-0.1.0--alphaV9-000000?style=for-the-badge&labelColor=000000" alt="Version" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-000000?style=for-the-badge&labelColor=000000" alt="License" /></a>
-  <img src="https://img.shields.io/badge/Status-Active_Development-000000?style=for-the-badge&labelColor=000000" alt="Status" />
+  <img src="https://img.shields.io/badge/Status-In_Development-000000?style=for-the-badge&labelColor=000000" alt="Status" />
 </p>
 
 ---
@@ -25,10 +25,10 @@
 <h3 align="center">Navigation</h3>
 
 <p align="center">
-  <a href="https://github.com/anakrypt"><img src="https://img.shields.io/badge/Kepler-000000?style=for-the-badge&logo=github&logoColor=white" alt="Profile" /></a>
+  <a href="https://github.com/anakrypt-kepler"><img src="https://img.shields.io/badge/Kepler-000000?style=for-the-badge&logo=github&logoColor=white" alt="Profile" /></a>
   <a href="https://discord.gg/wGhkWgHK"><img src="https://img.shields.io/badge/Discord-000000?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
-  <a href="https://github.com/anakrypt/SynapseNet"><img src="https://img.shields.io/badge/SynapseNet_Docs-000000?style=for-the-badge&logo=gitbook&logoColor=white" alt="Docs" /></a>
-  <a href="https://github.com/anakrypt/SynapseNet/blob/main/SynapseNet_Whitepaper.pdf"><img src="https://img.shields.io/badge/Whitepaper-000000?style=for-the-badge&logo=adobeacrobatreader&logoColor=white" alt="Whitepaper" /></a>
+  <a href="https://github.com/anakrypt-kepler/Synapsenetai"><img src="https://img.shields.io/badge/SynapseNet_Docs-000000?style=for-the-badge&logo=gitbook&logoColor=white" alt="Docs" /></a>
+  <a href="https://github.com/anakrypt-kepler/Synapsenetai/blob/main/SynapseNet_Whitepaper.pdf"><img src="https://img.shields.io/badge/Whitepaper-000000?style=for-the-badge&logo=adobeacrobatreader&logoColor=white" alt="Whitepaper" /></a>
   <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/Contributing-000000?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="Contributing" /></a>
   <a href="RELEASES/0.1.0-alpha"><img src="https://img.shields.io/badge/0.1.0--alpha-000000?style=for-the-badge&logo=rocket&logoColor=white" alt="0.1.0-alpha" /></a>
   <a href="RELEASES/0.1.0-alphaV2"><img src="https://img.shields.io/badge/0.1.0--alphaV2-000000?style=for-the-badge&logo=torproject&logoColor=white" alt="0.1.0-alphaV2" /></a>
@@ -58,7 +58,7 @@
 
 ## Live Network
 
-The alpha is running. Two nodes are online, connected over Tor, and mining autonomously.
+SynapseNet is in active development, but the network is already running and you can stand up a node today. Two seed nodes are online, connected over Tor, and mining autonomously. This is a working alpha network, not a finished product — expect rough edges, but the protocol, consensus, and Tor mesh are live and you can join right now.
 
 <p align="center">
   <img src="https://img.shields.io/badge/Node_1-Online-000000?style=for-the-badge&labelColor=000000" alt="Node 1" />
@@ -534,8 +534,8 @@ See [DOCKER.md](KeplerSynapseNet/DOCKER.md) for configuration.
 Full architecture docs are in `interfaces txt/`. For the organized documentation index and whitepaper, see the docs repository.
 
 <p align="center">
-  <a href="https://github.com/anakrypt/SynapseNet"><img src="https://img.shields.io/badge/Documentation_Index-000000?style=for-the-badge&logo=gitbook&logoColor=white" alt="Docs" /></a>
-  <a href="https://github.com/anakrypt/SynapseNet/blob/main/SynapseNet_Whitepaper.pdf"><img src="https://img.shields.io/badge/Whitepaper_PDF-000000?style=for-the-badge&logo=adobeacrobatreader&logoColor=white" alt="Whitepaper" /></a>
+  <a href="https://github.com/anakrypt-kepler/Synapsenetai"><img src="https://img.shields.io/badge/Documentation_Index-000000?style=for-the-badge&logo=gitbook&logoColor=white" alt="Docs" /></a>
+  <a href="https://github.com/anakrypt-kepler/Synapsenetai/blob/main/SynapseNet_Whitepaper.pdf"><img src="https://img.shields.io/badge/Whitepaper_PDF-000000?style=for-the-badge&logo=adobeacrobatreader&logoColor=white" alt="Whitepaper" /></a>
   <a href="interfaces%20txt/WHY_SYNAPSENET.txt"><img src="https://img.shields.io/badge/Why_SynapseNet_Exists-000000?style=for-the-badge&logo=readme&logoColor=white" alt="Why SynapseNet" /></a>
 </p>
 
@@ -578,6 +578,30 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Code contributions can be submitted as P
 ---
 
 ## Changelog
+
+### 0.1.0-alphaV9 (June 6, 2026)
+
+- **Monero-style privacy layer** — full implementation of ring-signature-style transaction privacy: one-time stealth addresses, decoy/ring construction, key images for double-spend protection, view-key scanning, ring member pool management, and Confidential Transaction (CT) validation
+- Privacy layer wired into the Tauri desktop UI: private send/receive flow in the Wallet and Send tabs, with the user's own blocks highlighted in the chain view
+- Fixed `transfer.send` to route through the privacy path and produce valid CT-validated outputs
+- Dashboard/pipeline/task-run counters now persist and rehydrate across daemon restarts (`naan/counters.state`, atomic write, reconciled with the scheduler's monotonic tick)
+
+### 0.1.0-alphaV8.5 (May 18 – 26, 2026)
+
+- **Message proof-of-delivery ledger and federation protocol** — messages now carry signed delivery receipts recorded on a dedicated ledger, with a federation protocol for relaying message state across nodes
+- **P2P knowledge replication, relay routing, and node specialization** — nodes can specialize (e.g. mining vs. relay) and replicate knowledge across the mesh; relay routing forwards traffic for peers that cannot dial directly
+- **Threat intelligence and conference mining modules** added to the NAAN engine
+- Chunked knowledge upload system and QUIC transport stub
+- P2P mesh hardening: direct peer dial, PEX peer exchange, peer cache, onion persistence, peer presence directory for desktop node discovery, v3 onion format validation
+- BLOCKS tab: mini block explorer with chain view and producer stats; `blocks.list` / `blocks.get` RPC and desktop block sync from the VPS over Tor
+- Real BIP39 wallet with secp256k1 keys, proper mnemonic generation and address derivation; mnemonic and NGT balance persisted to disk
+- SOCKS5 / Tor robustness: empty-credential handshake support for Tor proxy, 30s `.onion` connection timeout, DNS timeout handling
+
+### 0.1.0-alphaV8 (May 4, 2026)
+
+- **Distributed exploit intelligence** — shared CVE chain across NAAN network nodes: when one node discovers a working bypass during mining, it publishes the exploit to a shared chain that every other node receives, so the network learns to bypass new protections collectively
+- **V8 critical CAPTCHA bypass**: 4 new CVEs, LLM fallback solver, live-verified on onion services
+- Knowledge Harvester MVP graduated: file/image extraction, VirusTotal scanning, and the HARVEST tab
 
 ### 0.1.0-alphaV7 (April 29 – May 4, 2026)
 
@@ -697,8 +721,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Code contributions can be submitted as P
 If you find this project worth watching — even if you can't contribute code — you can help keep it going. Donations go directly toward VPS hosting for seed nodes, build infrastructure, and development time.
 
 <p align="center">
-  <a href="https://www.blockchain.com/btc/address/bc1q5pkemq7q84ld4rf5kwtafp7jfl9dlf3pc4z9d4"><img src="https://img.shields.io/badge/bc1q5pkemq7q84ld4rf5kwtafp7jfl9dlf3pc4z9d4-000000?style=for-the-badge&logo=bitcoin&logoColor=white" alt="BTC" /></a>
+  <a href="https://www.blockchain.com/btc/address/bc1q5pkemq7q84ld4rf5kwtafp7jfl9dlf3pc4z9d4"><img src="https://img.shields.io/badge/Bitcoin-000000?style=for-the-badge&logo=bitcoin&logoColor=white" alt="BTC" /></a>
+  <a href="https://www.getmonero.org"><img src="https://img.shields.io/badge/Monero-000000?style=for-the-badge&logo=monero&logoColor=white" alt="XMR" /></a>
 </p>
+
+<p align="center"><strong>Bitcoin (BTC)</strong><br><code>bc1q5pkemq7q84ld4rf5kwtafp7jfl9dlf3pc4z9d4</code></p>
+
+<p align="center"><strong>Monero (XMR)</strong><br><code>86SzreFr7NnPBfx1QsiC8ndAKMsJ6qQmeEBAW1bpfiTAcj3QL4ThwNnUEvZARZtrWs5mZ28T4w4XNSruwuVJkUcPM6XBpFh</code></p>
 
 ---
 
@@ -969,5 +998,5 @@ Because the world has enough proof-of-work chains burning electricity for nothin
 ---
 
 <p align="center">
-  <a href="https://github.com/anakrypt"><img src="https://img.shields.io/badge/Built_by_Kepler-000000?style=for-the-badge&logo=github&logoColor=white" alt="Kepler" /></a>
+  <a href="https://github.com/anakrypt-kepler"><img src="https://img.shields.io/badge/Built_by_Kepler-000000?style=for-the-badge&logo=github&logoColor=white" alt="Kepler" /></a>
 </p>
