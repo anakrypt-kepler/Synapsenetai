@@ -1368,7 +1368,7 @@ SearchConfig defaultSearchConfig() {
         "darknet security tools open source",
         "cloud penetration testing methodology"
     };
-    cfg.naanAutoSearchMaxResults = 8;
+    cfg.naanAutoSearchMaxResults = 4;
     cfg.fetchAllowlistRoutes.clear();
     cfg.fetchDenylistRoutes.clear();
     cfg.connectorAuditEnabled = true;

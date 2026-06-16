@@ -565,13 +565,13 @@ RpcResponse RpcServer::Impl::processRequest(const RpcRequest& request) {
     
     const RpcMethod& method = it->second;
     
-    if (method.requiresAuth) {
+    if (method.requiresAuth || authCallback) {
         if (request.authToken.empty()) {
             response.errorCode = static_cast<int>(RpcErrorCode::UNAUTHORIZED);
             response.errorMessage = "Authentication required";
             return response;
         }
-        
+
         if (!authCallback || !authCallback(request.authToken)) {
             response.errorCode = static_cast<int>(RpcErrorCode::UNAUTHORIZED);
             response.errorMessage = "Invalid authentication token";
