@@ -1,10 +1,7 @@
 ![KeplerSynapseNet](pictures/synapsenet_ai_agent.png)
 </div>
 
-- https://github.com/KeplerSynapseNet
-- Official: https://synapsenetai.org
-- WWW: https://www.synapsenetai.org
-- Onion: http://dc4p33qjalqqpk6ggy2p7axv57rdj53lrlgeq3bfto3laoiifzh5odad.onion
+- https://github.com/anakrypt-kepler/Synapsenetai
 
 ### Bitcoin
 kepler
