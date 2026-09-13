@@ -116,7 +116,9 @@ bool Config::loadDefaults() {
     set("poe.epoch_budget", static_cast<int64_t>(100000000));
     set("poe.epoch_iterations", 20);
     set("poe.epoch.auto_require_new_finalized", true);
-    set("poe.validators_adaptive", false);
+    set("poe.validators_majority", true);
+    set("poe.validators_adaptive", true);
+    set("poe.validators_n", static_cast<int64_t>(0));
     set("poe.validators_min_votes", 1);
     set("poe.self_validator_bootstrap_auto_disable", true);
     set("poe.self_validator_bootstrap_strict_connected_peers", 4);

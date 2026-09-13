@@ -9,6 +9,11 @@ network.seed_nodes=
 network.port=8333
 network.rpc_port=8332
 
+# PoE quorum. Two cells: both votes. Three or more: more than half.
+poe.validators_majority=true
+poe.validators_adaptive=true
+poe.validators_n=0
+
 # Tor Privacy Mode
 agent.tor.required=true
 agent.tor.mode=external

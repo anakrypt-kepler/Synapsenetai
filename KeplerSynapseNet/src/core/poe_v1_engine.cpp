@@ -148,8 +148,11 @@ static uint32_t effectiveRequiredVotesForSelected(const PoeV1Config& cfg, uint32
     }
 
     if (cfg.adaptiveMajority) {
-        uint32_t majority = (selectedCount + 1) / 2;
-        return std::max<uint32_t>(1u, majority);
+        // Two live cells: both must vote (1-of-2 would let one node finalize).
+        // Three or more: strict majority (more than half). Each validator still
+        // casts its own vote; finalize is a quorum, not "every peer on earth."
+        if (selectedCount <= 2) return selectedCount;
+        return selectedCount / 2 + 1;
     }
 
     uint32_t minVotes = std::max<uint32_t>(1, cfg.adaptiveMinVotes);

@@ -24,6 +24,7 @@ struct PoeV1Config {
     uint32_t validatorsM = 1;
     bool adaptiveQuorum = false;
     uint32_t adaptiveMinVotes = 1;
+    // When true: 1–2 validators require all votes; n>=3 requires n/2+1.
     bool adaptiveMajority = false;
     bool allowSelfBootstrapValidator = true;
     uint32_t powBits = 16;

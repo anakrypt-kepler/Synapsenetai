@@ -1494,7 +1494,7 @@ void SynapsedEngine::p2pListenerLoop() const {
 
         std::string msg;
         char buf[4096];
-        while (msg.size() < 98304) {
+        while (msg.size() < 262144) {
             ssize_t n = recv(cfd, buf, sizeof(buf), 0);
             if (n <= 0) break;
             msg.append(buf, buf + n);
@@ -1537,6 +1537,14 @@ void SynapsedEngine::p2pListenerLoop() const {
             } else if (msg.find("NODE_PROFILE ") == 0) {
                 ingestNodeProfile(trim(msg.substr(13)));
                 const char ack[] = "PROFILE_ACK\n";
+                send(cfd, ack, sizeof(ack) - 1, 0);
+            } else if (msg.find("POE_ENTRY ") == 0) {
+                ingestPoeEntryHex(trim(msg.substr(10)));
+                const char ack[] = "POE_ACK\n";
+                send(cfd, ack, sizeof(ack) - 1, 0);
+            } else if (msg.find("POE_VOTE ") == 0) {
+                ingestPoeVoteHex(trim(msg.substr(9)));
+                const char ack[] = "POE_ACK\n";
                 send(cfd, ack, sizeof(ack) - 1, 0);
             } else if (msg.find("RELAY_TX") == 0) {
                 size_t sp = msg.find(' ');
@@ -2162,6 +2170,10 @@ std::string SynapsedEngine::localProfileLine() const {
     j["box_pk"] = pkHex;
     if (msgKemReady_ && msgKemPk_.size() == synapse::quantum::KYBER_PUBLIC_KEY_SIZE)
         j["kem_pk"] = synapse::crypto::toHex(msgKemPk_);
+    if (poeReady_.load()) {
+        j["poe_pk"] = synapse::crypto::toHex(poePk_);
+        j["cell"] = "full";
+    }
     return "NODE_PROFILE " + j.dump() + "\n";
 }
 
@@ -2180,13 +2192,19 @@ void SynapsedEngine::ingestNodeProfile(const std::string& jsonBody) const {
     std::string kemPk = j.value("kem_pk", "");
     if (!isHexLen(kemPk, synapse::quantum::KYBER_PUBLIC_KEY_SIZE * 2)) kemPk.clear();
     mergeKnownPeer(onion, "profile", false);
-    std::lock_guard<std::mutex> lock(knownPeersMtx_);
-    auto it = knownPeers_.find(onion);
-    if (it == knownPeers_.end()) return;
-    if (!alias.empty()) it->second.alias = alias;
-    if (!avatar.empty()) it->second.avatar = avatar;
-    if (!boxPk.empty()) it->second.boxPk = boxPk;
-    if (!kemPk.empty()) it->second.kemPk = kemPk;
+    {
+        std::lock_guard<std::mutex> lock(knownPeersMtx_);
+        auto it = knownPeers_.find(onion);
+        if (it == knownPeers_.end()) return;
+        if (!alias.empty()) it->second.alias = alias;
+        if (!avatar.empty()) it->second.avatar = avatar;
+        if (!boxPk.empty()) it->second.boxPk = boxPk;
+        if (!kemPk.empty()) it->second.kemPk = kemPk;
+        std::string poePk = j.value("poe_pk", "");
+        if (!isHexLen(poePk, synapse::crypto::PUBLIC_KEY_SIZE * 2)) poePk.clear();
+        if (!poePk.empty()) it->second.poePk = poePk;
+    }
+    refreshPoeValidators();
 }
 
 void SynapsedEngine::pushLocalProfile(const std::string& onion) const {
@@ -2571,6 +2589,10 @@ void SynapsedEngine::relayPrivateTxJson(const std::string& jsonLine) const {
     sendOnionPayload(dest, 8333, payload, nullptr);
 }
 
+bool SynapsedEngine::meshSend(const std::string& onion, const std::string& payload) const {
+    return sendOnionPayload(onion, 8333, payload, nullptr);
+}
+
 int SynapsedEngine::init(const std::string& configPath) {
     std::lock_guard<std::mutex> lock(mtx_);
     if (initialized_) return -1;
@@ -2615,6 +2637,8 @@ int SynapsedEngine::init(const std::string& configPath) {
         }
         walletAddress_ = keys.getAddress();
     }
+
+    initPoeEngine();
 
     {
         std::ifstream bf(dataDir_ + "/balance.dat");
@@ -2694,6 +2718,14 @@ void SynapsedEngine::shutdown() {
     }
     std::lock_guard<std::mutex> lock(mtx_);
     if (!initialized_) return;
+    {
+        std::lock_guard<std::mutex> poe(poeMtx_);
+        if (poeV1_) {
+            poeV1_->close();
+            poeV1_.reset();
+        }
+        poeReady_.store(false);
+    }
     initialized_ = false;
     subscribers_.clear();
     nodeId_.clear();
@@ -3548,38 +3580,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         if (content.empty()) content = p.value("body", "");
         if (title.empty() || content.empty())
             return "{\"error\":\"title and content required\"}";
-        std::string citations;
-        if (p.contains("citations")) {
-            if (p["citations"].is_string()) citations = p["citations"].get<std::string>();
-            else citations = p["citations"].dump();
-        }
-        std::string entryHash = sha256Hex(title + content + std::to_string(nowMillis()));
-        std::string sig = ed25519Sign(entryHash);
-        {
-            nlohmann::json row;
-            row["id"] = entryHash.substr(0, 16);
-            row["kind"] = "knowledge";
-            row["title"] = title;
-            row["content"] = content;
-            row["citations"] = citations;
-            row["status"] = "pending";
-            row["ngt_earned"] = "0.00";
-            row["hash"] = entryHash.substr(0, 32);
-            row["sig"] = sig.substr(0, 16);
-            row["ts"] = nowMillis();
-            std::ofstream kf(dataDir_ + "/knowledge.jsonl", std::ios::app);
-            if (kf.good()) kf << row.dump() << "\n";
-        }
-        appendLocalChainBlock("knowledge", entryHash.substr(0, 32));
-        nlohmann::json out;
-        out["ok"] = true;
-        out["id"] = entryHash.substr(0, 16);
-        out["hash"] = entryHash.substr(0, 32);
-        out["status"] = "pending";
-        out["creditedAtoms"] = 0;
-        out["finalized"] = false;
-        out["message"] = "Recorded on the local PoE chain. NGT pays on finalize, not on submit.";
-        return out.dump();
+        return submitPoeKnowledge(title, content, synapse::core::poe_v1::ContentType::TEXT);
     }
 
     if (method == "knowledge.search") {
@@ -3701,31 +3702,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         std::string title = p.value("title", "");
         if (title.empty()) title = p.value("filename", "patch");
         if (patch.empty()) return "{\"error\":\"patch required\"}";
-
-        std::string entryHash = sha256Hex(title + patch + std::to_string(nowMillis()));
-        std::string sig = ed25519Sign(entryHash);
-        {
-            std::ofstream kf(dataDir_ + "/knowledge.jsonl", std::ios::app);
-            if (kf.good()) {
-                kf << "{\"id\":\"" << entryHash.substr(0, 16)
-                   << "\",\"kind\":\"code\""
-                   << ",\"title\":\"" << jsonEscape(title)
-                   << "\",\"status\":\"pending\""
-                   << ",\"ngt_earned\":\"0.00\""
-                   << ",\"hash\":\"" << entryHash.substr(0, 32)
-                   << "\",\"sig\":\"" << sig.substr(0, 16)
-                   << "\",\"ts\":" << nowMillis() << "}\n";
-            }
-        }
-        appendLocalChainBlock("poe_entry", entryHash.substr(0, 32));
-        nlohmann::json out;
-        out["ok"] = true;
-        out["status"] = "pending";
-        out["submitId"] = entryHash.substr(0, 16);
-        out["message"] = "Code recorded on the local PoE chain. NGT pays on finalize (votes), RingCT coinbase to stealth. Not hash mining. Author stays public.";
-        out["creditedAtoms"] = 0;
-        out["finalized"] = false;
-        return out.dump();
+        return submitPoeKnowledge(title, patch, synapse::core::poe_v1::ContentType::CODE);
     }
 
     if (method == "msg.list") {
@@ -8408,6 +8385,11 @@ void SynapsedEngine::naanLoop() {
             if (naanHist_.size() > 25) naanHist_.erase(naanHist_.begin());
 
             if (filed) persistDraft(d, hash);
+            if (filed) {
+                std::string body = chosenTitle;
+                if (body.size() > 8000) body.resize(8000);
+                submitPoeKnowledge("NAAN " + topic, body, synapse::core::poe_v1::ContentType::TEXT);
+            }
             naanState_ = "active";
 
             if (!br.cveId.empty() && !html.empty()) {

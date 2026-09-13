@@ -592,7 +592,10 @@ endif()
 add_executable(synapsed src/main.cpp)
 target_link_libraries(synapsed PRIVATE synapsed_core)
 
-add_library(synapsed_lib SHARED src/ide/synapsed_engine.cpp src/ide/synapsed_ffi.cpp)
+add_executable(synapsed-poe-mesh src/cli/synapsed_poe_mesh.cpp)
+target_link_libraries(synapsed-poe-mesh PRIVATE synapsed_core)
+
+add_library(synapsed_lib SHARED src/ide/synapsed_engine.cpp src/ide/synapsed_ffi.cpp src/ide/synapsed_mesh_poe.cpp)
 target_link_libraries(synapsed_lib PRIVATE synapsed_core)
 if(UNIX AND NOT APPLE)
     target_link_libraries(synapsed_lib PRIVATE dl)

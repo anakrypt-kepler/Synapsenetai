@@ -692,6 +692,91 @@ static void testAdaptiveQuorumGrowsWithValidatorSet() {
     std::filesystem::remove_all(tmpDir, ec);
 }
 
+static void testAdaptiveMajorityTwoThenThree() {
+    auto uniq = std::to_string(static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
+    auto tmpDir = std::filesystem::temp_directory_path() / ("synapsenet_poe_adaptive_majority_" + uniq);
+    std::error_code ec;
+    std::filesystem::remove_all(tmpDir, ec);
+    std::filesystem::create_directories(tmpDir, ec);
+    std::string dbPath = (tmpDir / "poe.db").string();
+
+    synapse::core::PoeV1Engine engine;
+    assert(engine.open(dbPath));
+
+    synapse::core::PoeV1Config cfg;
+    cfg.powBits = 8;
+    cfg.limits.minPowBits = cfg.powBits;
+    cfg.limits.maxPowBits = 28;
+    cfg.validatorsN = 0;
+    cfg.validatorsM = 0;
+    cfg.adaptiveQuorum = true;
+    cfg.adaptiveMajority = true;
+    cfg.adaptiveMinVotes = 1;
+    cfg.allowSelfBootstrapValidator = true;
+    cfg.minSubmitIntervalSeconds = 0;
+    engine.setConfig(cfg);
+
+    auto sk1 = makeSk(201);
+    auto sk2 = makeSk(202);
+    auto sk3 = makeSk(203);
+    auto pk1 = synapse::crypto::derivePublicKey(sk1);
+    auto pk2 = synapse::crypto::derivePublicKey(sk2);
+    auto pk3 = synapse::crypto::derivePublicKey(sk3);
+
+    engine.setStaticValidators({pk1, pk2});
+    assert(engine.effectiveSelectedValidators() == 2);
+    assert(engine.effectiveRequiredVotes() == 2);
+
+    auto r2 = engine.submit(
+        synapse::core::poe_v1::ContentType::TEXT,
+        "majority_title_two",
+        std::string(80, 'm'),
+        {},
+        sk1,
+        true
+    );
+    assert(r2.ok);
+    assert(!r2.finalized);
+
+    synapse::core::poe_v1::ValidationVoteV1 vote2;
+    vote2.version = 1;
+    vote2.submitId = r2.submitId;
+    vote2.prevBlockHash = engine.chainSeed();
+    vote2.flags = 0;
+    vote2.scores = {100, 100, 100};
+    synapse::core::poe_v1::signValidationVoteV1(vote2, sk2);
+    assert(engine.addVote(vote2));
+    assert(engine.finalize(r2.submitId).has_value());
+
+    engine.setStaticValidators({pk1, pk2, pk3});
+    assert(engine.effectiveSelectedValidators() == 3);
+    assert(engine.effectiveRequiredVotes() == 2);
+
+    auto r3 = engine.submit(
+        synapse::core::poe_v1::ContentType::TEXT,
+        "majority_title_three",
+        std::string(80, 'n'),
+        {},
+        sk1,
+        true
+    );
+    assert(r3.ok);
+    assert(!r3.finalized);
+
+    synapse::core::poe_v1::ValidationVoteV1 vote3;
+    vote3.version = 1;
+    vote3.submitId = r3.submitId;
+    vote3.prevBlockHash = engine.chainSeed();
+    vote3.flags = 0;
+    vote3.scores = {100, 100, 100};
+    synapse::core::poe_v1::signValidationVoteV1(vote3, sk2);
+    assert(engine.addVote(vote3));
+    assert(engine.finalize(r3.submitId).has_value());
+
+    engine.close();
+    std::filesystem::remove_all(tmpDir, ec);
+}
+
 static void testSubmitDoesNotSelfBootstrapValidatorWhenDisabled() {
     auto uniq = std::to_string(static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
     auto tmpDir = std::filesystem::temp_directory_path() / ("synapsenet_poe_no_self_bootstrap_" + uniq);
@@ -748,6 +833,7 @@ int main() {
     testOpenRepairsEntryAndFinalizationCounters();
     testStakeIdentityDeterministicValidators();
     testAdaptiveQuorumGrowsWithValidatorSet();
+    testAdaptiveMajorityTwoThenThree();
     testSubmitDoesNotSelfBootstrapValidatorWhenDisabled();
     std::cout << "PoE v1 determinism tests passed\n";
     return 0;

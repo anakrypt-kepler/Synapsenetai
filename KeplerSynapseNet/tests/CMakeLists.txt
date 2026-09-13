@@ -20,6 +20,10 @@ add_executable(test_poe test_poe.cpp)
 target_link_libraries(test_poe synapsed_core)
 add_test(NAME PoETests COMMAND test_poe)
 
+add_executable(test_poe_mesh_cells test_poe_mesh_cells.cpp)
+target_link_libraries(test_poe_mesh_cells synapsed_core)
+add_test(NAME PoeMeshCellTests COMMAND test_poe_mesh_cells)
+
 add_executable(test_poe_e2e test_poe_e2e.cpp)
 target_link_libraries(test_poe_e2e synapsed_core)
 add_test(NAME PoeE2ETests COMMAND test_poe_e2e)
@@ -316,6 +320,7 @@ set(SYNAPSENET_TEST_TARGETS
     test_network
     test_ledger
     test_poe
+    test_poe_mesh_cells
     test_privacy
     test_quantum
     test_quantum_runtime

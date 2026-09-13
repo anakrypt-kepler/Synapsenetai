@@ -3514,7 +3514,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
 	        poeCfg.validatorMinStakeAtoms = poeMinStakeAtoms();
 	        poeCfg.powBits = (config_.dev || config_.regtest) ? 12 : 16;
             const bool strictMainnetPoe = !(config_.dev || config_.regtest);
-            const bool adaptiveMajorityVoting = runtimeCfg.getBool("poe.validators_majority", false);
+            const bool adaptiveMajorityVoting = runtimeCfg.getBool("poe.validators_majority", true);
             const bool adaptiveValidatorQuorum = adaptiveMajorityVoting || runtimeCfg.getBool("poe.validators_adaptive", false);
             int64_t validatorsN = runtimeCfg.getInt64("poe.validators_n", adaptiveMajorityVoting ? 0 : (strictMainnetPoe ? 3 : 1));
             if (adaptiveMajorityVoting) {

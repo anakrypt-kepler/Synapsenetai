@@ -26,6 +26,10 @@ SynapseNet is a **decentralized intelligence network**. Bitcoin is to money what
 
 The front door is this repo: [github.com/anakrypt-kepler/Synapsenetai](https://github.com/anakrypt-kepler/Synapsenetai).
 
+The mesh is already live. Two cells are talking over Tor. Put the peer you trust in `~/.synapsenet/synapsenet.conf` as `network.seed_nodes=`. I do not bake seed onions into the binary.
+
+A full cell is peer + miner + validator. PoE is votes, not a roll call of every onion. Each full cell casts its own vote over the mesh (`POE_ENTRY` / `POE_VOTE`). Two full cells: both must vote, then it finalizes. When the set grows, the threshold is a strict majority (2 of 3, 3 of 5, …). A thin mailbox with no `poe_pk` stays mail — it does not judge.
+
 This is alpha. Expect bugs. Read the holes before you trust the skin.
 
 ---

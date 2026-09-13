@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Headless mesh peer for the desktop NET map: GET_PEERS / SYNAPSE_PEER / NODE_PROFILE
-# plus a tiny JSON-RPC on 8332 (peer.announce / peer.directory / blocks.list).
+# plus POE_ENTRY / POE_VOTE when synapsed-poe-mesh is on PATH.
 # Speaks the same onion protocol as libsynapsed, not the synapsed daemon P2P stack.
 # Own identity is a CC0 hoodie portrait, never the desktop operator's profile_avatar.
 import base64
@@ -29,6 +29,11 @@ COOKIE_PATHS = (
     "/var/lib/tor/control_auth_cookie",
 )
 STATE_DIR = os.environ.get("MESH_STATE", "/root/synapsenet-mesh")
+POE_DIR = os.path.join(STATE_DIR, "poe")
+POE_BIN = os.environ.get(
+    "MESH_POE_BIN",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "synapsed-poe-mesh"),
+)
 ALIAS = os.environ.get("MESH_ALIAS", "VPS")[:32]
 # Wikimedia Commons CC0: "Cliche Hacker and Binary Code" (hooded person at a keyboard).
 AVATAR_PAGE = (
@@ -61,6 +66,7 @@ except ImportError:
     HAS_NACL = False
 BOX_SK = None
 BOX_PK_HEX = ""
+POE_PK_HEX = ""
 KEM_PK_HEX = ""
 KEM_SK = b""
 KEM_BACKEND = None
@@ -206,6 +212,98 @@ def socks5_connect(onion, port=P2P_PORT, timeout=25):
         except OSError:
             pass
         raise
+
+
+SEEN_POE = set()
+
+
+def poe_bin_path():
+    for p in (
+        os.environ.get("MESH_POE_BIN") or "",
+        POE_BIN,
+        "/usr/local/bin/synapsed-poe-mesh",
+        os.path.join(STATE_DIR, "synapsed-poe-mesh"),
+    ):
+        if p and os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return ""
+
+
+def poe_run(cmd, hexblob=None):
+    binpath = poe_bin_path()
+    if not binpath:
+        return ""
+    os.makedirs(POE_DIR, exist_ok=True)
+    args = [binpath, POE_DIR, cmd]
+    if hexblob is not None:
+        args.append(hexblob)
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, timeout=60)
+    except Exception as e:
+        log("poe helper fail: " + type(e).__name__)
+        return ""
+    if p.returncode != 0:
+        err = (p.stderr or "").strip()[:200]
+        if err:
+            log("poe " + cmd + " err: " + err)
+        return p.stdout or ""
+    return p.stdout or ""
+
+
+def load_poe():
+    global POE_PK_HEX
+    pk = poe_run("pubkey").strip()
+    if len(pk) == 66 and all(c in "0123456789abcdefABCDEF" for c in pk):
+        POE_PK_HEX = pk.lower()
+        log("poe cell pk ready")
+    else:
+        POE_PK_HEX = ""
+        log("poe cell offline (mesh stays a mailbox)")
+
+
+def poe_seen(kind, blob):
+    key = kind + ":" + blob[:80]
+    if key in SEEN_POE:
+        return True
+    SEEN_POE.add(key)
+    if len(SEEN_POE) > 4000:
+        SEEN_POE.clear()
+    return False
+
+
+def gossip_poe(line, skip=""):
+    payload = line if line.endswith("\n") else line + "\n"
+    with PEERS_LOCK:
+        dests = list(PEERS.keys())
+    for o in dests:
+        if not valid_v3(o) or o == OWN_ONION or o == skip:
+            continue
+        socks5_send(o, payload)
+
+
+def handle_poe_entry(hexblob):
+    if poe_seen("e", hexblob):
+        return
+    out = poe_run("ingest-entry", hexblob)
+    gossip_poe("POE_ENTRY " + hexblob + "\n")
+    for line in (out or "").splitlines():
+        if line.startswith("VOTE "):
+            votehex = line[5:].strip()
+            if votehex:
+                gossip_poe("POE_VOTE " + votehex + "\n")
+                log("poe voted")
+        elif line.startswith("FINALIZED "):
+            log("poe finalized " + line[10:].strip()[:16])
+
+
+def handle_poe_vote(hexblob):
+    if poe_seen("v", hexblob):
+        return
+    out = poe_run("ingest-vote", hexblob)
+    gossip_poe("POE_VOTE " + hexblob + "\n")
+    for line in (out or "").splitlines():
+        if line.startswith("FINALIZED "):
+            log("poe finalized " + line[10:].strip()[:16])
 
 
 def socks5_send(onion, payload, wait_ack=True):
@@ -623,6 +721,9 @@ def profile_line():
     }
     if KEM_PK_HEX:
         body["kem_pk"] = KEM_PK_HEX
+    if POE_PK_HEX:
+        body["poe_pk"] = POE_PK_HEX
+        body["cell"] = "full"
     return "NODE_PROFILE " + json.dumps(body, separators=(",", ":")) + "\n"
 
 
@@ -806,7 +907,7 @@ def handle_p2p(conn, addr):
     conn.settimeout(20)
     try:
         data = b""
-        while b"\n" not in data and len(data) < 98304:
+        while b"\n" not in data and len(data) < 262144:
             chunk = conn.recv(4096)
             if not chunk:
                 break
@@ -854,11 +955,24 @@ def handle_p2p(conn, addr):
                         kpk = str(j.get("kem_pk", "") or "")
                         if len(kpk) == KEM_PK_LEN * 2:
                             row["kem_pk"] = kpk
+                        ppk = str(j.get("poe_pk", "") or "")
+                        if len(ppk) == 66:
+                            row["poe_pk"] = ppk.lower()
                         PEERS[o] = row
                 log("NODE_PROFILE " + o + " alias=" + str(j.get("alias", "")))
             except Exception:
                 pass
             conn.sendall(b"PROFILE_ACK\n")
+        elif msg.startswith("POE_ENTRY "):
+            hexblob = msg[10:].strip().split()[0] if msg[10:].strip() else ""
+            conn.sendall(b"POE_ACK\n")
+            if hexblob:
+                handle_poe_entry(hexblob)
+        elif msg.startswith("POE_VOTE "):
+            hexblob = msg[9:].strip().split()[0] if msg[9:].strip() else ""
+            conn.sendall(b"POE_ACK\n")
+            if hexblob:
+                handle_poe_vote(hexblob)
         elif msg.startswith("NODE_MSG "):
             raw = msg[9:].strip()
             ack_id = ""
@@ -984,6 +1098,7 @@ def main():
     load_or_build_avatar()
     load_or_make_box()
     load_or_make_kem()
+    load_poe()
     # ADD_ONION lives only while this control connection stays open.
     ctl = None
     for attempt in range(30):

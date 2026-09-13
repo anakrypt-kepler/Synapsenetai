@@ -6,6 +6,8 @@
 // NAAN harvest loop (naanLoop), fetchWithRetry, harvest, and exploit chain
 // are private methods on this class — see synapsed_engine.cpp.
 
+#include "core/poe_v1_engine.h"
+#include "crypto/crypto.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -351,6 +353,7 @@ private:
         std::string avatar;
         std::string boxPk;
         std::string kemPk;
+        std::string poePk;
     };
     mutable std::mutex knownPeersMtx_;
     mutable std::map<std::string, KnownPeer> knownPeers_;
@@ -444,6 +447,25 @@ private:
     void ingestPrivateTxJson(const std::string& jsonLine) const;
     void relayPrivateTxJson(const std::string& jsonLine) const;
     std::string stealthReceiveAddress() const;
+
+    bool initPoeEngine();
+    void refreshPoeValidators() const;
+    std::string submitPoeKnowledge(const std::string& title, const std::string& body,
+                                   synapse::core::poe_v1::ContentType type);
+    void ingestPoeEntryHex(const std::string& hex) const;
+    void ingestPoeVoteHex(const std::string& hex) const;
+    void maybePoeAutoVote(const synapse::crypto::Hash256& submitId) const;
+    void gossipPoeLine(const std::string& line) const;
+    bool meshSend(const std::string& onion, const std::string& payload) const;
+    void appendKnowledgeJsonl(const std::string& submitHex, const std::string& kind,
+                              const std::string& title, bool finalized) const;
+    void markKnowledgeFinalized(const std::string& submitHex) const;
+
+    mutable std::mutex poeMtx_;
+    mutable std::unique_ptr<synapse::core::PoeV1Engine> poeV1_;
+    mutable synapse::crypto::PrivateKey poeSk_{};
+    mutable synapse::crypto::PublicKey poePk_{};
+    mutable std::atomic<bool> poeReady_{false};
 
     std::unordered_map<std::string, std::vector<EventCallback>> subscribers_;
 };
