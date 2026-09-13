@@ -1,3 +1,6 @@
+// Fail-closed route decision: Tor vs clearnet vs "stop".
+// allowClearnetFallback defaults false. Changing that in config is a privacy leak.
+
 #include "core/tor_route_policy.h"
 
 #include <algorithm>

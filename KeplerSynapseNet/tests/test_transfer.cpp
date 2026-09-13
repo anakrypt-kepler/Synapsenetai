@@ -2,6 +2,7 @@
 #include "crypto/address.h"
 #include "crypto/crypto.h"
 #include "database/database.h"
+#include "quantum/quantum_security.h"
 #include <cassert>
 #include <cstdint>
 #include <ctime>
@@ -9,6 +10,11 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+
+static synapse::quantum::HybridKeyPair makeHybrid() {
+    synapse::quantum::HybridSig signer;
+    return signer.generateKeyPair();
+}
 
 static std::string addressFromPubKey(const synapse::crypto::PublicKey& pubKey) {
     return synapse::crypto::canonicalWalletAddressFromPublicKey(pubKey);
@@ -69,7 +75,9 @@ static void testUtxoOwnershipEnforced() {
     assert(tm.signTransaction(tx, kpB.privateKey));
     assert(!tm.submitTransaction(tx));
 
-    assert(tm.signTransaction(tx, kpA.privateKey));
+    auto hybridA = makeHybrid();
+    assert(tm.signTransaction(tx, kpA.privateKey, hybridA));
+    assert(!tx.quantumSignature.empty());
     assert(tm.submitTransaction(tx));
 }
 
@@ -94,12 +102,13 @@ static void testRejectsLowFee() {
     synapse::crypto::Hash256 rewardId = synapse::crypto::sha256(std::string("reward_fee"));
     assert(tm.creditRewardDeterministic(addrA, rewardId, 100000));
 
+    auto hybridA = makeHybrid();
     auto lowFeeTx = tm.createTransaction(addrA, addrB, 100, 1);
-    assert(tm.signTransaction(lowFeeTx, kpA.privateKey));
+    assert(tm.signTransaction(lowFeeTx, kpA.privateKey, hybridA));
     assert(!tm.submitTransaction(lowFeeTx));
 
     auto okTx = createTxWithMinFee(tm, addrA, addrB, 100);
-    assert(tm.signTransaction(okTx, kpA.privateKey));
+    assert(tm.signTransaction(okTx, kpA.privateKey, hybridA));
     assert(tm.submitTransaction(okTx));
 }
 
@@ -126,7 +135,8 @@ static void testRejectsFutureTimestamp() {
     auto tx = createTxWithMinFee(tm, addrA, addrB, 100);
     tx.timestamp = static_cast<uint64_t>(std::time(nullptr)) + (3 * 60 * 60);
     tx.txid = tx.computeHash();
-    assert(tm.signTransaction(tx, kpA.privateKey));
+    auto hybridA = makeHybrid();
+    assert(tm.signTransaction(tx, kpA.privateKey, hybridA));
     assert(!tm.submitTransaction(tx));
 }
 
@@ -152,10 +162,11 @@ static void testBlockOrderRejectsDoubleSpend() {
     synapse::crypto::Hash256 rewardId = synapse::crypto::sha256(std::string("reward_block1"));
     assert(tm.creditRewardDeterministic(addrA, rewardId, 100000));
 
+    auto hybridA = makeHybrid();
     auto tx1 = createTxWithMinFee(tm, addrA, addrB, 100);
     auto tx2 = createTxWithMinFee(tm, addrA, addrC, 80);
-    assert(tm.signTransaction(tx1, kpA.privateKey));
-    assert(tm.signTransaction(tx2, kpA.privateKey));
+    assert(tm.signTransaction(tx1, kpA.privateKey, hybridA));
+    assert(tm.signTransaction(tx2, kpA.privateKey, hybridA));
 
     std::vector<synapse::core::Transaction> txs = {tx1, tx2};
     assert(!tm.verifyTransactionsInBlockOrder(txs));
@@ -183,11 +194,12 @@ static void testBlockOrderAllowsChainedSpend() {
     synapse::crypto::Hash256 rewardId = synapse::crypto::sha256(std::string("reward_block2"));
     assert(tm.creditRewardDeterministic(addrA, rewardId, 100000));
 
+    auto hybridA = makeHybrid();
     auto tx1 = createTxWithMinFee(tm, addrA, addrB, 100);
     assert(tx1.outputs.size() == 2);
     uint64_t changeAmt = tx1.outputs[1].amount;
     assert(tx1.outputs[1].address == addrA);
-    assert(tm.signTransaction(tx1, kpA.privateKey));
+    assert(tm.signTransaction(tx1, kpA.privateKey, hybridA));
 
     synapse::core::Transaction tx2;
     tx2.timestamp = tx1.timestamp + 1;
@@ -208,7 +220,7 @@ static void testBlockOrderAllowsChainedSpend() {
     tx2.fee = tm.estimateFee(tx2.serialize().size());
     tx2.outputs[1].amount = changeAmt - out1.amount - tx2.fee;
     tx2.txid = tx2.computeHash();
-    assert(tm.signTransaction(tx2, kpA.privateKey));
+    assert(tm.signTransaction(tx2, kpA.privateKey, hybridA));
 
     std::vector<synapse::core::Transaction> txs = {tx1, tx2};
     assert(tm.verifyTransactionsInBlockOrder(txs));
@@ -237,12 +249,13 @@ static void testApplyBlockDropsConflictingPending() {
     const uint64_t rewardAmount = 100000;
     assert(tm.creditRewardDeterministic(addrA, rewardId, rewardAmount));
 
+    auto hybridA = makeHybrid();
     auto pendingTx = createTxWithMinFee(tm, addrA, addrB, 100);
-    assert(tm.signTransaction(pendingTx, kpA.privateKey));
+    assert(tm.signTransaction(pendingTx, kpA.privateKey, hybridA));
     assert(tm.submitTransaction(pendingTx));
 
     auto blockTx = createTxWithMinFee(tm, addrA, addrC, 80);
-    assert(tm.signTransaction(blockTx, kpA.privateKey));
+    assert(tm.signTransaction(blockTx, kpA.privateKey, hybridA));
 
     std::vector<synapse::core::Transaction> txs = {blockTx};
     synapse::crypto::Hash256 blockHash = synapse::crypto::sha256(std::string("block3"));
@@ -275,8 +288,9 @@ static void testRollbackBlockRestoresUtxo() {
     const uint64_t rewardAmount = 100000;
     assert(tm.creditRewardDeterministic(addrA, rewardId, rewardAmount));
 
+    auto hybridA = makeHybrid();
     auto blockTx = createTxWithMinFee(tm, addrA, addrB, 100);
-    assert(tm.signTransaction(blockTx, kpA.privateKey));
+    assert(tm.signTransaction(blockTx, kpA.privateKey, hybridA));
 
     std::vector<synapse::core::Transaction> txs = {blockTx};
     synapse::crypto::Hash256 blockHash = synapse::crypto::sha256(std::string("block_reorg_1"));
@@ -313,12 +327,14 @@ static void testRollbackPreservesUnrelatedPending() {
     assert(tm.creditRewardDeterministic(addrA, synapse::crypto::sha256(std::string("reward_reorg_keep_a")), 100000));
     assert(tm.creditRewardDeterministic(addrB, synapse::crypto::sha256(std::string("reward_reorg_keep_b")), 100000));
 
+    auto hybridA = makeHybrid();
+    auto hybridB = makeHybrid();
     auto pendingTx = createTxWithMinFee(tm, addrB, addrC, 100);
-    assert(tm.signTransaction(pendingTx, kpB.privateKey));
+    assert(tm.signTransaction(pendingTx, kpB.privateKey, hybridB));
     assert(tm.submitTransaction(pendingTx));
 
     auto blockTx = createTxWithMinFee(tm, addrA, addrD, 80);
-    assert(tm.signTransaction(blockTx, kpA.privateKey));
+    assert(tm.signTransaction(blockTx, kpA.privateKey, hybridA));
 
     synapse::crypto::Hash256 blockHash = synapse::crypto::sha256(std::string("block_reorg_keep_1"));
     assert(tm.applyBlockTransactionsFromBlock({blockTx}, 1, blockHash));
@@ -371,16 +387,18 @@ static void testMempoolEvictsLowestFee() {
     assert(tm.creditRewardDeterministic(addrA, rewardA, 100000));
     assert(tm.creditRewardDeterministic(addrB, rewardB, 100000));
 
+    auto hybridA = makeHybrid();
+    auto hybridB = makeHybrid();
     auto txA = createTxWithMinFee(tm, addrA, addrC, 100);
-    assert(tm.signTransaction(txA, kpA.privateKey));
+    assert(tm.signTransaction(txA, kpA.privateKey, hybridA));
     assert(tm.submitTransaction(txA));
 
     auto txBsame = createTxWithMinFee(tm, addrB, addrC, 100);
-    assert(tm.signTransaction(txBsame, kpB.privateKey));
+    assert(tm.signTransaction(txBsame, kpB.privateKey, hybridB));
     assert(!tm.submitTransaction(txBsame));
 
     auto txB = createTxWithMinFee(tm, addrB, addrC, 100, txA.fee + 1);
-    assert(tm.signTransaction(txB, kpB.privateKey));
+    assert(tm.signTransaction(txB, kpB.privateKey, hybridB));
     assert(tm.submitTransaction(txB));
 
     auto pending = tm.getPending();
@@ -416,14 +434,16 @@ static void testMempoolEvictsByFeeRateNotAbsoluteFee() {
     assert(tm.creditRewardDeterministic(addrA, synapse::crypto::sha256(std::string("reward_rate_a2")), 60000));
     assert(tm.creditRewardDeterministic(addrB, synapse::crypto::sha256(std::string("reward_rate_b1")), 100000));
 
+    auto hybridA = makeHybrid();
+    auto hybridB = makeHybrid();
     auto txA = createTxWithMinFee(tm, addrA, addrC, 90000, 5000);
     assert(txA.inputs.size() >= 2);
-    assert(tm.signTransaction(txA, kpA.privateKey));
+    assert(tm.signTransaction(txA, kpA.privateKey, hybridA));
     assert(tm.submitTransaction(txA));
 
     auto txB = createTxWithMinFee(tm, addrB, addrC, 90000, 4000);
     assert(txB.inputs.size() == 1);
-    assert(tm.signTransaction(txB, kpB.privateKey));
+    assert(tm.signTransaction(txB, kpB.privateKey, hybridB));
     assert(tm.submitTransaction(txB));
 
     auto pending = tm.getPending();
@@ -504,9 +524,48 @@ static void testLegacyAddressSpendCompatibility() {
     assert(tm.creditRewardDeterministic(legacyA, synapse::crypto::sha256(std::string("reward_legacy")), 100000));
 
     auto tx = createTxWithMinFee(tm, legacyA, addrB, 100);
-    assert(tm.signTransaction(tx, kpA.privateKey));
+    auto hybridA = makeHybrid();
+    assert(tm.signTransaction(tx, kpA.privateKey, hybridA));
     assert(tm.submitTransaction(tx));
     assert(tm.getPendingBalance(addrB) >= 100);
+}
+
+static void testClassicalSpendRejectedHybridAccepted() {
+    auto uniq = std::to_string(static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
+    auto tmpDir = std::filesystem::temp_directory_path() / ("synapsenet_transfer_pq_spend_" + uniq);
+    std::error_code ec;
+    std::filesystem::remove_all(tmpDir, ec);
+    std::filesystem::create_directories(tmpDir, ec);
+    std::string dbPath = (tmpDir / "transfer.db").string();
+
+    synapse::core::TransferManager tm;
+    assert(tm.open(dbPath));
+
+    auto kpA = synapse::crypto::generateKeyPair();
+    auto kpB = synapse::crypto::generateKeyPair();
+    std::string addrA = addressFromPubKey(kpA.publicKey);
+    std::string addrB = addressFromPubKey(kpB.publicKey);
+
+    synapse::crypto::Hash256 rewardId = synapse::crypto::sha256(std::string("reward_pq_spend"));
+    assert(tm.creditRewardDeterministic(addrA, rewardId, 100000));
+    auto minted = tm.getTransaction(rewardId);
+    assert(minted.inputs.empty());
+    assert(minted.quantumSignature.empty());
+
+    auto classical = createTxWithMinFee(tm, addrA, addrB, 100);
+    assert(tm.signTransaction(classical, kpA.privateKey));
+    assert(classical.quantumSignature.empty());
+    assert(!tm.submitTransaction(classical));
+
+    auto hybridA = makeHybrid();
+    auto hybridSpend = createTxWithMinFee(tm, addrA, addrB, 100);
+    assert(tm.signTransaction(hybridSpend, kpA.privateKey, hybridA));
+    assert(!hybridSpend.quantumSignature.empty());
+    auto tampered = hybridSpend;
+    assert(!tampered.quantumSignature.empty());
+    tampered.quantumSignature.back() ^= 0x5a;
+    assert(!tm.submitTransaction(tampered));
+    assert(tm.submitTransaction(hybridSpend));
 }
 
 int main() {
@@ -523,5 +582,6 @@ int main() {
     testMalformedTransactionDeserializationRejected();
     testOpenRepairsSupplyAndCounterMetadata();
     testLegacyAddressSpendCompatibility();
+    testClassicalSpendRejectedHybridAccepted();
     return 0;
 }

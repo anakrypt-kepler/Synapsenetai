@@ -4,6 +4,9 @@
 #include <mutex>
 #include <string>
 
+// Reputation band for the attached agent. FULL can submit; THROTTLED slows
+// ticks; REVIEW_ONLY / LOCAL_DRAFT_ONLY stop publishing to the network.
+
 namespace synapse::core {
 
 enum class AgentScoreBand : uint8_t {

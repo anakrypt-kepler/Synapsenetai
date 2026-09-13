@@ -66,3 +66,30 @@ captcha_dataset/
 .DS_Store
 ._*
 __MACOSX/
+
+# Editor / local operator state (never publish)
+.cursor/
+.obsidian/
+.synapsenet/
+
+# Wallets and node runtime
+wallet.dat
+**/wallet.dat
+*.cookie
+session.onion
+clearnet_cookies.txt
+
+# Desktop / Cargo / CMake output
+KeplerSynapseNet/tauri-app/src-tauri/target/
+KeplerSynapseNet/tauri-app/src-tauri/gen/
+KeplerSynapseNet/tauri-app/src-tauri/.cargo/
+KeplerSynapseNet/tauri-app/dist/
+KeplerSynapseNet/tauri-app/node_modules/
+
+# VPS helpers and secrets (local only)
+vps-ssh.py
+vps-scp.py
+known_hosts_vps
+*.pem
+id_rsa
+id_ed25519

@@ -238,22 +238,27 @@ struct OnionService::Impl {
     }
     
     bool addOnion(bool reuseKey) {
+        // Session identity: NEW key every start. DiscardPK so Tor does not echo the private key.
         std::string keySpec = "NEW:ED25519-V3";
         if (reuseKey && !privateKey.empty()) {
             keySpec = normalizeStoredPrivateKeySpec(privateKey);
         }
-        std::string cmd = "ADD_ONION " + keySpec + " Port=" +
-                          std::to_string(virtualPort) + ",127.0.0.1:" + std::to_string(targetPort);
+        const bool ephemeral = !reuseKey || privateKey.empty();
+        std::string cmd = "ADD_ONION " + keySpec;
+        if (ephemeral && keySpec.rfind("NEW:", 0) == 0) {
+            cmd += " Flags=DiscardPK";
+        }
+        cmd += " Port=" + std::to_string(virtualPort) + ",127.0.0.1:" + std::to_string(targetPort);
         std::vector<std::string> lines;
         if (!sendCommand(cmd, lines)) {
-            if (!reuseKey || privateKey.empty()) {
+            if (ephemeral) {
                 return false;
             }
             utils::Logger::warn(
-                "Stored onion private key reuse failed; rotating to a new persistent onion identity");
+                "Stored onion private key reuse failed; rotating to a new session onion identity");
             privateKey.clear();
             lines.clear();
-            cmd = "ADD_ONION NEW:ED25519-V3 Port=" +
+            cmd = "ADD_ONION NEW:ED25519-V3 Flags=DiscardPK Port=" +
                   std::to_string(virtualPort) + ",127.0.0.1:" + std::to_string(targetPort);
             if (!sendCommand(cmd, lines)) return false;
         }
@@ -274,7 +279,10 @@ struct OnionService::Impl {
         if (!newPrivateKey.empty()) {
             privateKey = newPrivateKey;
         }
-        saveState();
+        // Ephemeral session onions are not written to disk.
+        if (!ephemeral) {
+            saveState();
+        }
         return true;
     }
     
@@ -300,7 +308,17 @@ bool OnionService::start(uint16_t virtualPort, uint16_t targetPort) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     impl_->virtualPort = virtualPort;
     impl_->targetPort = targetPort;
-    if (!impl_->addOnion(true)) return false;
+    // New onion every process start. Previous hostname/key files are leftover from last session.
+    impl_->delOnion();
+    impl_->privateKey.clear();
+    impl_->serviceId.clear();
+    impl_->hostname.clear();
+    if (!impl_->serviceDir.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(impl_->serviceDir + "/private_key", ec);
+        std::filesystem::remove(impl_->serviceDir + "/hostname", ec);
+    }
+    if (!impl_->addOnion(false)) return false;
     impl_->running = true;
     impl_->lastRotation = std::time(nullptr);
     return true;

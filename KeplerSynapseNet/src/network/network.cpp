@@ -1,3 +1,6 @@
+// TCP + SOCKS5 mesh. Accept loop, outbound queue, ping/idle disconnect.
+// Tor SOCKS: offer no-auth and user/pass; Tor accepts empty user/pass (RFC 1929).
+
 #include "network/network.h"
 #include "network/scale_policy.h"
 #include <unordered_map>

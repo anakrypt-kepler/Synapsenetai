@@ -1,3 +1,6 @@
+// Knowledge index: signed Q&A entries, votes, duplicate hash, NGT reward math.
+// Persistence is a local DB; the canonical record is still the ledger event.
+
 #include "core/knowledge.h"
 #include "database/database.h"
 #include "utils/config.h"

@@ -1,6 +1,12 @@
 #ifndef SYNAPSE_PRIVACY_H
 #define SYNAPSE_PRIVACY_H
 
+// Privacy stack used by the node:
+//   Socks5Proxy     — talk to Tor (9050 managed / 9150 external+bridges)
+//   OnionService    — publish this node as a v3 hidden service
+//   Dandelion, decoy traffic, stealth addresses, mix inference
+// Fail-closed: if Tor is required and SOCKS is down, do not fall back to clearnet.
+
 #include <string>
 #include <vector>
 #include <memory>
@@ -74,18 +80,49 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// One-time dest + Pedersen C + ECDH blob. Blinding stays with the sender
+// wallet; the published tx only carries oneTime, ephemeralPub, commitment, ecdh.
+struct StealthPayment {
+    std::vector<uint8_t> oneTimeAddress;
+    std::vector<uint8_t> ephemeralPub;
+    std::vector<uint8_t> commitment;
+    std::vector<uint8_t> ecdh;
+    std::vector<uint8_t> blinding;
+};
+
 class StealthAddress {
 public:
     StealthAddress();
     ~StealthAddress();
     
     bool generateKeys();
+    bool setKeys(const std::vector<uint8_t>& viewSecret,
+                 const std::vector<uint8_t>& spendSecret);
+    bool hasKeys() const;
     std::vector<uint8_t> getViewPublicKey() const;
     std::vector<uint8_t> getSpendPublicKey() const;
     
     std::vector<uint8_t> generateOneTimeAddress(const std::vector<uint8_t>& recipientViewPub,
                                                  const std::vector<uint8_t>& recipientSpendPub,
                                                  std::vector<uint8_t>& ephemeralPub);
+    
+    bool createPayment(const std::vector<uint8_t>& recipientViewPub,
+                       const std::vector<uint8_t>& recipientSpendPub,
+                       uint64_t amountAtoms,
+                       StealthPayment& out,
+                       const std::vector<uint8_t>& recipientKyberPk = {}) const;
+    bool tryOpenPayment(const std::vector<uint8_t>& ephemeralPub,
+                        const std::vector<uint8_t>& ecdh,
+                        uint64_t& amountAtoms,
+                        std::vector<uint8_t>& blinding) const;
+
+    // ML-KEM-768 PK derived from the view scalar. Empty when kyberReal is false.
+    std::vector<uint8_t> getKyberPublicKey() const;
+
+    // HybridSig (ed25519 + ML-DSA-65) from the spend scalar. Envelope carries PKs.
+    bool signHybrid(const std::vector<uint8_t>& message, std::vector<uint8_t>& envelope) const;
+    static bool verifyHybrid(const std::vector<uint8_t>& message,
+                             const std::vector<uint8_t>& envelope);
     
     bool checkOwnership(const std::vector<uint8_t>& oneTimeAddress,
                         const std::vector<uint8_t>& ephemeralPub) const;
@@ -96,11 +133,19 @@ public:
     static bool decodeAddress(const std::string& address,
                               std::vector<uint8_t>& viewPub,
                               std::vector<uint8_t>& spendPub);
+    static bool decodeAddress(const std::string& address,
+                              std::vector<uint8_t>& viewPub,
+                              std::vector<uint8_t>& spendPub,
+                              std::vector<uint8_t>& kyberPub);
     
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+// Same KDF the desktop wallet uses. Keep this in one place.
+bool stealthKeysFromMnemonic(const std::string& mnemonic, StealthAddress& out);
+bool stealthKeysFromSecret(const std::vector<uint8_t>& secret, StealthAddress& out);
 
 enum class DandelionPhase {
     STEM,

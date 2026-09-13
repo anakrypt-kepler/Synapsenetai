@@ -1,6 +1,11 @@
 #ifndef SYNAPSE_QUANTUM_SECURITY_H
 #define SYNAPSE_QUANTUM_SECURITY_H
 
+// Hybrid post-quantum layer (liboqs). Classical sizes above are Kyber-768 /
+// Dilithium-3 / SPHINCS+-128s. Handshake combiner is in network/handshake.cpp
+// (label "synapse-handshake-session-key-v2"). Simulated/hash fallbacks were
+// removed: if liboqs is missing, cmake should fail rather than fake PQ.
+
 #include <string>
 #include <vector>
 #include <memory>

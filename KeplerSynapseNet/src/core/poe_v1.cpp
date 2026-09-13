@@ -1,3 +1,7 @@
+// Deterministic PoE helpers. If two nodes canonicalize differently, they will
+// disagree on novelty and votes will split. Do not "improve" whitespace rules
+// without a protocol version bump.
+
 #include "core/poe_v1.h"
 #include <algorithm>
 #include <cctype>
@@ -8,6 +12,7 @@
 
 namespace synapse::core::poe_v1 {
 
+// Prose: drop CR, collapse any whitespace to one space, lowercase ASCII.
 std::string canonicalizeText(const std::string& input) {
     std::string out;
     out.reserve(input.size());
@@ -33,6 +38,7 @@ std::string canonicalizeText(const std::string& input) {
     return out;
 }
 
+// Patches: keep bytes as-is except strip CR so Windows/Unix diffs match.
 std::string canonicalizeCode(const std::string& input) {
     std::string out;
     out.reserve(input.size());
@@ -74,6 +80,7 @@ static uint64_t readU64BE(const uint8_t* p) {
     return v;
 }
 
+// 64-bit SimHash over tokens. Hamming distance vs existing entries = novelty.
 uint64_t simhash64(const std::string& canonicalText) {
     if (canonicalText.empty()) return 0;
 

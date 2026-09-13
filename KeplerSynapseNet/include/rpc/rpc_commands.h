@@ -1,5 +1,9 @@
 #pragma once
 
+// JSON-RPC method table. Each handleRpc* is implemented in src/rpc/*.cpp and
+// registered on the HTTP/RPC server (default 8332, often over Tor).
+// Desktop calls the same methods through libsynapsed FFI, not this HTTP port.
+
 #include <string>
 
 namespace synapse::web {

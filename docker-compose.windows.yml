@@ -1,0 +1,8 @@
+# Linux image on a Windows Docker Desktop host (linux/amd64).
+# docker compose -f docker-compose.yml -f docker-compose.windows.yml up --build
+# Or skip Compose: KeplerSynapseNet/docker/windows/up.ps1
+services:
+  synapsenet:
+    platform: linux/amd64
+  tor:
+    platform: linux/amd64

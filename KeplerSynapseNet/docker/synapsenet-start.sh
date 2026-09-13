@@ -3,14 +3,14 @@ set -eu
 
 CONF=/data/synapsenet.conf
 NAAN_WEB_CONF=/data/naan_agent_web.conf
-PRIVACY="${SYNAPSENET_PRIVACY:-false}"
+PRIVACY="${SYNAPSENET_PRIVACY:-true}"
 TOR_MODE="${SYNAPSENET_TOR_MODE:-external}"
-TOR_REQUIRED="${SYNAPSENET_TOR_REQUIRED:-false}"
-ALLOW_CLEARNET_FALLBACK="${SYNAPSENET_ALLOW_CLEARNET_FALLBACK:-true}"
-ALLOW_P2P_CLEARNET_FALLBACK="${SYNAPSENET_ALLOW_P2P_CLEARNET_FALLBACK:-true}"
-FORCE_CLEARNET_NAAN="${SYNAPSENET_FORCE_CLEARNET_NAAN:-true}"
+TOR_REQUIRED="${SYNAPSENET_TOR_REQUIRED:-true}"
+ALLOW_CLEARNET_FALLBACK="${SYNAPSENET_ALLOW_CLEARNET_FALLBACK:-false}"
+ALLOW_P2P_CLEARNET_FALLBACK="${SYNAPSENET_ALLOW_P2P_CLEARNET_FALLBACK:-false}"
+FORCE_CLEARNET_NAAN="${SYNAPSENET_FORCE_CLEARNET_NAAN:-false}"
 NAAN_CLEARNET_ENGINES="${SYNAPSENET_NAAN_CLEARNET_ENGINES:-duckduckgo,brave}"
-NAAN_AUTO_SEARCH_MODE="${SYNAPSENET_NAAN_AUTO_SEARCH_MODE:-clearnet}"
+NAAN_AUTO_SEARCH_MODE="${SYNAPSENET_NAAN_AUTO_SEARCH_MODE:-tor}"
 NAAN_AUTO_SEARCH_QUERIES="${SYNAPSENET_NAAN_AUTO_SEARCH_QUERIES:-latest space engineering research,latest ai research papers,open source systems engineering best practices}"
 NAAN_AUTO_SEARCH_MAX_RESULTS="${SYNAPSENET_NAAN_AUTO_SEARCH_MAX_RESULTS:-4}"
 NAAN_AUTOMINING="${SYNAPSENET_NAAN_AUTOMINING:-true}"
@@ -59,7 +59,7 @@ POE_SELF_BOOTSTRAP_STRICT_VALIDATOR_COUNT="${SYNAPSENET_POE_SELF_BOOTSTRAP_STRIC
 POE_SELF_BOOTSTRAP_ACTIVATION_CHECKS="${SYNAPSENET_POE_SELF_BOOTSTRAP_ACTIVATION_CHECKS:-5}"
 POE_SELF_BOOTSTRAP_FORCE_ALLOW_UNTIL="${SYNAPSENET_POE_SELF_BOOTSTRAP_FORCE_ALLOW_UNTIL:-0}"
 FORCE_DAEMON="${SYNAPSENET_DAEMON:-false}"
-FORCE_DAEMON_IF_NO_TTY="${SYNAPSENET_FORCE_DAEMON_IF_NO_TTY:-false}"
+FORCE_DAEMON_IF_NO_TTY="${SYNAPSENET_FORCE_DAEMON_IF_NO_TTY:-true}"
 ADDNODE="${SYNAPSENET_ADDNODE:-}"
 TOR_HOST="${SYNAPSENET_TOR_HOST:-tor}"
 TOR_SOCKS_PORT="${SYNAPSENET_TOR_SOCKS_PORT:-9050}"
@@ -205,6 +205,30 @@ if [ "${FORCE_CLEARNET_NAAN}" = "true" ]; then
     echo "clearnet_engines=${NAAN_CLEARNET_ENGINES}"
     echo "route_clearnet_through_tor=false"
     echo "naan_force_tor_mode=false"
+  if [ "${NAAN_AUTOMINING}" = "true" ]; then
+    echo "naan_auto_search_enabled=true"
+    echo "naan_auto_search_mode=${NAAN_AUTO_SEARCH_MODE}"
+    echo "naan_auto_search_queries=${NAAN_AUTO_SEARCH_QUERIES}"
+    echo "naan_auto_search_max_results=${NAAN_AUTO_SEARCH_MAX_RESULTS}"
+  else
+    echo "naan_auto_search_enabled=false"
+  fi
+  } >> "$NAAN_WEB_CONF"
+else
+  # Privacy default: do not leave a stale lab clearnet file in the volume.
+  touch "$NAAN_WEB_CONF"
+  sed -i \
+    -e '/^clearnet_engines=/d' \
+    -e '/^route_clearnet_through_tor=/d' \
+    -e '/^naan_force_tor_mode=/d' \
+    -e '/^naan_auto_search_enabled=/d' \
+    -e '/^naan_auto_search_mode=/d' \
+    -e '/^naan_auto_search_queries=/d' \
+    -e '/^naan_auto_search_max_results=/d' \
+    "$NAAN_WEB_CONF"
+  {
+    echo "route_clearnet_through_tor=true"
+    echo "naan_force_tor_mode=true"
     if [ "${NAAN_AUTOMINING}" = "true" ]; then
       echo "naan_auto_search_enabled=true"
       echo "naan_auto_search_mode=${NAAN_AUTO_SEARCH_MODE}"
@@ -217,6 +241,7 @@ if [ "${FORCE_CLEARNET_NAAN}" = "true" ]; then
 fi
 
 set -- /app/synapsed -D /data
+export SYNAPSENET_NO_FORK="${SYNAPSENET_NO_FORK:-true}"
 if [ "${PRIVACY}" = "true" ]; then
   set -- "$@" --privacy
 fi

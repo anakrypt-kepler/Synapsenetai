@@ -77,22 +77,16 @@ SynapseNet is in active development, but the network is already running and you 
   <a href="http://4wt2yuebbtjosbptzje4qqicq6do4cegeoo63mdffommq7pe65movwqd.onion"><img src="https://img.shields.io/badge/Tor_Mirror-000000?style=for-the-badge&logo=torproject&logoColor=white" alt="Tor Mirror" /></a>
 </p>
 
-**Seed nodes (Tor hidden services):**
+**Peer discovery:**
 
-| Node | Onion Address | Port |
-|------|--------------|------|
-| Seed 1 | `nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion` | 8333 |
-| Seed 2 | `ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion` | 8333 |
-
-Nodes that build from source auto-discover these seeds — no manual config needed. To connect manually:
+There are no baked-in seed onions. Peers come from `network.seed_nodes` / `--seednode` (optional) and from peer exchange over Tor.
 
 ```bash
-./synapsed --daemon --privacy --port 8333 \
-  --seednode nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion:8333 \
-  --seednode ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion:8333
+./synapsed --daemon --privacy --port 8333
+# optional: --seednode HOST:PORT
 ```
 
-Both nodes run `synapsed v0.1.0-V9` with Tor-only routing, privacy mode, and auto-discovery enabled. The network is open — build from source and join automatically via Tor.
+Routing is Tor-only when `agent.tor.required=true`. Add your own bootstrap peers in `~/.synapsenet/synapsenet.conf` if you have them.
 
 ### Network Status
 
@@ -105,21 +99,30 @@ The blockchain is live and producing blocks. Validators are up, consensus is run
   <img src="https://img.shields.io/badge/RPC-Open-000000?style=for-the-badge&labelColor=000000" alt="RPC Open" />
 </p>
 
-- PoE validators are active on both seed nodes — blocks are mined when events are submitted
-- Block data is accessible via RPC (`blocks.list`, `blocks.get`) over Tor hidden services on port 8332
-- Desktop nodes auto-sync the full chain from seed validators over Tor SOCKS5
+- PoE validators produce blocks when knowledge events are submitted
+- Block data is accessible via RPC (`blocks.list`, `blocks.get`)
+- Desktop nodes sync over Tor SOCKS5 when bootstrap peers are configured
 - NAAN agents produce knowledge events that get included in new blocks
 - NGT rewards are distributed to producers on every accepted submission
 
-**Anyone can join.** Build the desktop app, connect to the seed nodes, and your node will sync the chain and start mining automatically.
+**Anyone can join.** Build the desktop app; the node mines locally and talks to peers you configure.
 
 ### How to Join
 
 > **Build the desktop app (Tauri), not the terminal daemon.** The standalone `synapsed` CLI binary is legacy and no longer receives feature updates. All active development targets the desktop application with the Svelte frontend and `libsynapsed` shared library.
 
-**Supported platforms:** macOS (recommended), Linux. Windows is not tested.
+**Supported platforms:** macOS (recommended), Linux. Windows: WSL2, or Docker Desktop building the Linux image.
 
-**Requirements:**
+**Linux Lego (fetch everything, then build):**
+
+```bash
+./scripts/lego-linux.sh
+# or: KeplerSynapseNet/scripts/lego-linux.sh --help
+```
+
+Numbered steps: toolchain, C libraries into `~/.local`, Node, Rust, Tor expert bundle, WebKitGTK sysroot, cmake, tests, desktop. The script will not sudo. If you have no C++ compiler, it stops and prints the distro command.
+
+**Requirements (if you build by hand):**
 - Rust + Cargo (for Tauri)
 - Node.js + npm (for Svelte frontend)
 - CMake + C++17 compiler (for libsynapsed)
@@ -500,11 +503,25 @@ cmake --build KeplerSynapseNet/build --parallel $(nproc)
 
 ## Docker
 
+Default compose is Tor + privacy (no clearnet fallback).
+
 ```bash
 docker compose up --build
 ```
 
-See [DOCKER.md](KeplerSynapseNet/DOCKER.md) for configuration.
+Local lab (clearnet, self-bootstrap, **not private**):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+Windows Docker Desktop (still a Linux image):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.windows.yml up --build
+```
+
+See [DOCKER.md](KeplerSynapseNet/DOCKER.md). Kepler's Windows notes: `KeplerSynapseNet/docker/windows/KEPLER_WRITE_THIS.txt`.
 
 ---
 

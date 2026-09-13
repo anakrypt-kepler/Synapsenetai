@@ -1,0 +1,10 @@
+{
+  "identifier": "default",
+  "description": "Main window: core IPC plus native file dialogs (avatar, GGUF, wallet import).",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "shell:allow-open"
+  ]
+}

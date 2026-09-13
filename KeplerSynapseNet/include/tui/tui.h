@@ -1,5 +1,9 @@
 #pragma once
 
+// ncurses TUI for synapsed (servers / SSH). Desktop users should use tauri-app.
+// Screen enum is the router: keys in tui.cpp switch these. HARVEST and EXPLOITS
+// were added in V7/V9. Snapshots for tests are built in tui_snapshot_builder.cpp.
+
 #include <string>
 #include <vector>
 #include <functional>

@@ -1,3 +1,7 @@
+// NAAN sandbox internals: allowlist capabilities, keep paths inside the
+// workspace, deny secret-looking names, enforce tool JSON schema + size.
+// authorize() is the one call site tools must go through before doing I/O.
+
 #include "core/agent_runtime.h"
 
 #include <algorithm>
@@ -28,6 +32,7 @@ static std::string toLowerCopy(const std::string& in) {
     return out;
 }
 
+// Resolve relative paths against workspaceRoot and weakly-canonicalize.
 static fs::path normalizePath(const fs::path& path, const fs::path& base) {
     std::error_code ec;
     fs::path p = path;

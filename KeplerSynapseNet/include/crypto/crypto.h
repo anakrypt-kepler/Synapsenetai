@@ -1,5 +1,11 @@
 #pragma once
 
+// Classical crypto used everywhere else in the node.
+// Hash: SHA-256 (and RIPEMD-160 for address-style hash160).
+// Keys: secp256k1 compressed pubkeys (33 bytes). Signatures: 64 bytes.
+// AES helpers are for small blobs, not the wallet (wallet uses GCM in wallet.cpp).
+// Post-quantum algorithms live in include/quantum/, not here.
+
 #include <string>
 #include <vector>
 #include <array>

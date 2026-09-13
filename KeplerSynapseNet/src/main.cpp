@@ -16,6 +16,8 @@
 namespace synapse {
 
 void signalHandler(int signal) {
+    // First Ctrl+C / SIGTERM: request a clean stop. Daemon ignores SIGHUP for
+    // stop (that reloads config); interactive TUI treats SIGHUP as shutdown too.
     if (signal == SIGINT || signal == SIGTERM
 #ifndef _WIN32
         || (!g_daemonMode && signal == SIGHUP)
@@ -49,6 +51,9 @@ void printBanner() {
 
 } // namespace synapse
 
+// synapsed entry point.
+// Parse flags → data dir (~/.synapsenet) → optional daemonize → single-instance
+// lock → initializeSynapseNet() → TUI/daemon loop or one-shot CLI command.
 int main(int argc, char* argv[]) {
     synapse::registerSignalHandlers(synapse::signalHandler);
 
@@ -94,7 +99,12 @@ int main(int argc, char* argv[]) {
     }
 
     if (config.daemon) {
-        synapse::daemonize();
+        // Docker/PID1: -d means "no TUI", not double-fork (that exits the container).
+        const char* noFork = std::getenv("SYNAPSENET_NO_FORK");
+        const bool skipFork = noFork && (std::string(noFork) == "1" || std::string(noFork) == "true");
+        if (!skipFork) {
+            synapse::daemonize();
+        }
     }
 
     if (config.cli) {

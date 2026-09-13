@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 
+// Drain the draft queue into poe.submit. Batch size and reviewer count are
+// the spam/quality brakes before a draft becomes a chain event.
+
 namespace synapse::core {
 
 struct AgentSubmissionPipelineConfig {

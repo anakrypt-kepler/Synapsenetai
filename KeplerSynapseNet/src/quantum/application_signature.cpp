@@ -1,3 +1,5 @@
+// Encode/verify the KQAS envelope. Domain string is part of the signed transcript.
+
 #include "quantum/application_signature.h"
 #include "crypto/crypto.h"
 #include <cstring>

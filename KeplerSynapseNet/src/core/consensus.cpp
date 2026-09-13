@@ -1,3 +1,6 @@
+// Validator votes around ledger events. Deterministic proposer, persisted
+// validator set + results so a restart does not lose an in-flight epoch.
+
 #include "core/consensus.h"
 #include "database/database.h"
 #include "quantum/application_signature.h"

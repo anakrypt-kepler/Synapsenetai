@@ -1,3 +1,6 @@
+// Load a GGUF into llama.cpp. Sleep inhibitor keeps the laptop awake while
+// inferencing. Unload before swapping models — two models will OOM a 8 GB box.
+
 #include "model/model_loader.h"
 #include "model/model_inference.h"
 #include "utils/sleep_inhibitor.h"

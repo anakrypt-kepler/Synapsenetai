@@ -29,7 +29,7 @@
     letter-spacing: 0.5px;
     color: var(--text-secondary);
     background: none;
-    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    transition: color var(--dur-fast) var(--ease-fast), border-color var(--dur-fast) var(--ease-fast), background var(--dur-fast) var(--ease-fast);
   }
 
   .theme-toggle:hover {

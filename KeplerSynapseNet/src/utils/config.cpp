@@ -49,8 +49,8 @@ bool Config::loadDefaults() {
     set("network.max_inbound", 100);
     set("network.max_outbound", 25);
     set("network.connection_timeout", 5000);
-    set("network.enable_upnp", true);
-    set("network.enable_natpmp", true);
+    set("network.enable_upnp", false);
+    set("network.enable_natpmp", false);
     set("network.discovery.bootstrap_quarantine_seconds", 600);
     set("network.scale.adaptive_admission", true);
     set("network.scale.deterministic_eviction", true);
@@ -378,8 +378,8 @@ NetworkConfig Config::getNetworkConfig() const {
     cfg.maxInbound = getInt("network.max_inbound", 100);
     cfg.maxOutbound = getInt("network.max_outbound", 25);
     cfg.connectionTimeout = getInt("network.connection_timeout", 5000);
-    cfg.enableUpnp = getBool("network.enable_upnp", true);
-    cfg.enableNatPmp = getBool("network.enable_natpmp", true);
+    cfg.enableUpnp = getBool("network.enable_upnp", false);
+    cfg.enableNatPmp = getBool("network.enable_natpmp", false);
     cfg.seedNodes = getList("network.seed_nodes");
     cfg.connectOnly = getList("network.connect_only");
     return cfg;

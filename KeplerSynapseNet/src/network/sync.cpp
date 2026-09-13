@@ -1,3 +1,5 @@
+// Block/header sync with peers. Prunes receivedBlocks to the last 1000 heights.
+
 #include "network/network.h"
 #include "crypto/crypto.h"
 #include <cstring>

@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 
+// Segmented on-disk log of agent artifacts (drafts, harvest JSON).
+// Rotation by maxSegments * maxSegmentBytes. Not the SQLite chain DB.
+
 namespace synapse::core {
 
 struct AgentStorageAuditPolicy {

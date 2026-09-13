@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, State};
 
+// Tauri commands the Svelte UI invokes. Most of them forward into libsynapsed.
+// Config lives in ~/.synapsenet/config.toml — missing file = first-launch wizard.
+
 pub struct EngineState {
     pub initialized: Mutex<bool>,
 }
@@ -63,13 +66,17 @@ pub fn synapsed_shutdown(state: State<'_, EngineState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn synapsed_rpc_call(method: String, params: String) -> Result<String, String> {
-    ffi::rpc_call(&method, &params)
+pub async fn synapsed_rpc_call(method: String, params: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || ffi::rpc_call(&method, &params))
+        .await
+        .map_err(|e| format!("rpc worker: {e}"))?
 }
 
 #[tauri::command]
-pub fn synapsed_get_status() -> Result<String, String> {
-    ffi::get_status()
+pub async fn synapsed_get_status() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(ffi::get_status)
+        .await
+        .map_err(|e| format!("status worker: {e}"))?
 }
 
 static EVENT_APP_HANDLE: once_cell::sync::OnceCell<AppHandle> = once_cell::sync::OnceCell::new();
@@ -144,7 +151,12 @@ pub fn save_setup_config(config: SetupConfig) -> Result<(), String> {
         }
     }
     content.push_str("\n[connection]\n");
-    content.push_str(&format!("type = \"{}\"\n", config.connection_type));
+    let conn = if config.connection_type == "tor_bridges" {
+        "tor_bridges"
+    } else {
+        "tor"
+    };
+    content.push_str(&format!("type = \"{}\"\n", conn));
     if let Some(ref bridges) = config.bridge_lines {
         if !bridges.is_empty() {
             content.push_str(&format!("bridge_lines = \"\"\"\n{}\n\"\"\"\n", bridges));
@@ -208,8 +220,53 @@ pub fn get_system_info() -> Result<SystemInfo, String> {
     })
 }
 
+fn nvidia_smi_gpus() -> Vec<GpuDevice> {
+    let bins = [
+        "nvidia-smi",
+        "/usr/bin/nvidia-smi",
+        "/usr/local/bin/nvidia-smi",
+        "/usr/local/cuda/bin/nvidia-smi",
+    ];
+    for bin in bins {
+        let Ok(output) = std::process::Command::new(bin)
+            .args([
+                "--query-gpu=index,name,memory.total",
+                "--format=csv,noheader,nounits",
+            ])
+            .output()
+        else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut devices = Vec::new();
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+            if parts.len() >= 2 {
+                let vram = if parts.len() >= 3 {
+                    parts[2].parse::<u64>().unwrap_or(0)
+                } else {
+                    0
+                };
+                devices.push(GpuDevice {
+                    id: format!("nvidia:{}", parts[0]),
+                    name: parts[1].to_string(),
+                    vram_mb: vram,
+                });
+            }
+        }
+        if !devices.is_empty() {
+            return devices;
+        }
+    }
+    Vec::new()
+}
+
 fn detect_gpu_devices() -> Vec<GpuDevice> {
-    let mut devices = Vec::new();
+    let mut devices = nvidia_smi_gpus();
+    let has_nvidia = !devices.is_empty();
 
     #[cfg(target_os = "linux")]
     {
@@ -221,19 +278,19 @@ fn detect_gpu_devices() -> Vec<GpuDevice> {
                 }
                 let device_path = entry.path().join("device");
                 let vendor_path = device_path.join("vendor");
-                let gpu_name = if vendor_path.exists() {
-                    let vendor = std::fs::read_to_string(&vendor_path)
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string();
-                    match vendor.as_str() {
-                        "0x10de" => format!("NVIDIA GPU ({})", name),
-                        "0x1002" => format!("AMD GPU ({})", name),
-                        "0x8086" => format!("Intel GPU ({})", name),
-                        _ => format!("GPU ({})", name),
-                    }
-                } else {
-                    format!("GPU ({})", name)
+                let vendor = std::fs::read_to_string(&vendor_path)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                if has_nvidia && vendor == "0x10de" {
+                    continue;
+                }
+                let gpu_name = match vendor.as_str() {
+                    "0x10de" => format!("NVIDIA GPU ({})", name),
+                    "0x1002" => format!("AMD GPU ({})", name),
+                    "0x8086" => format!("Intel GPU ({})", name),
+                    "" => format!("GPU ({})", name),
+                    _ => format!("GPU ({})", name),
                 };
 
                 let vram = detect_gpu_vram(&device_path);
@@ -243,28 +300,6 @@ fn detect_gpu_devices() -> Vec<GpuDevice> {
                     name: gpu_name,
                     vram_mb: vram,
                 });
-            }
-        }
-
-        if devices.is_empty() {
-            if let Ok(output) = std::process::Command::new("nvidia-smi")
-                .args(["--query-gpu=index,name,memory.total", "--format=csv,noheader,nounits"])
-                .output()
-            {
-                if output.status.success() {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    for line in stdout.lines() {
-                        let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
-                        if parts.len() >= 3 {
-                            let vram = parts[2].parse::<u64>().unwrap_or(0);
-                            devices.push(GpuDevice {
-                                id: format!("nvidia:{}", parts[0]),
-                                name: parts[1].to_string(),
-                                vram_mb: vram,
-                            });
-                        }
-                    }
-                }
             }
         }
     }

@@ -93,7 +93,7 @@ public:
     InferenceResult getResult(const std::string& requestId);
     InferenceStatus getStatus(const std::string& requestId);
 
-    bool loadModel(const std::string& modelId, const std::string& path);
+    bool loadModel(const std::string& modelId, const std::string& path, int nGpuLayers = 0);
     bool unloadModel(const std::string& modelId);
     bool isModelLoaded(const std::string& modelId);
 

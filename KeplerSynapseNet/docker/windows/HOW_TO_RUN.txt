@@ -1,0 +1,29 @@
+HOW TO RUN SYNAPSENET IN DOCKER ON WINDOWS
+==========================================
+
+This is a Linux container. Docker Desktop on Windows runs it through
+WSL2. It is not a Windows .exe.
+
+Need: Docker Desktop, WSL2 backend enabled, 8 GB+ RAM for the first build.
+
+From PowerShell, repo root:
+
+  .\KeplerSynapseNet\docker\windows\up.ps1
+
+That builds linux/amd64, starts Tor + the node, Tor required, no clearnet
+fallback.
+
+Equivalent by hand:
+
+  docker build -t keplersynapsenet:local KeplerSynapseNet
+  docker network create synapsenet-net
+  docker run -d --name synapsenet-tor --network synapsenet-net --entrypoint /usr/bin/tor keplersynapsenet:local --SocksPort 0.0.0.0:9050 --ControlPort 127.0.0.1:9051 --DataDirectory /tmp/tor-data --Log "notice stdout"
+  docker run -d --name synapsenet-node --network synapsenet-net -p 8332:8332 -p 8333:8333 -e SYNAPSENET_PRIVACY=true -e SYNAPSENET_TOR_REQUIRED=true -e SYNAPSENET_TOR_HOST=synapsenet-tor -e SYNAPSENET_ALLOW_CLEARNET_FALLBACK=false keplersynapsenet:local
+
+If Docker Desktop has Compose:
+
+  docker compose -f docker-compose.yml -f docker-compose.windows.yml up --build
+
+Kepler's own notes (his voice): docker/windows/KEPLER_WRITE_THIS.txt
+
+Tor inside the container is a standalone daemon. Not Tor Browser.

@@ -331,7 +331,7 @@ std::string handleRpcPoeSubmit(const std::string& paramsJson) {
     uint64_t credited = 0;
     if (submitRes.finalized && submitRes.acceptanceReward > 0) {
         crypto::Hash256 rewardId = node::rewardIdForAcceptance(submitRes.submitId);
-        if (transfer_->creditRewardDeterministic(authorAddr, rewardId, submitRes.acceptanceReward)) {
+        if (creditPoeReward(authorPub, rewardId, submitRes.acceptanceReward)) {
             credited = submitRes.acceptanceReward;
         }
     }
@@ -609,8 +609,8 @@ std::string handleRpcPoeFinalize(const std::string& paramsJson) {
         std::string addr = addressFromPubKey(alloc.authorPubKey);
         crypto::Hash256 rid = node::rewardIdForEpoch(epochRes.epochId, alloc.contentId);
         bool credited = false;
-        if (creditRewards && !addr.empty()) {
-            if (transfer_->creditRewardDeterministic(addr, rid, alloc.amount)) {
+        if (creditRewards) {
+            if (creditPoeReward(alloc.authorPubKey, rid, alloc.amount)) {
                 credited = true;
                 mintedTotal += alloc.amount;
                 mintedCount += 1;

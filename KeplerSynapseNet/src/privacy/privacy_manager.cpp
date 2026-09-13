@@ -1,3 +1,6 @@
+// Facade that owns SOCKS, onion, Dandelion, stealth, decoy, amnesia, mix.
+// privacyMode=true means fail-closed Tor: no clearnet if SOCKS is down.
+
 #include "privacy/privacy.h"
 #include <mutex>
 

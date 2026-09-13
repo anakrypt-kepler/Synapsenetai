@@ -1,3 +1,5 @@
+// Parse `ps` output and keep only Tor processes we started (managed data dir).
+
 #include "core/tor_process_guard.h"
 
 #include <algorithm>

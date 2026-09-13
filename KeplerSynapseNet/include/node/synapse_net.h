@@ -1,5 +1,10 @@
 #pragma once
 
+// Node process facade used by main.cpp.
+// Real work lives in synapse_net.cpp: config, DB, crypto, P2P, PoE, NAAN,
+// privacy, RPC, then the run loop (TUI or daemon).
+// g_running / g_shutdownSignal are the global stop flags (SIGINT/SIGTERM).
+
 #include "node/node_config.h"
 #include <memory>
 #include <string>

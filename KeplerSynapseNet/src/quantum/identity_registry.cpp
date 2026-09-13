@@ -1,3 +1,5 @@
+// Load/save identities.json. TOFU: first hybrid sig from an address wins.
+
 #include "quantum/identity_registry.h"
 #include "quantum/application_signature.h"
 #include <filesystem>

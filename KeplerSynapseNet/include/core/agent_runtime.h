@@ -1,5 +1,12 @@
 #pragma once
 
+// NAAN sandbox: what the node-attached agent is allowed to do.
+// Capabilities are an allowlist. Path checks keep tools inside workspaceRoot
+// and block secret filenames. Tool schema rules cap payload size and require
+// an explicit side-effect flag before writes/installs.
+// This is the safety layer in front of fetch/bash/write tools, not the miner loop.
+// The mining loop itself lives in ide/synapsed_engine.cpp (naanLoop).
+
 #include <cstdint>
 #include <mutex>
 #include <string>

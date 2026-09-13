@@ -23,8 +23,9 @@
       value: files[activeFileIndex]?.content || "",
       language: files[activeFileIndex]?.language || "plaintext",
       theme: getMonacoTheme(),
-      fontFamily: "'JetBrains Mono', monospace",
+      fontFamily: 'ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
       fontSize: 13,
+      fontLigatures: false,
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
       renderWhitespace: "none",
@@ -157,52 +158,62 @@
     flex-direction: column;
     height: 100%;
     border: 1px solid var(--border);
+    border-radius: var(--radius, 14px);
+    overflow: hidden;
+    font-family: var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    image-rendering: auto;
   }
 
   .file-tabs {
     display: flex;
+    gap: 6px;
+    padding: 8px 10px;
     background: var(--surface);
+    backdrop-filter: blur(22px) saturate(140%);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
     flex-shrink: 0;
   }
 
   .file-tab {
-    padding: 6px 14px;
-    font-size: 11px;
-    border: none;
-    border-radius: 0;
-    border-right: 1px solid var(--border);
+    padding: 6px 12px;
+    font-family: inherit;
+    font-size: 12px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm, 10px);
     color: var(--text-secondary);
     background: none;
     white-space: nowrap;
     position: relative;
-    transition: color 0.15s ease, background 0.15s ease;
+    letter-spacing: 0;
+    image-rendering: auto;
+    transition:
+      color var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
+      background var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
+      border-color var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1));
   }
 
   .file-tab:hover {
     color: var(--text-primary);
-    background: var(--surface-alt);
+    background: var(--accent-muted);
   }
 
   .file-tab.active {
     color: var(--text-primary);
-    background: var(--bg);
-    border-right: 1px solid var(--border);
+    background: var(--accent-muted);
+    border-color: var(--border);
   }
 
   .file-tab.active::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: var(--accent);
+    display: none;
   }
 
   .editor-container {
     flex: 1;
     min-height: 0;
+    background: #000000;
   }
 </style>

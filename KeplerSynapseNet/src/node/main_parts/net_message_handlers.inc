@@ -1125,6 +1125,67 @@
         network_->send(peerId, reply);
     }
 
+    bool fillOwnStealthAddress(privacy::StealthAddress& sa) {
+        if (!keys_ || !keys_->isValid()) return false;
+        std::ifstream mf(config_.dataDir + "/wallet.mnemonic");
+        std::string mnemonic;
+        if (mf.good()) std::getline(mf, mnemonic);
+        if (!mnemonic.empty() && privacy::stealthKeysFromMnemonic(mnemonic, sa)) {
+            sodium_memzero(const_cast<char*>(mnemonic.data()), mnemonic.size());
+            return true;
+        }
+        if (!mnemonic.empty()) sodium_memzero(const_cast<char*>(mnemonic.data()), mnemonic.size());
+        auto pkv = keys_->getPrivateKey();
+        std::vector<uint8_t> secret(pkv.data(), pkv.data() + pkv.size());
+        bool ok = privacy::stealthKeysFromSecret(secret, sa);
+        sodium_memzero(secret.data(), secret.size());
+        return ok;
+    }
+
+    void appendOwnPrivateOutput(const privacy::OwnedOutput& owned) {
+        if (owned.oneTime.size() != 32 || owned.amountAtoms == 0) return;
+        nlohmann::json j;
+        j["P"] = crypto::toHex(owned.oneTime);
+        j["R"] = crypto::toHex(owned.ephemeralPub);
+        j["spend"] = crypto::toHex(owned.spendScalar);
+        j["C"] = crypto::toHex(owned.commitment);
+        j["blind"] = crypto::toHex(owned.blinding);
+        j["atoms"] = owned.amountAtoms;
+        j["spent"] = owned.spent;
+        const std::string path = config_.dataDir + "/private_utxo.jsonl";
+        std::ofstream f(path, std::ios::app);
+        if (!f.good()) return;
+        f << j.dump() << "\n";
+        f.close();
+#ifndef _WIN32
+        ::chmod(path.c_str(), S_IRUSR | S_IWUSR);
+#endif
+    }
+
+    bool creditPoeReward(const crypto::PublicKey& author, const crypto::Hash256& rewardId, uint64_t amount) {
+        if (!transfer_ || amount == 0) return false;
+        const bool existed = transfer_->hasTransaction(rewardId);
+        if (!existed && !transfer_->creditRewardConfidential(author, rewardId, amount)) {
+            return false;
+        }
+        if (!keys_ || !keys_->isValid()) return !existed;
+        auto pubV = keys_->getPublicKey();
+        if (pubV.size() != author.size()) return !existed;
+        if (std::memcmp(pubV.data(), author.data(), author.size()) != 0) return !existed;
+
+        privacy::StealthAddress sa;
+        if (!fillOwnStealthAddress(sa)) return !existed;
+        auto pkv = keys_->getPrivateKey();
+        crypto::PrivateKey sk{};
+        if (pkv.size() != sk.size()) return !existed;
+        std::memcpy(sk.data(), pkv.data(), sk.size());
+        privacy::OwnedOutput owned;
+        const bool claimed = transfer_->claimMintToStealth(rewardId, sk, sa, &owned);
+        sodium_memzero(sk.data(), sk.size());
+        if (claimed) appendOwnPrivateOutput(owned);
+        return !existed;
+    }
+
     uint64_t maybeCreditAcceptanceReward(const crypto::Hash256& submitId) {
         if (!poeV1_ || !transfer_) return 0;
 
@@ -1141,7 +1202,7 @@
         if (amount == 0) return 0;
 
         crypto::Hash256 rewardId = node::rewardIdForAcceptance(submitId);
-        if (transfer_->creditRewardDeterministic(addr, rewardId, amount)) {
+        if (creditPoeReward(entry->authorPubKey, rewardId, amount)) {
             return amount;
         }
         return 0;
@@ -1215,9 +1276,8 @@
         uint64_t mintedCount = 0;
         for (const auto& a : epochRes.allocations) {
             std::string addr = addressFromPubKey(a.authorPubKey);
-            if (addr.empty()) continue;
             crypto::Hash256 rid = node::rewardIdForEpoch(epochRes.epochId, a.contentId);
-            if (transfer_->creditRewardDeterministic(addr, rid, a.amount)) {
+            if (creditPoeReward(a.authorPubKey, rid, a.amount)) {
                 mintedTotal += a.amount;
                 mintedCount += 1;
                 if (!address_.empty() && addr == address_) mintedMine += a.amount;
@@ -1410,9 +1470,8 @@
         uint64_t mintedCount = 0;
         for (const auto& a : stored->allocations) {
             std::string addr = addressFromPubKey(a.authorPubKey);
-            if (addr.empty()) continue;
             crypto::Hash256 rid = node::rewardIdForEpoch(stored->epochId, a.contentId);
-            if (transfer_->creditRewardDeterministic(addr, rid, a.amount)) {
+            if (creditPoeReward(a.authorPubKey, rid, a.amount)) {
                 mintedCount += 1;
                 if (!address_.empty() && addr == address_) {
                     mintedMine += a.amount;

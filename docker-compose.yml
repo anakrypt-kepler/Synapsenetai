@@ -1,6 +1,5 @@
 services:
   tor:
-    profiles: ["tor"]
     build:
       context: ./KeplerSynapseNet
       dockerfile: Dockerfile
@@ -41,16 +40,16 @@ services:
       - synapsenet_data:/data
     environment:
       TERM: xterm-256color
-      SYNAPSENET_PRIVACY: "false"
+      SYNAPSENET_PRIVACY: "true"
       SYNAPSENET_TOR_MODE: "external"
-      SYNAPSENET_TOR_REQUIRED: "false"
-      SYNAPSENET_TOR_HOST: "127.0.0.1"
-      SYNAPSENET_ALLOW_CLEARNET_FALLBACK: "true"
-      SYNAPSENET_ALLOW_P2P_CLEARNET_FALLBACK: "true"
-      SYNAPSENET_FORCE_CLEARNET_NAAN: "true"
+      SYNAPSENET_TOR_REQUIRED: "true"
+      SYNAPSENET_TOR_HOST: "tor"
+      SYNAPSENET_ALLOW_CLEARNET_FALLBACK: "false"
+      SYNAPSENET_ALLOW_P2P_CLEARNET_FALLBACK: "false"
+      SYNAPSENET_FORCE_CLEARNET_NAAN: "false"
       SYNAPSENET_NAAN_CLEARNET_ENGINES: "duckduckgo,brave"
       SYNAPSENET_NAAN_AUTOMINING: "true"
-      SYNAPSENET_NAAN_AUTO_SEARCH_MODE: "clearnet"
+      SYNAPSENET_NAAN_AUTO_SEARCH_MODE: "tor"
       SYNAPSENET_NAAN_AUTO_SEARCH_MAX_RESULTS: "4"
       SYNAPSENET_NAAN_DISABLE_DUPLICATE_GATES: "false"
       SYNAPSENET_POE_NOVELTY_BANDS: "4"
@@ -67,11 +66,15 @@ services:
       SYNAPSENET_POE_SELF_BOOTSTRAP_STRICT_KNOWN_PEERS: "8"
       SYNAPSENET_POE_SELF_BOOTSTRAP_STRICT_VALIDATOR_COUNT: "3"
       SYNAPSENET_POE_SELF_BOOTSTRAP_ACTIVATION_CHECKS: "5"
-      SYNAPSENET_ADDNODE: "host.docker.internal:18333"
+      SYNAPSENET_ADDNODE: ""
       SYNAPSENET_DAEMON: "false"
-      SYNAPSENET_FORCE_DAEMON_IF_NO_TTY: "false"
+      SYNAPSENET_FORCE_DAEMON_IF_NO_TTY: "true"
+      SYNAPSENET_NO_FORK: "true"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      tor:
+        condition: service_healthy
     stdin_open: false
     tty: false
 

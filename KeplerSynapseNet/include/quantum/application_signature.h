@@ -5,6 +5,9 @@
 #include <string>
 #include <vector>
 
+// On-wire PQ envelope: magic KQAS, domain-separated so a transfer sig cannot
+// be replayed as a consensus vote. Bytes are classic_sig || pqc_sig.
+
 namespace synapse::quantum {
 
 constexpr uint32_t APPLICATION_SIGNATURE_SUITE_ID = 0x53505131;

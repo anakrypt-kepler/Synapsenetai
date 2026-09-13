@@ -1,5 +1,11 @@
 #pragma once
 
+// Proof of Emergence v1 primitives.
+// Scoring is deterministic: every node must get the same number from the same
+// bytes. That is why we canonicalize text before SimHash / MinHash, instead of
+// asking an LLM to "judge quality". Hamming distance on SimHash is the novelty
+// check (too similar = duplicate / low novelty).
+
 #include "crypto/crypto.h"
 #include <array>
 #include <cstdint>
@@ -13,7 +19,9 @@ struct TextCanonicalization {
     std::vector<uint32_t> originalLineOffsets;
 };
 
+// Lowercase, collapse whitespace, drop CR. Used for prose novelty.
 std::string canonicalizeText(const std::string& input);
+// Keep code bytes except CR. Used when the contribution is a patch.
 std::string canonicalizeCode(const std::string& input);
 std::string canonicalizeCodeForSimhash(const std::string& input);
 uint64_t simhash64(const std::string& canonicalText);

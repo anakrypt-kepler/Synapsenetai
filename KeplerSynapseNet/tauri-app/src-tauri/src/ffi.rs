@@ -44,6 +44,11 @@ fn lib_search_paths() -> Vec<std::path::PathBuf> {
             }
         }
     }
+    // CMake output lives in KeplerSynapseNet/build next to this crate.
+    paths.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../build"));
+    if let Ok(home) = std::env::var("HOME") {
+        paths.push(std::path::PathBuf::from(home).join(".synapsenet/lib"));
+    }
     paths.push(std::path::PathBuf::from("/usr/local/lib"));
     paths.push(std::path::PathBuf::from("/usr/lib"));
     paths

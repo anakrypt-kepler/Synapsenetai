@@ -1,3 +1,6 @@
+// Agent reputation: approval rate → band. Persisted so a restart does not
+// promote a bad actor back to FULL.
+
 #include "core/agent_score.h"
 
 #include <algorithm>

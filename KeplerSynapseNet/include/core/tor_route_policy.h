@@ -5,6 +5,10 @@
 #include <optional>
 #include <string>
 
+// Fail-closed Tor policy. If torRequired && !torReachable && !allowClearnetFallback
+// the agent must stop fetching, not leak to 1.1.1.1. External SOCKS is usually
+// 9050 (system tor) or 9150 (shared with Tor Browser + bridges).
+
 namespace synapse::core {
 
 struct TorRoutePolicyInput {

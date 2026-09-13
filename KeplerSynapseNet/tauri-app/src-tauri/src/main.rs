@@ -40,6 +40,11 @@ fn main() {
             commands::privacy_view_scan,
             commands::privacy_status,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run synapsenet app");
+        .build(tauri::generate_context!())
+        .expect("failed to build synapsenet app")
+        .run(|_app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                let _ = synapsenet_app::ffi::shutdown();
+            }
+        });
 }

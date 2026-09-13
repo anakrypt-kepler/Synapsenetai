@@ -1,6 +1,14 @@
 #pragma once
 
+// NGT transfers: UTXO inputs/outputs, fees, mempool, confidential (CT) outputs.
+// Privacy path: stealth address + ring members + key images (see crypto/).
+// quantumSignature is the Dilithium hybrid envelope. Transparent/shield spends
+// must carry it. Classical signTransaction is first reward sweep only (secp).
+// Faucet creditRewardDeterministic stays transparent and unsigned.
+
 #include "crypto/crypto.h"
+#include "privacy/privacy.h"
+#include "privacy/private_transfer.h"
 #include "quantum/quantum_security.h"
 #include <string>
 #include <vector>
@@ -22,7 +30,13 @@ struct TxInput {
     uint32_t outputIndex;
     crypto::Signature signature;
     crypto::PublicKey pubKey;
-    
+    std::vector<std::vector<uint8_t>> ringP;
+    std::vector<std::vector<uint8_t>> ringC;
+    std::vector<uint8_t> ctilde;
+    std::vector<uint8_t> mlsag;
+
+    bool isRingCt() const { return !ringP.empty() && !mlsag.empty(); }
+
     std::vector<uint8_t> serialize() const;
     static TxInput deserialize(const std::vector<uint8_t>& data);
 };
@@ -32,8 +46,11 @@ struct TxOutput {
     std::string address;
     std::vector<uint8_t> commitment;
     std::vector<uint8_t> ephemeralPub;
+    std::vector<uint8_t> rangeProof;
+    std::vector<uint8_t> ecdh;
 
     bool isConfidential() const { return !commitment.empty(); }
+    bool isRingCt() const { return !commitment.empty() && !rangeProof.empty(); }
 
     std::vector<uint8_t> serialize() const;
     static TxOutput deserialize(const std::vector<uint8_t>& data);
@@ -47,6 +64,7 @@ struct Transaction {
     uint64_t fee;
     TxStatus status;
     std::vector<uint8_t> quantumSignature;
+    std::vector<uint8_t> balanceProof;
 
     std::vector<uint8_t> serialize() const;
     static Transaction deserialize(const std::vector<uint8_t>& data);
@@ -54,6 +72,10 @@ struct Transaction {
     uint64_t totalInput() const;
     uint64_t totalOutput() const;
     bool verify() const;
+    bool isRingCtSpend() const;
+    bool isShield() const;
+    bool isRewardCoinbase() const;
+    bool isRewardClaim() const;
 };
 
 struct UTXO {
@@ -86,7 +108,9 @@ public:
         uint64_t fee = 1
     );
     
+    // Classical secp/ed25519 only. Used for the first reward sweep (linkable).
     bool signTransaction(Transaction& tx, const crypto::PrivateKey& key);
+    // Writes tx.quantumSignature (Dilithium hybrid). Required for new spends.
     bool signTransaction(Transaction& tx, const crypto::PrivateKey& key,
                          const quantum::HybridKeyPair& quantumKeyPair);
     bool submitTransaction(const Transaction& tx);
@@ -113,6 +137,12 @@ public:
     bool rollbackBlockTransactions(uint64_t blockHeight, const crypto::Hash256& blockHash);
 
     bool creditRewardDeterministic(const std::string& address, const crypto::Hash256& rewardId, uint64_t amount);
+    bool creditRewardConfidential(const crypto::PublicKey& author, const crypto::Hash256& rewardId, uint64_t amount);
+    uint64_t getClaimableBalance(const crypto::PublicKey& author) const;
+    bool claimMintToStealth(const crypto::Hash256& rewardId,
+                            const crypto::PrivateKey& authorKey,
+                            const privacy::StealthAddress& dest,
+                            privacy::OwnedOutput* ownedOut);
     void onNewTransaction(std::function<void(const Transaction&)> callback);
     void onConfirmation(std::function<void(const crypto::Hash256&)> callback);
     
@@ -128,8 +158,11 @@ public:
     void setMinFee(uint64_t feePerKB);
     void setMaxMempoolSize(size_t maxTx);
     void pruneMempool();
+    size_t confidentialOutputCount() const;
+    std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> confidentialMixins(size_t limit) const;
     
 private:
+    bool applyRewardClaimLocked(const Transaction& tx);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

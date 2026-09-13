@@ -10,6 +10,9 @@
 #include <mutex>
 #include <optional>
 
+// Multi-agent coordination when more than one NAAN talks to this node
+// (IDE + node agent). AgentId is the pubkey, not a hostname.
+
 namespace synapse::core {
 
 using AgentId = crypto::PublicKey;

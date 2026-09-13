@@ -1,3 +1,8 @@
+// Ledger: events packed into blocks, chained by prevHash + merkle root.
+// Difficulty is a tiny PoW on the block hash (spam brake), not the main consensus.
+// Reorgs swap the in-memory chain when a heavier fork arrives (totalWork).
+// IdentityRegistry is updated when IDENTITY_BIND events land.
+
 #include "core/ledger.h"
 #include "crypto/address.h"
 #include "database/database.h"
@@ -56,6 +61,7 @@ static uint16_t readU16(const uint8_t* p) {
 
 constexpr uint32_t MAX_EVENTS_PER_BLOCK = 1000;
 constexpr size_t MAX_EVENT_SIZE = 1 << 20; // 1MB
+// Trailer byte after classic event bytes: 0x01 means a PQ signature blob follows.
 static constexpr uint8_t EVENT_TRAILER_V1_QUANTUM_SIG = 0x01;
 static constexpr uint32_t EVENT_MAX_QUANTUM_SIGNATURE_SIZE = 65536;
 static constexpr uint32_t BLOCK_V2_MAGIC = 0xB10C0002u;
@@ -545,6 +551,7 @@ Ledger::~Ledger() {
     close();
 }
 
+// Open (or create) the chain DB. Loads tip, rebuilds indexes, starts maintenance.
 bool Ledger::open(const std::string& dbPath) {
     bool needGenesis = false;
     {
@@ -708,6 +715,7 @@ void Ledger::close() {
     impl_->db.close();
 }
 
+// Queue a single event. It is not canonical until a block that contains it is appended.
 bool Ledger::append(const Event& event) {
     Event e = event;
 
@@ -835,6 +843,7 @@ bool Ledger::Impl::appendBlockUnlocked(const Block& block) {
     return true;
 }
 
+// Append a fully formed block. Must link prevHash to the current tip (or genesis).
 bool Ledger::appendBlock(const Block& block) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     return impl_->appendBlockUnlocked(block);
@@ -1085,6 +1094,7 @@ void Ledger::setSigner(std::function<crypto::Signature(const crypto::Hash256&)> 
     impl_->signer = signer;
 }
 
+// Height 0. Same genesis on every node; changing this forks the network.
 Block Ledger::createGenesisBlock() {
     Block genesis;
     genesis.height = 0;

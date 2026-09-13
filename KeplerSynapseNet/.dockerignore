@@ -3,7 +3,6 @@ build/
 .git/
 .github/
 
-# local state (must not be baked into images)
 tmp/
 data/*.db
 **/*.db
@@ -13,8 +12,10 @@ data/*.db
 **/synapsed.lock
 **/*.log
 
-# local models are huge
 models/
 **/*.gguf
+
+# Desktop app artifacts — node image builds synapsed only.
+tauri-app/
 
 .DS_Store

@@ -1,3 +1,6 @@
+// PoE submit/vote/finalize loop. PoW gate, novelty vs prior SimHashes, rewards.
+// All numbers here must stay integer/deterministic — no floating LLM scores.
+
 #include "core/poe_v1_engine.h"
 #include "database/database.h"
 #include "utils/logger.h"

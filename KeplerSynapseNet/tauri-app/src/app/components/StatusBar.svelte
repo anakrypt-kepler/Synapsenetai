@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { nodeStatus, connectionColor, connectionLabel } from "../../lib/store";
+  import { nodeStatus, connectionLabel } from "../../lib/store";
 
   $: isTor = $nodeStatus.connection === "tor";
   $: isConnected = $nodeStatus.connection !== "disconnected";
@@ -22,6 +22,11 @@
   <div class="statusbar-item">
     BLK#{$nodeStatus.last_block}
   </div>
+  {#if $nodeStatus.onion}
+  <div class="statusbar-item" title={$nodeStatus.onion}>
+    HS:{$nodeStatus.onion.slice(0, 8)}
+  </div>
+  {/if}
   <div class="statusbar-item right">
     {$nodeStatus.version}
   </div>
@@ -31,16 +36,18 @@
   .statusbar {
     display: flex;
     align-items: center;
-    height: 20px;
+    height: var(--statusbar-h);
     border-top: 1px solid var(--border);
-    background: #000000;
-    padding: 0 8px;
-    font-size: 8px;
+    background: var(--surface);
+    backdrop-filter: saturate(140%) blur(var(--blur));
+    -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
+    padding: 0 12px;
+    font-size: 11px;
     color: var(--text-secondary);
     flex-shrink: 0;
     gap: 0;
-    letter-spacing: 1px;
-    font-weight: 700;
+    letter-spacing: 0.04em;
+    font-weight: 500;
     text-transform: uppercase;
   }
 
@@ -49,7 +56,7 @@
     align-items: center;
     padding: 0 8px;
     white-space: nowrap;
-    gap: 4px;
+    gap: 6px;
     border-right: 1px solid var(--border);
   }
 
@@ -68,8 +75,9 @@
   }
 
   .conn-indicator {
-    width: 6px;
-    height: 6px;
+    width: 7px;
+    height: 7px;
+    border-radius: var(--radius-full);
     background: var(--err);
     flex-shrink: 0;
   }
@@ -80,10 +88,16 @@
 
   @keyframes blink-tor {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0.15; }
+    50% { opacity: 0.38; }
   }
 
   .tor-blink {
-    animation: blink-tor 1.5s step-end infinite;
+    animation: blink-tor 2.4s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tor-blink {
+      animation: none;
+    }
   }
 </style>

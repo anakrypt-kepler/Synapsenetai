@@ -1,5 +1,10 @@
 #pragma once
 
+// P2P mesh. Magic 0x53594E41 is ASCII "SYNA".
+// Live network is Tor-only: outbound connect goes through SOCKS5 (usually
+// 127.0.0.1:9050). Handshake is hybrid X25519 + ML-KEM-768 (see handshake.cpp).
+// EXPLOIT_INTEL is the V9 gossip type for shared bypass intelligence.
+
 #include "crypto/crypto.h"
 #include <string>
 #include <vector>
@@ -10,7 +15,7 @@
 namespace synapse {
 namespace network {
 
-constexpr uint32_t PROTOCOL_MAGIC = 0x53594E41;
+constexpr uint32_t PROTOCOL_MAGIC = 0x53594E41; // "SYNA"
 constexpr uint32_t PROTOCOL_VERSION = 1;
 constexpr size_t MAX_MESSAGE_SIZE = 4 * 1024 * 1024;
 constexpr size_t MAX_PEERS = 125;

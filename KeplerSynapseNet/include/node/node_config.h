@@ -5,6 +5,9 @@
 #include <string>
 #include <vector>
 
+// Flags parsed from CLI / config.toml. P2P is :8333, JSON-RPC is :8332.
+// dataDir defaults to ~/.synapsenet. daemon=true forks; tui=true is ncurses.
+
 namespace synapse {
 
 struct NodeConfig {

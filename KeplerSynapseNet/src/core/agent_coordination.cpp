@@ -1,3 +1,5 @@
+// Task locks between the node agent and the IDE agent so they do not double-submit.
+
 #include "core/agent_coordination.h"
 #include <algorithm>
 #include <cstring>

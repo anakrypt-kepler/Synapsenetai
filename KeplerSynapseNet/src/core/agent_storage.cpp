@@ -1,3 +1,5 @@
+// Rotating segment files for agent artifacts. Hash names, not original URLs.
+
 #include "core/agent_storage.h"
 
 #include <algorithm>

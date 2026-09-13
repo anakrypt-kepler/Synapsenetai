@@ -25,6 +25,20 @@
 static std::once_flag g_llamaInitFlag;
 static std::mutex g_llamaRefMutex;
 static int g_llamaRefCount = 0;
+
+static void addDefaultSamplers(llama_sampler* sampler, float temperature) {
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9f, 1));
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature));
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(0));
+}
+
+static bool cutAtImEnd(std::string& result) {
+    const size_t cut = result.find("<|im_end|>");
+    if (cut == std::string::npos) return false;
+    result.resize(cut);
+    return true;
+}
 #endif
 
 namespace synapse {
@@ -250,7 +264,7 @@ InferenceStatus InferenceEngine::getStatus(const std::string& requestId) {
     return InferenceStatus::QUEUED;
 }
 
-bool InferenceEngine::loadModel(const std::string& modelId, const std::string& path) {
+bool InferenceEngine::loadModel(const std::string& modelId, const std::string& path, int nGpuLayers) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
 #ifdef USE_LLAMA_CPP
     auto acquire = []() {
@@ -272,6 +286,7 @@ bool InferenceEngine::loadModel(const std::string& modelId, const std::string& p
     };
     acquire();
     llama_model_params modelParams = llama_model_default_params();
+    if (nGpuLayers > 0) modelParams.n_gpu_layers = nGpuLayers;
     llama_model* model = llama_model_load_from_file(path.c_str(), modelParams);
     if (!model) {
         release();
@@ -699,8 +714,7 @@ std::string InferenceEngine::Impl::generateText(const LoadedModelState& model,
         int initial_count = nCur;
         
         llama_sampler* sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
-        llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature));
-        llama_sampler_chain_add(sampler, llama_sampler_init_dist(0));
+        addDefaultSamplers(sampler, temperature);
         
         int lastSampled = -1;
         for (int i = 0; i < maxTokens; i++) {
@@ -712,6 +726,7 @@ std::string InferenceEngine::Impl::generateText(const LoadedModelState& model,
             int len = llama_token_to_piece(vocab, newToken, buf, sizeof(buf), 0, true);
             if (len > 0) {
                 result.append(buf, len);
+                if (cutAtImEnd(result)) break;
             }
             
             llama_batch nextBatch = llama_batch_get_one(&newToken, 1);
@@ -796,8 +811,7 @@ std::string InferenceEngine::Impl::generateTextStream(const LoadedModelState& mo
         int initial_count = nCur;
         
         llama_sampler* sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
-        llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature));
-        llama_sampler_chain_add(sampler, llama_sampler_init_dist(0));
+        addDefaultSamplers(sampler, temperature);
         
         int lastSampled = -1;
         for (int i = 0; i < maxTokens; i++) {
@@ -810,6 +824,7 @@ std::string InferenceEngine::Impl::generateTextStream(const LoadedModelState& mo
             if (len > 0) {
                 std::string tokenStr(buf, len);
                 result.append(tokenStr);
+                if (cutAtImEnd(result)) break;
                 
                 // Stream the token to the callback
                 if (streamCallback) {

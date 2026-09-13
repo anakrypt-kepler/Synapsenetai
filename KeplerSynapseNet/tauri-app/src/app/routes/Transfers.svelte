@@ -1,7 +1,9 @@
 <script lang="ts">
+  // Desktop send is always private: stealth dest + MLSAG-2 RingCT + 64-bit range proofs + Tor.
+  // Memo is local only. No clearnet send path.
   import { onMount } from "svelte";
+  import { sendNgt, getTransactions, rpcCall, privacyStatus } from "../../lib/rpc";
   import { nodeStatus } from "../../lib/store";
-  import { sendNgt, getTransactions, rpcCall, privacyStealthSend, privacyStatus } from "../../lib/rpc";
   import { generateQRSvg } from "../../lib/qr";
 
   let recipient = "";
@@ -10,12 +12,31 @@
   let sendError = "";
   let sendSuccess = "";
   let sending = false;
-  let privacyMode = false;
-  let privacyInfo: { stealth_enabled: boolean; ring_enabled: boolean; confidential_enabled: boolean } | null = null;
-  let transactions: { type: string; amount: string; timestamp: string; status: string; to?: string; from?: string; txid?: string }[] = [];
+  let copied = false;
+  let privacyInfo: {
+    stealth_enabled: boolean;
+    ring_enabled: boolean;
+    confidential_enabled: boolean;
+    ring_size?: number;
+  } | null = null;
+  let transactions: {
+    type: string;
+    amount: string;
+    timestamp: string;
+    status: string;
+    to?: string;
+    from?: string;
+    txid?: string;
+  }[] = [];
   let filter = "all";
   let walletAddress = "";
   let qrSvg = "";
+
+  $: onTor = $nodeStatus.connection === "tor";
+  $: privacyFailClosed =
+    privacyInfo !== null &&
+    (!privacyInfo.stealth_enabled || !privacyInfo.ring_enabled || !privacyInfo.confidential_enabled);
+  $: sendLocked = !onTor || privacyFailClosed;
 
   onMount(async () => {
     await loadTransactions();
@@ -36,6 +57,7 @@
         stealth_enabled: !!parsed.stealth_enabled,
         ring_enabled: !!parsed.ring_enabled,
         confidential_enabled: !!parsed.confidential_enabled,
+        ring_size: parsed.ring_size || 11,
       };
     } catch {
       privacyInfo = null;
@@ -47,9 +69,26 @@
     if (typeof raw === "string" && raw.length > 4) return raw;
     if (typeof raw === "number") {
       const d = new Date(raw);
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
     }
     return String(raw);
+  }
+
+  function emptyHistoryText(): string {
+    if (filter === "sent") return "NO SENT TRANSFERS";
+    if (filter === "received") return "NO RECEIVED TRANSFERS";
+    if (filter === "rewards") return "NO MINING REWARDS";
+    return "NO TRANSFERS YET";
+  }
+
+  function asUpperError(raw: any): string {
+    const s = String(raw || "TX FAILED").trim();
+    return (s || "TX FAILED").toUpperCase();
+  }
+
+  function validSnAddress(addr: string): boolean {
+    const a = addr.trim();
+    return a.startsWith("SN") && a.length >= 130 && /^SN[0-9a-fA-F]+$/.test(a);
   }
 
   async function loadTransactions() {
@@ -65,14 +104,28 @@
         from: tx.from,
         txid: tx.txid,
       }));
-    } catch { transactions = []; }
+    } catch {
+      transactions = [];
+    }
   }
 
   async function handleSend() {
     sendError = "";
     sendSuccess = "";
+    if (!onTor) {
+      sendError = "TOR REQUIRED";
+      return;
+    }
+    if (privacyFailClosed) {
+      sendError = "FAIL CLOSED";
+      return;
+    }
     if (!recipient.trim() || !amount.trim()) {
       sendError = "RECIPIENT AND AMOUNT REQUIRED";
+      return;
+    }
+    if (!validSnAddress(recipient)) {
+      sendError = "USE THE RECIPIENT SN STEALTH ADDRESS FROM THEIR RECEIVE SCREEN";
       return;
     }
     const numAmt = parseFloat(amount);
@@ -82,21 +135,19 @@
     }
     sending = true;
     try {
-      const raw = privacyMode
-        ? await privacyStealthSend(recipient, amount, memo || undefined)
-        : await sendNgt(recipient, amount, memo || undefined);
+      const raw = await sendNgt(recipient, amount, memo || undefined);
       const resp = JSON.parse(raw);
       if (resp.error) {
-        sendError = resp.error.toUpperCase();
+        sendError = asUpperError(resp.error);
       } else {
-        sendSuccess = `TX CONFIRMED: ${resp.txid || "OK"}`;
+        sendSuccess = `PRIVATE TX: ${resp.txid || "OK"}`;
         recipient = "";
         amount = "";
         memo = "";
         await loadTransactions();
       }
     } catch (e: any) {
-      sendError = e.message || "TX FAILED";
+      sendError = asUpperError(e?.message || "TX FAILED");
     }
     sending = false;
   }
@@ -105,32 +156,60 @@
     filter = f;
     loadTransactions();
   }
+
+  async function copyAddress() {
+    if (!walletAddress) return;
+    try {
+      await navigator.clipboard.writeText(walletAddress);
+      copied = true;
+      setTimeout(() => (copied = false), 2000);
+    } catch {}
+  }
 </script>
 
 <div class="content-area">
   <div class="section-title">SEND NGT</div>
-  <div class="section-title">PRIVACY MODE</div>
   <div class="privacy-bar">
-    <button class="fbtn" class:active={!privacyMode} on:click={() => privacyMode = false}>STANDARD</button>
-    <button class="fbtn" class:active={privacyMode} on:click={() => privacyMode = true}>ANONYMOUS</button>
+    <span class="mode-label">DESKTOP SEND IS ALWAYS PRIVATE</span>
     {#if privacyInfo}
       <span class="privacy-badge" class:enabled={privacyInfo.stealth_enabled}>STEALTH</span>
-      <span class="privacy-badge" class:enabled={privacyInfo.ring_enabled}>RING</span>
-      <span class="privacy-badge" class:enabled={privacyInfo.confidential_enabled}>CT</span>
+      <span class="privacy-badge" class:enabled={privacyInfo.ring_enabled}>RING {privacyInfo.ring_size || 11}</span>
+      <span class="privacy-badge" class:enabled={privacyInfo.confidential_enabled}>RINGCT</span>
     {/if}
+    <span class="privacy-badge" class:enabled={onTor}>TOR</span>
+    <span class="privacy-note">Stealth dest + MLSAG-2 RingCT + 64-bit range proofs. Not Monero. No bulletproofs. Mining rewards are RingCT coinbase. Memo is local only, never on chain.</span>
   </div>
+
+  {#if !onTor}
+    <div class="error-msg">TOR REQUIRED</div>
+  {/if}
+  {#if privacyFailClosed}
+    <div class="error-msg">FAIL CLOSED</div>
+  {/if}
+
   <div class="card">
     <div class="form-group">
-      <label>RECIPIENT</label>
-      <input type="text" bind:value={recipient} placeholder="NGT address" />
+      <label for="send-recipient">RECIPIENT STEALTH ADDRESS</label>
+      <input
+        id="send-recipient"
+        class="mono"
+        type="text"
+        bind:value={recipient}
+        placeholder="SN + 128 hex (from their Receive screen)"
+        autocomplete="off"
+        spellcheck="false"
+      />
     </div>
     <div class="form-group">
-      <label>AMOUNT</label>
-      <input type="text" bind:value={amount} placeholder="0.00" />
+      <div class="amount-head">
+        <label for="send-amount">AMOUNT</label>
+        <span class="bal-hint">WALLET {$nodeStatus.balance} NGT</span>
+      </div>
+      <input id="send-amount" type="text" bind:value={amount} placeholder="0.00" inputmode="decimal" />
     </div>
     <div class="form-group">
-      <label>MEMO</label>
-      <input type="text" bind:value={memo} placeholder="optional" />
+      <label for="send-memo">MEMO (LOCAL ONLY)</label>
+      <input id="send-memo" type="text" bind:value={memo} placeholder="never published on the tx" />
     </div>
     {#if sendError}
       <div class="error-msg">{sendError}</div>
@@ -138,15 +217,18 @@
     {#if sendSuccess}
       <div class="success-msg">{sendSuccess}</div>
     {/if}
-    <button class="btn-primary" on:click={handleSend} disabled={sending}>
-      {sending ? "[ SENDING... ]" : "[ SEND ]"}
+    <button class="btn-primary" type="button" on:click={handleSend} disabled={sending || sendLocked}>
+      {#if sending}<span class="ks-spinner"></span>{/if}{sending ? "[ SENDING... ]" : "[ SEND PRIVATE ]"}
     </button>
   </div>
 
   <div class="section-title">RECEIVE</div>
   <div class="card">
-    <div class="card-header">YOUR ADDRESS</div>
-    <code class="addr">{walletAddress || "..."}</code>
+    <div class="card-header">YOUR STEALTH ADDRESS</div>
+    <code class="addr mono">{walletAddress || "NO ADDRESS"}</code>
+    <button class="fbtn copy-btn" type="button" on:click={copyAddress} disabled={!walletAddress}>
+      {copied ? "COPIED" : "COPY"}
+    </button>
     <div class="qr-small">
       {#if qrSvg}
         {@html qrSvg}
@@ -156,45 +238,179 @@
 
   <div class="section-title">HISTORY</div>
   <div class="filter-row">
-    <button class="fbtn" class:active={filter === "all"} on:click={() => setFilter("all")}>ALL</button>
-    <button class="fbtn" class:active={filter === "sent"} on:click={() => setFilter("sent")}>SENT</button>
-    <button class="fbtn" class:active={filter === "received"} on:click={() => setFilter("received")}>RECV</button>
-    <button class="fbtn" class:active={filter === "rewards"} on:click={() => setFilter("rewards")}>MINE</button>
+    <button class="fbtn" type="button" class:active={filter === "all"} on:click={() => setFilter("all")}>ALL</button>
+    <button class="fbtn" type="button" class:active={filter === "sent"} on:click={() => setFilter("sent")}>SENT</button>
+    <button class="fbtn" type="button" class:active={filter === "received"} on:click={() => setFilter("received")}>RECEIVED</button>
+    <button class="fbtn" type="button" class:active={filter === "rewards"} on:click={() => setFilter("rewards")}>REWARDS</button>
   </div>
-  <table>
-    <thead><tr><th>TYPE</th><th>AMOUNT</th><th>DETAIL</th><th>TIME</th><th>STATUS</th></tr></thead>
-    <tbody>
-      {#each transactions as tx}
-        <tr>
-          <td><span class="tag">{tx.type}</span></td>
-          <td>{tx.amount} NGT</td>
-          <td class="detail-cell">{tx.to ? `→ ${tx.to.slice(0,12)}…` : tx.txid ? tx.txid : "-"}</td>
-          <td>{tx.timestamp}</td>
-          <td><span class="status-{tx.status}">{tx.status}</span></td>
-        </tr>
-      {:else}
-        <tr><td colspan="5" class="empty-row">NO TRANSACTIONS</td></tr>
-      {/each}
-    </tbody>
-  </table>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>TYPE</th><th>AMOUNT</th><th>DETAIL</th><th>TIME</th><th>STATUS</th></tr></thead>
+      <tbody>
+        {#each transactions as tx}
+          <tr>
+            <td><span class="tag">{tx.type}</span></td>
+            <td>{tx.amount} NGT</td>
+            <td class="detail-cell mono">{tx.txid ? tx.txid.slice(0, 16) : "-"}</td>
+            <td>{tx.timestamp}</td>
+            <td><span class="status-{tx.status}">{tx.status}</span></td>
+          </tr>
+        {:else}
+          <tr><td colspan="5" class="empty-row">{emptyHistoryText()}</td></tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <style>
+  /* Visual reset: antialiased system UI for this tab. */
+  .content-area {
+    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+    font-size: 13px;
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    image-rendering: auto;
+  }
+
+  .content-area :global(.ks-spinner) {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-right: 8px;
+    border: 2px solid rgba(0, 0, 0, 0.25);
+    border-top-color: #000;
+    border-radius: 50%;
+    animation: ks-spin 0.7s linear infinite;
+    vertical-align: -2px;
+  }
+
+  @keyframes ks-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .mono {
+    font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  }
+
+  button,
+  input {
+    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+    font-size: 13px;
+    letter-spacing: 0.02em;
+    border-radius: var(--radius-sm);
+    transition:
+      transform var(--dur) var(--ease),
+      box-shadow var(--dur) var(--ease),
+      border-color var(--dur) var(--ease),
+      background-color var(--dur) var(--ease),
+      color var(--dur) var(--ease);
+  }
+
+  button:hover:not(:disabled) {
+    box-shadow: none;
+  }
+
+  button:focus-visible,
+  input:focus-visible {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
+  }
+
+  input {
+    background: var(--surface-solid, #111);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+  }
+
+  .card,
+  .privacy-bar,
+  .table-wrap {
+    border-radius: var(--radius);
+    background: var(--surface);
+    backdrop-filter: blur(var(--blur));
+    -webkit-backdrop-filter: blur(var(--blur));
+    border: 1px solid var(--border);
+    transition:
+      transform var(--dur) var(--ease),
+      box-shadow var(--dur) var(--ease),
+      border-color var(--dur) var(--ease);
+  }
+
+  .card:hover {
+    border-color: rgba(255, 255, 255, 0.18);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  }
+
+  .card-header,
+  .section-title,
+  .form-group label {
+    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+  }
+
+  .error-msg,
+  .success-msg {
+    font-size: 13px;
+    border-radius: var(--radius-sm);
+    letter-spacing: 0.02em;
+  }
+
+  .tag {
+    font-size: 11px;
+    border-radius: 999px;
+    padding: 3px 8px;
+    letter-spacing: 0.04em;
+  }
+
+  table {
+    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+    font-size: 13px;
+  }
+
+  th, td {
+    font-size: 13px;
+    padding: 10px 12px;
+  }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--surface-solid, #111);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--text-faint);
+  }
+
+  .table-wrap {
+    overflow: auto;
+    max-height: min(520px, 60vh);
+  }
+
   .filter-row {
     display: flex;
-    gap: 2px;
-    margin-bottom: 8px;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
   }
 
   .fbtn {
-    font-size: 8px;
-    padding: 4px 10px;
+    font-size: 12px;
+    padding: 6px 12px;
     border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
     color: var(--text-secondary);
-    background: none;
+    background: var(--surface);
+    letter-spacing: 0.04em;
   }
 
-  .fbtn:hover { color: var(--text-primary); border-color: var(--text-primary); }
+  .fbtn:hover { color: var(--text-primary); border-color: rgba(255, 255, 255, 0.22); }
 
   .fbtn.active {
     color: #000;
@@ -202,31 +418,43 @@
     border-color: var(--text-primary);
   }
 
+  .copy-btn { margin-top: 8px; }
+
   .addr {
-    font-size: 8px;
+    font-size: 12px;
     word-break: break-all;
     color: var(--text-primary);
     display: block;
     margin-top: 4px;
-    line-height: 1.6;
+    line-height: 1.55;
+    user-select: text;
+    -webkit-user-select: text;
   }
 
   .qr-small {
     display: flex;
     justify-content: center;
-    margin-top: 8px;
+    margin-top: 10px;
+  }
+
+  .qr-small :global(svg) {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    border-radius: var(--radius-sm);
   }
 
   .empty-row {
     text-align: center;
     color: var(--text-secondary);
-    padding: 16px;
+    padding: 28px 16px;
+    font-size: 13px;
+    letter-spacing: 0.02em;
   }
 
   .detail-cell {
-    font-size: 7px;
+    font-size: 12px;
     color: var(--text-secondary);
-    max-width: 100px;
+    max-width: 140px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -235,27 +463,64 @@
   .privacy-bar {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-bottom: 8px;
+    gap: 8px;
+    margin-bottom: 10px;
     flex-wrap: wrap;
+    padding: 12px 14px;
+  }
+
+  .mode-label {
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    color: var(--ok, #00c853);
+  }
+
+  .privacy-note {
+    flex-basis: 100%;
+    font-size: 12px;
+    letter-spacing: 0.01em;
+    color: var(--text-secondary);
+    line-height: 1.5;
   }
 
   .privacy-badge {
-    font-size: 7px;
-    padding: 3px 6px;
+    font-size: 11px;
+    padding: 4px 8px;
     border: 1px solid var(--border);
+    border-radius: 999px;
     color: var(--text-secondary);
-    letter-spacing: 1px;
+    letter-spacing: 0.04em;
   }
 
   .privacy-badge.enabled {
-    color: #00c853;
-    border-color: #00c853;
+    color: var(--ok, #00c853);
+    border-color: var(--ok, #00c853);
   }
 
-  .status-confirmed { color: #00c853; }
-  .status-pending { color: #ffc107; }
-  .status-failed { color: #f44; }
+  .amount-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .amount-head label {
+    margin-bottom: 0;
+  }
+
+  .bal-hint {
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  .status-confirmed { color: var(--ok, #00c853); }
+  .status-pending { color: var(--warn, #ffc107); }
+  .status-broadcast { color: var(--warn, #ffc107); }
+  .status-failed { color: var(--err, #f44); }
 
   button:disabled {
     opacity: 0.5;

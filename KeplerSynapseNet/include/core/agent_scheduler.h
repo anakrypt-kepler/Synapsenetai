@@ -1,5 +1,10 @@
 #pragma once
 
+// Token-bucket scheduler for NAAN background work.
+// One tick ~= 1s. Epoch budget is CPU/RAM/network tokens shared across
+// RESEARCH → VERIFY → REVIEW → DRAFT → SUBMIT. Starvation bump stops
+// SUBMIT from eating every tick. This is not the HTTP fetch loop.
+
 #include <array>
 #include <cstddef>
 #include <cstdint>

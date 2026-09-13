@@ -1,3 +1,6 @@
+// C ABI wrappers. Rust/Tauri only talks to these symbols (libsynapsed).
+// rpc_call mallocs the JSON string; the caller MUST synapsed_free_string it.
+
 #include "synapsed_ffi.h"
 #include "ide/synapsed_engine.h"
 

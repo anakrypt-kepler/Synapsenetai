@@ -40,7 +40,7 @@ void ensureDefaultNaanWebConfig(const std::string& path, const std::string& ahmi
     naanCfg << "allow_clearnet_fallback=0\n";
     naanCfg << "allow_p2p_clearnet_fallback=0\n";
     naanCfg << "naan_auto_search_enabled=1\n";
-    naanCfg << "naan_auto_search_mode=both\n";
+    naanCfg << "naan_auto_search_mode=tor\n";
     naanCfg << "naan_auto_search_queries=latest space engineering research,latest ai research papers,open source systems engineering best practices\n";
     naanCfg << "naan_auto_search_max_results=4\n";
     naanCfg << "clearnet_site_allowlist=\n";

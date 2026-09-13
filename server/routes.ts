@@ -1,3 +1,7 @@
+// synapsenetai.org HTTP API (forum, DMs, groups, uploads, SSO cookie for /git/).
+// This is the website backend, not the C++ node. The node RPC is synapsed :8332.
+// Rate limits are skipped in test/dev or DISABLE_RATE_LIMIT=1.
+
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage, type DiscussionSort } from "./storage";
@@ -47,7 +51,7 @@ async function computeUserBadges(userId: number, hasPublicKey: boolean, reputati
 
 const rateLimitDisabled = process.env.NODE_ENV === "test" || process.env.NODE_ENV === "development" || process.env.DISABLE_RATE_LIMIT === "1";
 const DAILY_POST_LIMIT = 2;
-const EDIT_WINDOW_MS = 60 * 60 * 1000;
+const EDIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour after post; then the row is frozen.
 
 function tooManyHandler(_req: Request, res: Response) {
   res.status(429).json({ error: "Too many attempts. Please wait a moment and try again." });
@@ -559,6 +563,7 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+// Wire every HTTP route. Order matters: auth middleware before user/content APIs.
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -621,6 +626,7 @@ export async function registerRoutes(
 
   registerUploadRoutes(app, getUserIdFromToken);
 
+  // Auth: GitHub OAuth, snake CAPTCHA, register/login, session cookie.
   app.get("/api/auth/github/config", (_req, res) => {
     if (!isGithubOAuthEnabled()) {
       return res.json({
@@ -1196,6 +1202,7 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
+  // Forum: discussions, comments, likes, tags, search.
   app.get("/api/discussions", async (req, res) => {
     const tag = typeof req.query.tag === "string" ? req.query.tag : undefined;
     const sortRaw = typeof req.query.sort === "string" ? req.query.sort : "trending";
@@ -1487,6 +1494,7 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
+  // Direct messages. Bodies may be client-encrypted; this server stores blobs.
   app.get("/api/conversations", async (req, res) => {
     const userId = getUserIdFromToken(req);
     if (!userId) return res.status(401).json({ message: "Not authenticated" });
@@ -1753,8 +1761,6 @@ export async function registerRoutes(
       "http://144.31.223.91:18332",
     ];
     const SEED_NODES = [
-      "nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion",
-      "ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion",
       "xa5xgwito6roew3rr5f4wrufdktwr6tfviu6wchunr4splj7smxkqcid.onion",
     ];
     const RPC_TIMEOUT = 5000;
@@ -2056,6 +2062,7 @@ export async function registerRoutes(
     }
   }
 
+  // Proxy a few synapsed RPC views for the public site dashboard (localhost:8332).
   app.get("/api/network/dashboard", async (_req, res) => {
     const result = await synapsedRpc("naan.dashboard");
     res.json(result);

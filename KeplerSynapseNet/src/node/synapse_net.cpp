@@ -112,8 +112,10 @@
 #include "utils/single_instance.h"
 #include "utils/utils.h"
 #include "privacy/privacy.h"
+#include "privacy/private_transfer.h"
 #include "crypto/ring_signature.h"
 #include "crypto/confidential_tx.h"
+#include <sodium.h>
 #include "python/sandbox.h"
 #include "quantum/application_signature.h"
 #include "quantum/quantum_security.h"
@@ -123,6 +125,10 @@
 #include "web/web.h"
 #include "node/synapse_net.h"
 #include "../third_party/llama.cpp/vendor/nlohmann/json.hpp"
+
+// Full node process. initialize() order is: config/logger → DB/keys → optional PQ
+// → P2P/discovery → ledger/knowledge/transfer/consensus/PoE → model → NAAN
+// → privacy → RPC. run() is TUI or daemon loop until g_running is false.
 
 namespace synapse {
 
@@ -1439,6 +1445,16 @@ uint64_t currentWalletBalanceAtoms() const {
         if (UINT64_MAX - total < value) return UINT64_MAX;
         total += value;
     }
+    if (keys_ && keys_->isValid()) {
+        auto pubV = keys_->getPublicKey();
+        if (pubV.size() == crypto::PUBLIC_KEY_SIZE) {
+            crypto::PublicKey pk{};
+            std::memcpy(pk.data(), pubV.data(), pk.size());
+            uint64_t claimable = transfer_->getClaimableBalance(pk);
+            if (UINT64_MAX - total < claimable) return UINT64_MAX;
+            total += claimable;
+        }
+    }
     return total;
 }
 
@@ -1909,7 +1925,114 @@ std::string handleRpcMarketStats(const std::string& paramsJson) {
     return rpc::buildRpcMarketStatsResponse(modelMarketplace_->getStats());
 }
 
+std::string createAndSubmitShieldTx(const std::string& to, uint64_t amountAtoms, uint64_t& feeAtomsOut) {
+    if (!transfer_ || !keys_ || !keys_->isValid() || address_.empty()) {
+        throw std::runtime_error("Wallet/transfer not ready");
+    }
+    std::vector<uint8_t> viewPub;
+    std::vector<uint8_t> spendPub;
+    if (!privacy::StealthAddress::decodeAddress(to, viewPub, spendPub)) {
+        throw std::runtime_error("invalid stealth address");
+    }
+    if (amountAtoms == 0) {
+        throw std::runtime_error("Amount too small");
+    }
+
+    privacy::StealthAddress sender;
+    if (!sender.generateKeys()) {
+        throw std::runtime_error("stealth sender failed");
+    }
+    privacy::StealthPayment pay;
+    if (!sender.createPayment(viewPub, spendPub, amountAtoms, pay)) {
+        throw std::runtime_error("one-time payment derivation failed");
+    }
+    auto range = crypto::ConfidentialTx::proveRange(amountAtoms, pay.blinding);
+    if (range.empty()) {
+        throw std::runtime_error("range proof failed");
+    }
+    auto bal = crypto::ConfidentialTx::proveKnownAmount(pay.commitment, amountAtoms, pay.blinding);
+    if (bal.size() != 64) {
+        throw std::runtime_error("balance proof failed");
+    }
+
+    std::vector<core::UTXO> spendable;
+    std::unordered_set<std::string> seenOutpoints;
+    for (const auto& alias : currentWalletAddressAliases()) {
+        for (const auto& utxo : transfer_->getUTXOs(alias)) {
+            std::string outpoint = crypto::toHex(utxo.txHash) + ":" + std::to_string(utxo.outputIndex);
+            if (seenOutpoints.insert(outpoint).second) spendable.push_back(utxo);
+        }
+    }
+    std::sort(spendable.begin(), spendable.end(), [](const core::UTXO& lhs, const core::UTXO& rhs) {
+        if (lhs.amount != rhs.amount) return lhs.amount > rhs.amount;
+        return lhs.outputIndex < rhs.outputIndex;
+    });
+
+    uint64_t fee = transfer_->estimateFee(0);
+    core::Transaction tx;
+    for (int round = 0; round < 6; ++round) {
+        tx = core::Transaction{};
+        tx.timestamp = std::time(nullptr);
+        tx.fee = fee;
+        tx.status = core::TxStatus::PENDING;
+        tx.balanceProof = bal;
+        uint64_t collected = 0;
+        uint64_t required = amountAtoms + fee;
+        for (const auto& utxo : spendable) {
+            if (collected >= required) break;
+            core::TxInput inp;
+            inp.prevTxHash = utxo.txHash;
+            inp.outputIndex = utxo.outputIndex;
+            tx.inputs.push_back(inp);
+            collected += utxo.amount;
+        }
+        if (collected < required) {
+            throw std::runtime_error("Insufficient balance (including fee)");
+        }
+        core::TxOutput hidden;
+        hidden.amount = 0;
+        hidden.address = "rct1" + crypto::toHex(pay.oneTimeAddress);
+        hidden.commitment = pay.commitment;
+        hidden.ephemeralPub = pay.ephemeralPub;
+        hidden.rangeProof = range;
+        hidden.ecdh = pay.ecdh;
+        tx.outputs.push_back(hidden);
+        if (collected > required) {
+            tx.outputs.push_back(core::TxOutput{collected - required, address_});
+        }
+        tx.txid = tx.computeHash();
+        uint64_t need = transfer_->estimateFee(tx.serialize().size());
+        if (need <= fee) break;
+        fee = need;
+    }
+
+    crypto::PrivateKey pk{};
+    auto pkv = keys_->getPrivateKey();
+    if (pkv.size() < pk.size()) {
+        throw std::runtime_error("Invalid private key");
+    }
+    std::memcpy(pk.data(), pkv.data(), pk.size());
+    const bool signed_ok = keys_->hasHybridKeyPair()
+        ? transfer_->signTransaction(tx, pk, keys_->getHybridKeyPair())
+        : transfer_->signTransaction(tx, pk);
+    crypto::secureZero(pk.data(), pk.size());
+    sodium_memzero(pay.blinding.data(), pay.blinding.size());
+    if (!signed_ok) {
+        throw std::runtime_error("Failed to sign transaction");
+    }
+    if (!transfer_->submitTransaction(tx)) {
+        throw std::runtime_error("Failed to submit shielded transaction");
+    }
+    feeAtomsOut = fee;
+    return crypto::toHex(tx.txid);
+}
+
 std::string createAndSubmitPaymentTx(const std::string& to, uint64_t amountAtoms, uint64_t& feeAtomsOut) {
+    std::vector<uint8_t> viewPub;
+    std::vector<uint8_t> spendPub;
+    if (privacy::StealthAddress::decodeAddress(to, viewPub, spendPub)) {
+        return createAndSubmitShieldTx(to, amountAtoms, feeAtomsOut);
+    }
     if (!transfer_ || !keys_ || !keys_->isValid() || address_.empty()) {
         throw std::runtime_error("Wallet/transfer not ready");
     }
@@ -2238,7 +2361,6 @@ std::string handleRpcPrivacyStealthSend(const std::string& paramsJson) {
     json params = parseRpcParams(paramsJson);
     const std::string recipient = params.value("recipient", std::string());
     const std::string amount = params.value("amount", std::string());
-    const std::string memo = params.value("memo", std::string());
     if (recipient.empty() || amount.empty()) {
         result["error"] = "recipient and amount required";
         return result.dump();
@@ -2249,24 +2371,29 @@ std::string handleRpcPrivacyStealthSend(const std::string& paramsJson) {
         result["error"] = "invalid stealth address";
         return result.dump();
     }
-    privacy::StealthAddress stealth;
-    if (!stealth.generateKeys()) {
-        result["error"] = "ephemeral key generation failed";
+    uint64_t atoms = 0;
+    try {
+        atoms = static_cast<uint64_t>(std::stod(amount) * 1e8 + 0.5);
+    } catch (...) {
+        result["error"] = "invalid amount";
         return result.dump();
     }
-    std::vector<uint8_t> ephemeralPub;
-    std::vector<uint8_t> oneTime = stealth.generateOneTimeAddress(viewPub, spendPub, ephemeralPub);
-    if (oneTime.empty()) {
-        result["error"] = "one-time address derivation failed";
+    if (atoms == 0) {
+        result["error"] = "invalid amount";
         return result.dump();
     }
-    result["oneTimeAddress"] = crypto::toHex(oneTime);
-    result["ephemeralPublicKey"] = crypto::toHex(ephemeralPub);
-    result["amount"] = amount;
-    result["memo"] = memo;
-    result["stealth"] = true;
-    result["status"] = "prepared";
-    return result.dump();
+    try {
+        uint64_t feeAtoms = 0;
+        result["txid"] = createAndSubmitPaymentTx(recipient, atoms, feeAtoms);
+        result["feeAtoms"] = feeAtoms;
+        result["stealth"] = true;
+        result["status"] = "submitted";
+        result["privacy"] = "shield_ringct";
+        return result.dump();
+    } catch (const std::exception& e) {
+        result["error"] = e.what();
+        return result.dump();
+    }
 }
 
 std::string handleRpcPrivacyRingSign(const std::string& paramsJson) {
@@ -2278,22 +2405,35 @@ std::string handleRpcPrivacyRingSign(const std::string& paramsJson) {
         result["error"] = "message required";
         return result.dump();
     }
-    if (ringSize < 2) {
-        ringSize = 2;
-    }
+    if (ringSize < 2) ringSize = 2;
+    if (ringSize > 32) ringSize = 32;
     std::vector<uint8_t> messageBytes(message.begin(), message.end());
+    std::vector<uint8_t> privateKey(crypto_core_ed25519_SCALARBYTES);
+    crypto_core_ed25519_scalar_random(privateKey.data());
+    std::vector<uint8_t> signerPub(crypto_core_ed25519_BYTES);
+    if (crypto_scalarmult_ed25519_base_noclamp(signerPub.data(), privateKey.data()) != 0) {
+        result["error"] = "signer point failed";
+        return result.dump();
+    }
     std::vector<std::vector<uint8_t>> ring;
-    std::vector<uint8_t> privateKey = crypto::randomBytes(32);
-    std::vector<uint8_t> signerPub = crypto::randomBytes(32);
+    ring.push_back(signerPub);
+    for (uint32_t i = 1; i < ringSize; ++i) {
+        ring.push_back(privacy::randomValidPoint());
+    }
     size_t signerIndex = 0;
-    for (uint32_t i = 0; i < ringSize; ++i) {
-        if (i == signerIndex) {
-            ring.push_back(signerPub);
-        } else {
-            ring.push_back(crypto::randomBytes(32));
+    {
+        unsigned char b[4];
+        randombytes_buf(b, 4);
+        uint32_t r = static_cast<uint32_t>(b[0]) | (static_cast<uint32_t>(b[1]) << 8) |
+                     (static_cast<uint32_t>(b[2]) << 16) | (static_cast<uint32_t>(b[3]) << 24);
+        size_t target = static_cast<size_t>(r) % ring.size();
+        if (target != signerIndex) {
+            std::swap(ring[signerIndex], ring[target]);
+            signerIndex = target;
         }
     }
-    crypto::RingSignature sig = crypto::RingSign::sign(messageBytes, ring, privateKey, signerIndex);
+    crypto::RingSignature sig = crypto::RingSign::sign(messageBytes, ring, privateKey, signerIndex, false);
+    sodium_memzero(privateKey.data(), privateKey.size());
     json ringJson = json::array();
     for (const auto& member : ring) {
         ringJson.push_back(crypto::toHex(member));
@@ -3198,8 +3338,6 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                 discovery_->addDnsSeed("seed3.synapsenet.io");
                 discovery_->addDnsSeed("seed4.synapsenet.io");
                 discovery_->addDnsSeed("seed5.synapsenet.io");
-                discovery_->addBootstrap("nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion", 8333);
-                discovery_->addBootstrap("ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion", 8333);
             }
         } else if (config_.regtest) {
             utils::Logger::info("Regtest mode: no bootstrap nodes");
@@ -3695,7 +3833,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                     naanCfg << "route_clearnet_through_tor=1\n";
                     naanCfg << "naan_force_tor_mode=1\n";
                     naanCfg << "naan_auto_search_enabled=1\n";
-                    naanCfg << "naan_auto_search_mode=both\n";
+                    naanCfg << "naan_auto_search_mode=tor\n";
                     naanCfg << "naan_auto_search_queries=latest space engineering research,latest ai research papers,open source systems engineering best practices\n";
                     naanCfg << "naan_auto_search_max_results=4\n";
                     naanCfg << "clearnet_site_allowlist=\n";

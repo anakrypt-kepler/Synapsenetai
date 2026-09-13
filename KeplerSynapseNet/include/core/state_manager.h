@@ -4,6 +4,9 @@
 #include <map>
 #include <cstdint>
 
+// High-level node lifecycle: Initializing → Connecting → Syncing → Running.
+// Separate from PeerState. Used by TUI/status RPC, not the consensus machine.
+
 namespace synapse {
 namespace core {
 

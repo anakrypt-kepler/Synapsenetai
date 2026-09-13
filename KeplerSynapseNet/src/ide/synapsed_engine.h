@@ -1,5 +1,12 @@
 #pragma once
 
+// SynapsedEngine is the in-process node used by the Tauri desktop app and TUI.
+// Singleton. init() boots lib internals; rpcCall() is the JSON-RPC surface
+// (wallet, blocks, naan.*, harvest.*, exploit.*).
+// NAAN harvest loop (naanLoop), fetchWithRetry, harvest, and exploit chain
+// are private methods on this class — see synapsed_engine.cpp.
+
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -14,6 +21,9 @@
 namespace synapse {
 namespace privacy {
 class PrivacyManager;
+}
+namespace model {
+class InferenceEngine;
 }
 namespace ide {
 
@@ -56,6 +66,8 @@ private:
         std::string version;
         std::string exitIp;
         bool connected = false;
+        int64_t trafficRead = 0;
+        int64_t trafficWritten = 0;
     };
     TorInfo queryTorControl() const;
     std::string fetchViaTor(const std::string& url) const;
@@ -64,6 +76,7 @@ private:
 
     void startNaan();
     void stopNaan();
+    void compactLocalPoeChain();
     void naanLoop();
     std::string naanStatus() const;
     std::string naanControl(const std::string& paramsJson);
@@ -245,8 +258,19 @@ private:
     void persistDraft(const NaanDraft& d, const std::string& hash) const;
 
     std::string modelLoad(const std::string& paramsJson);
+    std::string modelUnloadRpc();
     std::string modelStatus() const;
     bool validateGguf(const std::string& path) const;
+    std::string modelCatalogJson() const;
+    std::string modelDownloadStart(const std::string& paramsJson);
+    std::string modelDownloadStatusJson() const;
+    std::string modelDownloadCancel();
+    void modelDownloadLoop(std::string id, std::string url, std::string dest,
+                           uint64_t expected, bool viaTor);
+    std::string aiCompleteRpc(const std::string& paramsJson);
+    std::string cryptoStatusJson() const;
+    bool ensureLlamaLoaded() const;
+    void applyDesktopConfig();
 
     mutable std::mutex mtx_;
     bool initialized_ = false;
@@ -258,9 +282,12 @@ private:
     mutable std::string connectionType_ = "disconnected";
     std::string walletAddress_;
     std::string walletMnemonic_;
-    std::string balance_ = "0.00";
+    mutable std::string balance_ = "0.00";
     mutable std::string torBootstrap_;
     mutable int torCircuits_ = 0;
+    mutable std::mutex torInfoMtx_;
+    mutable TorInfo torInfoCache_;
+    mutable int64_t torInfoCacheMs_ = 0;
 
     struct PeerEntry {
         std::string address;
@@ -268,17 +295,43 @@ private:
         int latency_ms = 0;
         std::string role;
         bool alive = false;
+        int64_t last_ok_ms = 0;
+        std::string alias;
+        std::string avatar;
     };
     mutable std::vector<PeerEntry> cachedPeers_;
+    mutable std::vector<PeerEntry> cachedSeeds_;
+    mutable std::mutex peerCacheMtx_;
     mutable int64_t lastPeerProbe_ = 0;
+    mutable std::atomic<bool> peerProbeBusy_{false};
+    mutable std::thread peerProbeThread_;
     void probeSeedNodes() const;
 
     mutable std::string ownOnion_;
     mutable std::string onionPrivKey_;
+    mutable std::string onionServiceId_;
     mutable int listenFd_ = -1;
+    mutable uint16_t listenPort_ = 0;
+    mutable std::atomic<bool> hsReachable_{false};
+    mutable std::atomic<int> hsLatencyMs_{-1};
+    mutable int64_t lastTrafficRead_{0};
+    mutable int64_t lastTrafficWritten_{0};
+    mutable int64_t lastTrafficTs_{0};
+    mutable int inboundKbps_{0};
+    mutable int outboundKbps_{0};
     mutable int controlFd_ = -1;
     mutable std::thread listenerThread_;
     mutable std::atomic<bool> listenerStop_{false};
+    mutable uint16_t sessionSocksPort_ = 0;
+    mutable uint16_t sessionControlPort_ = 0;
+    mutable int64_t sessionTorPid_ = -1;
+    mutable std::string sessionTorDataDir_;
+    mutable std::string sessionCookiePath_;
+    mutable std::thread sessionBootThread_;
+    mutable std::atomic<bool> sessionBootStop_{false};
+    bool startSessionTor() const;
+    void stopSessionTor() const;
+    void bootTorMesh();
     void startOnionService() const;
     void stopListener() const;
     void p2pListenerLoop() const;
@@ -290,17 +343,45 @@ private:
     struct KnownPeer {
         std::string onion;
         int64_t lastSeen = 0;
+        int64_t firstSeen = 0;
+        int latency_ms = 0;
         std::string source;
         bool connected = false;
+        std::string alias;
+        std::string avatar;
+        std::string boxPk;
+        std::string kemPk;
     };
     mutable std::mutex knownPeersMtx_;
     mutable std::map<std::string, KnownPeer> knownPeers_;
+    mutable std::array<unsigned char, 32> msgBoxPk_{};
+    mutable std::array<unsigned char, 32> msgBoxSk_{};
+    mutable bool msgBoxReady_ = false;
+    mutable std::vector<uint8_t> msgKemPk_;
+    mutable std::vector<uint8_t> msgKemSk_;
+    mutable bool msgKemReady_ = false;
     void mergeKnownPeer(const std::string& onion, const std::string& source, bool connected) const;
     std::vector<std::string> dialPeer(const std::string& onion);
+    void loadLocalProfile() const;
+    void ensureMsgBoxKeys() const;
+    void ensureKemKeys() const;
+    void ingestNodeProfile(const std::string& jsonBody) const;
+    void pushLocalProfile(const std::string& onion) const;
+    std::string localProfileLine() const;
+    std::string peerBoxPk(const std::string& onion) const;
+    std::string peerKemPk(const std::string& onion) const;
+    bool sealToPeer(const std::string& peerPkHex, const std::string& plaintext, std::string& sealedB64) const;
+    bool openSealedMsg(const std::string& sealedB64, std::string& plaintext) const;
+    bool wrapSealHybrid(const std::string& peerKemPkHex, const std::string& sealedB64,
+                        std::string& kemCtB64, std::string& wrappedSealB64) const;
+    bool unwrapSealHybrid(const std::string& kemCtB64, const std::string& wrappedSealB64,
+                          std::string& sealedB64) const;
     void loadPeerCache() const;
     void savePeerCache() const;
 
     mutable std::atomic<uint64_t> lastBlockHeight_{0};
+    uint64_t localChainHeight() const;
+    void appendLocalChainBlock(const std::string& eventType, const std::string& eventHash);
     mutable std::atomic<uint32_t> seedPeerCount_{0};
     mutable std::thread blockFetchThread_;
     mutable std::atomic<bool> blockFetchStop_{false};
@@ -309,6 +390,30 @@ private:
     std::string modelName_;
     std::string modelPath_;
     size_t modelSizeMb_ = 0;
+    mutable bool inferenceReady_ = false;
+    mutable std::string profileAlias_;
+    mutable std::string profileAvatarDataUrl_;
+    mutable std::string profileAvatarMesh_;
+    mutable std::unique_ptr<synapse::model::InferenceEngine> llamaEngine_;
+    mutable std::mutex llamaMtx_;
+
+    mutable std::mutex modelDlMtx_;
+    std::thread modelDlThread_;
+    std::atomic<bool> modelDlStop_{false};
+    std::atomic<long> modelDlPid_{-1};
+    struct ModelDlState {
+        std::string id;
+        std::string filename;
+        std::string path;
+        std::string error;
+        uint64_t bytes = 0;
+        uint64_t total = 0;
+        bool running = false;
+        bool done = false;
+        bool failed = false;
+        bool viaTor = false;
+    };
+    mutable ModelDlState modelDl_;
 
     std::atomic<bool> naanRunning_{false};
     std::atomic<bool> naanStop_{false};
@@ -321,12 +426,24 @@ private:
     std::vector<std::string> cfgTopics_ = {
         "whistleblower", "zero-day", "darknet", "AI", "crypto"
     };
+    // tor | both | clearnet. Default tor: no clearnet destinations unless the operator picks them.
+    std::string cfgSources_ = "tor";
+    void loadNaanWebConfig();
+    void persistNaanSources() const;
     std::vector<NaanLogEntry> naanLog_;
     std::vector<NaanDraft> naanHist_;
     int naanSubmissions_ = 0;
     int naanApproved_ = 0;
-    double naanTotalNgt_ = 0.0;
+    mutable double naanTotalNgt_ = 0.0;
     std::unique_ptr<synapse::privacy::PrivacyManager> privacy_;
+    mutable std::mutex privateWalletMtx_;
+
+    void ensureStealthWallet();
+    void loadMigratePrivateWallet() const;
+    std::string sendPrivateNgt(const std::string& recipient, double amt, const std::string& memo = "");
+    void ingestPrivateTxJson(const std::string& jsonLine) const;
+    void relayPrivateTxJson(const std::string& jsonLine) const;
+    std::string stealthReceiveAddress() const;
 
     std::unordered_map<std::string, std::vector<EventCallback>> subscribers_;
 };

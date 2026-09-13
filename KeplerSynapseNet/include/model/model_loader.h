@@ -1,5 +1,9 @@
 #pragma once
 
+// Local GGUF (llama.cpp) loader. Desktop/TUI pick a file under ~/.synapsenet/models.
+// AccessMode is marketplace policy (private/shared/paid), not filesystem mode.
+// If no model is loaded, NAAN can still fetch pages but cannot draft with the LLM.
+
 #include <string>
 #include <vector>
 #include <memory>

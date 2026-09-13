@@ -1,3 +1,6 @@
+// Token-bucket NAAN scheduler. Persists counters so a restart does not reset
+// the epoch budget (see naan/counters.state on the daemon side).
+
 #include "core/agent_scheduler.h"
 
 #include <algorithm>

@@ -1,7 +1,15 @@
+// Wallet implementation: mnemonic → keys → encrypted file.
+// File layout v3: magic 0xA5 | version 3 | salt(16) | iv(12) | ciphertext | tag(16).
+// File layout v4: magic 0xA5 | version 4 | salt(16) | kem_ct(1088) | iv(12) | ciphertext | tag(16).
+// v4: PBKDF2 → K → HKDF seed → deterministic ML-KEM-768 KP; encaps random DEK; AES-GCM(plaintext, DEK).
+// AAD binds magic+version+salt[+kem_ct]+iv so a swapped header fails GCM auth.
+// If RAND_bytes fails we fall back to random_device (weaker; log that path if you debug).
+
 #include "core/wallet.h"
 #include "crypto/address.h"
 #include "crypto/crypto.h"
 #include "quantum/application_signature.h"
+#include "quantum/wallet_security.h"
 #include "tui/bip39_wordlist.h"
 #include "utils/logger.h"
 #include <cstring>
@@ -18,9 +26,10 @@ namespace synapse {
 namespace core {
 
 static constexpr uint8_t WALLET_MAGIC = 0xA5;
-static constexpr uint8_t WALLET_FORMAT_V1_MNEMONIC_ONLY = 1;
-static constexpr uint8_t WALLET_FORMAT_V2_HYBRID = 2;
-static constexpr uint8_t WALLET_FORMAT_V3_HYBRID_GCM = 3;
+static constexpr uint8_t WALLET_FORMAT_V1_MNEMONIC_ONLY = 1; // mnemonic only, legacy XOR-era
+static constexpr uint8_t WALLET_FORMAT_V2_HYBRID = 2;       // mnemonic + hybrid keys, older KDF
+static constexpr uint8_t WALLET_FORMAT_V3_HYBRID_GCM = 3;   // AES-256-GCM + 600k PBKDF2 (no KEM wrap)
+static constexpr uint8_t WALLET_FORMAT_V4_KYBER_GCM = 4;    // ML-KEM-768 wrap of AES-256-GCM DEK
 static constexpr uint32_t WALLET_MAX_PLAINTEXT_FIELD = 16 * 1024;
 static constexpr size_t WALLET_CLASSIC_PK_SIZE = 32;
 static constexpr size_t WALLET_CLASSIC_SK_SIZE = 64;
@@ -116,6 +125,73 @@ static bool decodeV2Plaintext(const std::vector<uint8_t>& plaintext,
         && kpOut.pqcSecretKey.size() == quantum::DILITHIUM_SECRET_KEY_SIZE;
 }
 
+static bool aes256GcmEncrypt(const std::vector<uint8_t>& key,
+                             const std::vector<uint8_t>& iv,
+                             const std::vector<uint8_t>& aad,
+                             const std::vector<uint8_t>& plaintext,
+                             std::vector<uint8_t>& ciphertext,
+                             std::vector<uint8_t>& tag) {
+    ciphertext.assign(plaintext.size(), 0);
+    tag.assign(WALLET_GCM_TAG_SIZE, 0);
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) return false;
+    int outlen = 0;
+    int tmplen = 0;
+    int aadLen = 0;
+    bool ok = true;
+    if (1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr)) ok = false;
+    if (ok && 1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(iv.size()), nullptr)) ok = false;
+    if (ok && 1 != EVP_EncryptInit_ex(ctx, nullptr, nullptr, key.data(), iv.data())) ok = false;
+    if (ok && 1 != EVP_EncryptUpdate(ctx, nullptr, &aadLen, aad.data(), static_cast<int>(aad.size()))) ok = false;
+    if (ok && 1 != EVP_EncryptUpdate(ctx, ciphertext.data(), &outlen,
+                                     plaintext.data(), static_cast<int>(plaintext.size()))) ok = false;
+    if (ok && 1 != EVP_EncryptFinal_ex(ctx, ciphertext.data() + outlen, &tmplen)) ok = false;
+    if (ok) outlen += tmplen;
+    if (ok && 1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, static_cast<int>(tag.size()), tag.data())) ok = false;
+    EVP_CIPHER_CTX_free(ctx);
+    if (!ok) {
+        ciphertext.clear();
+        tag.clear();
+        return false;
+    }
+    ciphertext.resize(outlen);
+    return true;
+}
+
+static bool aes256GcmDecrypt(const std::vector<uint8_t>& key,
+                             const std::vector<uint8_t>& iv,
+                             const std::vector<uint8_t>& aad,
+                             const std::vector<uint8_t>& ciphertext,
+                             const std::vector<uint8_t>& tag,
+                             std::vector<uint8_t>& plaintextOut) {
+    plaintextOut.assign(ciphertext.size(), 0);
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) {
+        plaintextOut.clear();
+        return false;
+    }
+    int outlen = 0;
+    int tmplen = 0;
+    int aadLen = 0;
+    bool ok = true;
+    if (1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr)) ok = false;
+    if (ok && 1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(iv.size()), nullptr)) ok = false;
+    if (ok && 1 != EVP_DecryptInit_ex(ctx, nullptr, nullptr, key.data(), iv.data())) ok = false;
+    if (ok && 1 != EVP_DecryptUpdate(ctx, nullptr, &aadLen, aad.data(), static_cast<int>(aad.size()))) ok = false;
+    if (ok && 1 != EVP_DecryptUpdate(ctx, plaintextOut.data(), &outlen,
+                                     ciphertext.data(), static_cast<int>(ciphertext.size()))) ok = false;
+    if (ok && 1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, static_cast<int>(tag.size()),
+                                       const_cast<uint8_t*>(tag.data()))) ok = false;
+    if (ok && 1 != EVP_DecryptFinal_ex(ctx, plaintextOut.data() + outlen, &tmplen)) ok = false;
+    EVP_CIPHER_CTX_free(ctx);
+    if (!ok) {
+        plaintextOut.clear();
+        return false;
+    }
+    plaintextOut.resize(outlen + tmplen);
+    return true;
+}
+
 static bool encryptAndWriteV3(const std::string& path,
                               const std::vector<uint8_t>& plaintext,
                               const std::string& password) {
@@ -130,36 +206,81 @@ static bool encryptAndWriteV3(const std::string& path,
     aad.insert(aad.end(), salt.begin(), salt.end());
     aad.insert(aad.end(), iv.begin(), iv.end());
 
-    std::vector<uint8_t> ciphertext(plaintext.size());
-    std::vector<uint8_t> tag(WALLET_GCM_TAG_SIZE);
-    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-    if (!ctx) return false;
-    int outlen = 0;
-    int tmplen = 0;
-    bool ok = true;
-    if (1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr)) ok = false;
-    if (ok && 1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(iv.size()), nullptr)) ok = false;
-    if (ok && 1 != EVP_EncryptInit_ex(ctx, nullptr, nullptr, aesKey.data(), iv.data())) ok = false;
-    int aadLen = 0;
-    if (ok && 1 != EVP_EncryptUpdate(ctx, nullptr, &aadLen, aad.data(), static_cast<int>(aad.size()))) ok = false;
-    if (ok && 1 != EVP_EncryptUpdate(ctx, ciphertext.data(), &outlen,
-                                     plaintext.data(), static_cast<int>(plaintext.size()))) ok = false;
-    if (ok && 1 != EVP_EncryptFinal_ex(ctx, ciphertext.data() + outlen, &tmplen)) ok = false;
-    if (ok) outlen += tmplen;
-    if (ok && 1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, static_cast<int>(tag.size()), tag.data())) ok = false;
-    EVP_CIPHER_CTX_free(ctx);
+    std::vector<uint8_t> ciphertext;
+    std::vector<uint8_t> tag;
+    const bool ok = aes256GcmEncrypt(aesKey, iv, aad, plaintext, ciphertext, tag);
+    OPENSSL_cleanse(aesKey.data(), aesKey.size());
     if (!ok) return false;
-    ciphertext.resize(outlen);
 
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
     file.put(static_cast<char>(WALLET_MAGIC));
     file.put(static_cast<char>(WALLET_FORMAT_V3_HYBRID_GCM));
-    file.write(reinterpret_cast<char*>(salt.data()), salt.size());
-    file.write(reinterpret_cast<char*>(iv.data()), iv.size());
-    file.write(reinterpret_cast<char*>(ciphertext.data()), ciphertext.size());
-    file.write(reinterpret_cast<char*>(tag.data()), tag.size());
+    file.write(reinterpret_cast<char*>(salt.data()), static_cast<std::streamsize>(salt.size()));
+    file.write(reinterpret_cast<char*>(iv.data()), static_cast<std::streamsize>(iv.size()));
+    file.write(reinterpret_cast<char*>(ciphertext.data()), static_cast<std::streamsize>(ciphertext.size()));
+    file.write(reinterpret_cast<char*>(tag.data()), static_cast<std::streamsize>(tag.size()));
     return file.good();
+}
+
+// ML-KEM-768 wrap of a random AES-GCM DEK. Fail closed on KEM errors (no plaintext, no silent v3).
+static bool encryptAndWriteV4(const std::string& path,
+                              const std::vector<uint8_t>& plaintext,
+                              const std::string& password) {
+    auto salt = generateRandom(16);
+    auto k = pbkdf2_hmac(password, salt, WALLET_PBKDF2_ITERATIONS_V3, 32);
+    quantum::KyberKeyPair wrapKp{};
+    if (!quantum::WalletSecurity::deriveFileKyberKeyPair(k, wrapKp)) {
+        OPENSSL_cleanse(k.data(), k.size());
+        OPENSSL_cleanse(wrapKp.secretKey.data(), wrapKp.secretKey.size());
+        return false;
+    }
+
+    std::vector<uint8_t> kemCt;
+    std::vector<uint8_t> dek;
+    const bool wrapped = quantum::WalletSecurity::encapsulateFileDek(wrapKp.publicKey, kemCt, dek);
+    OPENSSL_cleanse(wrapKp.secretKey.data(), wrapKp.secretKey.size());
+    OPENSSL_cleanse(k.data(), k.size());
+    if (!wrapped) {
+        if (!dek.empty()) OPENSSL_cleanse(dek.data(), dek.size());
+        return false;
+    }
+
+    auto iv = generateRandom(WALLET_GCM_IV_SIZE);
+    std::vector<uint8_t> aad;
+    aad.reserve(1 + 1 + salt.size() + kemCt.size() + iv.size());
+    aad.push_back(WALLET_MAGIC);
+    aad.push_back(WALLET_FORMAT_V4_KYBER_GCM);
+    aad.insert(aad.end(), salt.begin(), salt.end());
+    aad.insert(aad.end(), kemCt.begin(), kemCt.end());
+    aad.insert(aad.end(), iv.begin(), iv.end());
+
+    std::vector<uint8_t> ciphertext;
+    std::vector<uint8_t> tag;
+    const bool sealed = aes256GcmEncrypt(dek, iv, aad, plaintext, ciphertext, tag);
+    OPENSSL_cleanse(dek.data(), dek.size());
+    if (!sealed) return false;
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) return false;
+    file.put(static_cast<char>(WALLET_MAGIC));
+    file.put(static_cast<char>(WALLET_FORMAT_V4_KYBER_GCM));
+    file.write(reinterpret_cast<char*>(salt.data()), static_cast<std::streamsize>(salt.size()));
+    file.write(reinterpret_cast<char*>(kemCt.data()), static_cast<std::streamsize>(kemCt.size()));
+    file.write(reinterpret_cast<char*>(iv.data()), static_cast<std::streamsize>(iv.size()));
+    file.write(reinterpret_cast<char*>(ciphertext.data()), static_cast<std::streamsize>(ciphertext.size()));
+    file.write(reinterpret_cast<char*>(tag.data()), static_cast<std::streamsize>(tag.size()));
+    return file.good();
+}
+
+// Real Kyber → v4. Simulated/absent Kyber is not a wrap: keep AES-GCM v3.
+static bool encryptAndWriteCurrent(const std::string& path,
+                                   const std::vector<uint8_t>& plaintext,
+                                   const std::string& password) {
+    if (quantum::WalletSecurity::fileKyberWrapAvailable()) {
+        return encryptAndWriteV4(path, plaintext, password);
+    }
+    return encryptAndWriteV3(path, plaintext, password);
 }
 
 [[maybe_unused]] static bool encryptAndWriteV2(const std::string& path,
@@ -244,26 +365,55 @@ static bool decryptFileV3(const std::vector<uint8_t>& encrypted,
     aad.insert(aad.end(), salt.begin(), salt.end());
     aad.insert(aad.end(), iv.begin(), iv.end());
 
-    plaintextOut.assign(ciphertext.size(), 0);
-    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-    if (!ctx) return false;
-    int outlen = 0;
-    int tmplen = 0;
-    bool ok = true;
-    if (1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr)) ok = false;
-    if (ok && 1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, static_cast<int>(iv.size()), nullptr)) ok = false;
-    if (ok && 1 != EVP_DecryptInit_ex(ctx, nullptr, nullptr, aesKey.data(), iv.data())) ok = false;
-    int aadLen = 0;
-    if (ok && 1 != EVP_DecryptUpdate(ctx, nullptr, &aadLen, aad.data(), static_cast<int>(aad.size()))) ok = false;
-    if (ok && 1 != EVP_DecryptUpdate(ctx, plaintextOut.data(), &outlen,
-                                     ciphertext.data(), static_cast<int>(ciphertext.size()))) ok = false;
-    if (ok && 1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, static_cast<int>(tag.size()),
-                                       const_cast<uint8_t*>(tag.data()))) ok = false;
-    if (ok && 1 != EVP_DecryptFinal_ex(ctx, plaintextOut.data() + outlen, &tmplen)) ok = false;
-    EVP_CIPHER_CTX_free(ctx);
-    if (!ok) { plaintextOut.clear(); return false; }
-    plaintextOut.resize(outlen + tmplen);
-    return true;
+    const bool ok = aes256GcmDecrypt(aesKey, iv, aad, ciphertext, tag, plaintextOut);
+    OPENSSL_cleanse(aesKey.data(), aesKey.size());
+    return ok;
+}
+
+static bool decryptFileV4(const std::vector<uint8_t>& encrypted,
+                          const std::string& password,
+                          std::vector<uint8_t>& plaintextOut) {
+    const size_t minSize = 2 + 16 + quantum::KYBER_CIPHERTEXT_SIZE + WALLET_GCM_IV_SIZE + WALLET_GCM_TAG_SIZE;
+    if (encrypted.size() < minSize) return false;
+    size_t pos = 2;
+    std::vector<uint8_t> salt(encrypted.begin() + pos, encrypted.begin() + pos + 16); pos += 16;
+    std::vector<uint8_t> kemCt(encrypted.begin() + pos, encrypted.begin() + pos + quantum::KYBER_CIPHERTEXT_SIZE);
+    pos += quantum::KYBER_CIPHERTEXT_SIZE;
+    std::vector<uint8_t> iv(encrypted.begin() + pos, encrypted.begin() + pos + WALLET_GCM_IV_SIZE); pos += WALLET_GCM_IV_SIZE;
+    if (encrypted.size() < pos + WALLET_GCM_TAG_SIZE) return false;
+    const size_t tagPos = encrypted.size() - WALLET_GCM_TAG_SIZE;
+    if (tagPos < pos) return false;
+    std::vector<uint8_t> ciphertext(encrypted.begin() + pos, encrypted.begin() + tagPos);
+    std::vector<uint8_t> tag(encrypted.begin() + tagPos, encrypted.end());
+
+    auto k = pbkdf2_hmac(password, salt, WALLET_PBKDF2_ITERATIONS_V3, 32);
+    quantum::KyberKeyPair wrapKp{};
+    if (!quantum::WalletSecurity::deriveFileKyberKeyPair(k, wrapKp)) {
+        OPENSSL_cleanse(k.data(), k.size());
+        OPENSSL_cleanse(wrapKp.secretKey.data(), wrapKp.secretKey.size());
+        return false;
+    }
+
+    std::vector<uint8_t> dek;
+    const bool opened = quantum::WalletSecurity::decapsulateFileDek(kemCt, wrapKp.secretKey, dek);
+    OPENSSL_cleanse(wrapKp.secretKey.data(), wrapKp.secretKey.size());
+    OPENSSL_cleanse(k.data(), k.size());
+    if (!opened) {
+        if (!dek.empty()) OPENSSL_cleanse(dek.data(), dek.size());
+        return false;
+    }
+
+    std::vector<uint8_t> aad;
+    aad.reserve(1 + 1 + salt.size() + kemCt.size() + iv.size());
+    aad.push_back(WALLET_MAGIC);
+    aad.push_back(WALLET_FORMAT_V4_KYBER_GCM);
+    aad.insert(aad.end(), salt.begin(), salt.end());
+    aad.insert(aad.end(), kemCt.begin(), kemCt.end());
+    aad.insert(aad.end(), iv.begin(), iv.end());
+
+    const bool ok = aes256GcmDecrypt(dek, iv, aad, ciphertext, tag, plaintextOut);
+    OPENSSL_cleanse(dek.data(), dek.size());
+    return ok;
 }
 
 static bool decryptFile(const std::vector<uint8_t>& encrypted,
@@ -273,6 +423,9 @@ static bool decryptFile(const std::vector<uint8_t>& encrypted,
     if (encrypted.size() < 2) return false;
     if (encrypted[0] != WALLET_MAGIC) return false;
     formatVersionOut = encrypted[1];
+    if (formatVersionOut == WALLET_FORMAT_V4_KYBER_GCM) {
+        return decryptFileV4(encrypted, password, plaintextOut);
+    }
     if (formatVersionOut == WALLET_FORMAT_V3_HYBRID_GCM) {
         return decryptFileV3(encrypted, password, plaintextOut);
     }
@@ -433,6 +586,7 @@ Wallet::~Wallet() {
     lock();
 }
 
+// New wallet: 24 BIP39 words, classic + PQ keys. Memory only until save().
 bool Wallet::create() {
     std::lock_guard<std::mutex> lock(impl_->mtx);
 
@@ -462,6 +616,7 @@ bool Wallet::create() {
     return true;
 }
 
+// Rebuild from a user-typed seed. Rejects wrong word count / unknown words.
 bool Wallet::restore(const std::vector<std::string>& seedWords) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
 
@@ -476,6 +631,7 @@ bool Wallet::restore(const std::vector<std::string>& seedWords) {
     return true;
 }
 
+// Decrypt from disk. v1/v2/v3 stay readable. v1/v2 migrate on load; v3 migrates to v4 when Kyber is real.
 bool Wallet::load(const std::string& path, const std::string& password) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
 
@@ -498,12 +654,17 @@ bool Wallet::load(const std::string& path, const std::string& password) {
     quantum::HybridKeyPair loadedKeyPair;
     bool needsMigration = false;
 
-    if (formatVersion == WALLET_FORMAT_V3_HYBRID_GCM || formatVersion == WALLET_FORMAT_V2_HYBRID) {
+    if (formatVersion == WALLET_FORMAT_V4_KYBER_GCM
+        || formatVersion == WALLET_FORMAT_V3_HYBRID_GCM
+        || formatVersion == WALLET_FORMAT_V2_HYBRID) {
         if (!decodeV2Plaintext(plaintext, mnemonic, loadedKeyPair)) {
             utils::Logger::error("wallet: hybrid plaintext structure invalid for " + path);
             return false;
         }
         if (formatVersion == WALLET_FORMAT_V2_HYBRID) {
+            needsMigration = true;
+        } else if (formatVersion == WALLET_FORMAT_V3_HYBRID_GCM
+                   && quantum::WalletSecurity::fileKyberWrapAvailable()) {
             needsMigration = true;
         }
     } else {
@@ -527,7 +688,9 @@ bool Wallet::load(const std::string& path, const std::string& password) {
     impl_->deriveKeys();
     impl_->walletPath = path;
 
-    if (formatVersion == WALLET_FORMAT_V3_HYBRID_GCM || formatVersion == WALLET_FORMAT_V2_HYBRID) {
+    if (formatVersion == WALLET_FORMAT_V4_KYBER_GCM
+        || formatVersion == WALLET_FORMAT_V3_HYBRID_GCM
+        || formatVersion == WALLET_FORMAT_V2_HYBRID) {
         impl_->hybridKeyPair = std::move(loadedKeyPair);
     } else {
         impl_->zeroHybridSecret();
@@ -543,14 +706,15 @@ bool Wallet::load(const std::string& path, const std::string& password) {
             mnemonicNorm += w;
         }
         auto upgraded = encodeV2Plaintext(mnemonicNorm, impl_->hybridKeyPair);
-        if (!encryptAndWriteV3(path, upgraded, password)) {
-            utils::Logger::error("wallet: lazy migrate to v3 hybrid-gcm format failed for " + path);
+        if (!encryptAndWriteCurrent(path, upgraded, password)) {
+            utils::Logger::error("wallet: lazy migrate to current on-disk format failed for " + path);
         }
     }
 
     return true;
 }
 
+// Write v4 when real ML-KEM-768 is available, otherwise v3. Call after create/restore/unlock.
 bool Wallet::save(const std::string& path, const std::string& password) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
 
@@ -563,7 +727,7 @@ bool Wallet::save(const std::string& path, const std::string& password) {
         mnemonic += w;
     }
     auto plaintext = encodeV2Plaintext(mnemonic, impl_->hybridKeyPair);
-    if (!encryptAndWriteV3(path, plaintext, password)) return false;
+    if (!encryptAndWriteCurrent(path, plaintext, password)) return false;
     impl_->walletPath = path;
     return true;
 }

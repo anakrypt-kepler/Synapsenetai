@@ -1,6 +1,10 @@
 #ifndef SYNAPSE_WEB_H
 #define SYNAPSE_WEB_H
 
+// Web4 fetch/search used by NAAN. Clearnet vs onion is decided by QueryType +
+// Tor route policy. Darknet engine names (Ahmia, Torch, ...) are search
+// frontends, not "hack targets". Actual HTTP is curl_fetch / tor_fetch.
+
 #include <string>
 #include <vector>
 #include <memory>

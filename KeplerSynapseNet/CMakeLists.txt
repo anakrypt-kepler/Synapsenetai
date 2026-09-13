@@ -24,6 +24,15 @@ if(WIN32)
 endif()
 option(BUILD_TUI "Build terminal UI (ncurses)" ${BUILD_TUI_DEFAULT})
 
+# GGUF GPU offload for desktop llama. Do not edit third_party/llama.cpp.
+if(USE_LLAMA_CPP AND NOT GGML_CUDA)
+    find_program(SYNAPSE_NVCC nvcc HINTS /usr/local/cuda/bin /opt/cuda/bin)
+    if(SYNAPSE_NVCC)
+        set(GGML_CUDA ON CACHE BOOL "ggml: use CUDA" FORCE)
+        message(STATUS "llama.cpp CUDA enabled (${SYNAPSE_NVCC})")
+    endif()
+endif()
+
 if(USE_LLAMA_CPP)
     if(EXISTS ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/CMakeLists.txt)
         add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/llama.cpp ${CMAKE_BINARY_DIR}/llama.cpp)
@@ -107,8 +116,7 @@ elseif(SYNAPSE_FETCH_LIBOQS)
     endif()
 else()
     if(SYNAPSE_REQUIRE_REAL_PQC)
-        message(WARNING "liboqs not found and SYNAPSE_FETCH_LIBOQS is OFF. Building with PQC stub backend. "
-                        "Set -DSYNAPSE_REQUIRE_REAL_PQC=OFF to suppress this warning, or install liboqs / enable SYNAPSE_FETCH_LIBOQS.")
+        message(FATAL_ERROR "liboqs is required for default PQC (Linux/Docker/desktop). Keep SYNAPSE_FETCH_LIBOQS=ON or install liboqs.")
     else()
         message(STATUS "liboqs not found — PQC features will use stub backend")
     endif()
@@ -306,6 +314,7 @@ set(CORE_SOURCES
     src/core/poe_v1.cpp
     src/core/poe_v1_engine.cpp
     src/core/poe_v1_objects.cpp
+    src/core/ringct.cpp
     src/core/state_manager.cpp
     src/core/tor_bridge_provider.cpp
     src/core/tor_bridge_utils.cpp
@@ -480,6 +489,7 @@ set(PRIVACY_SOURCES
     src/privacy/onion_service.cpp
     src/privacy/privacy.cpp
     src/privacy/privacy_manager.cpp
+    src/privacy/private_transfer.cpp
     src/privacy/session_crypto.cpp
     src/privacy/socks5_proxy.cpp
     src/privacy/stealth_address.cpp
@@ -623,6 +633,7 @@ if(SYNAPSE_PRIVACY_TESTS)
         src/crypto/ring_signature.cpp
         src/crypto/confidential_tx.cpp
         src/privacy/stealth_address.cpp
+        src/privacy/private_transfer.cpp
         ${QUANTUM_SOURCES}
     )
     target_include_directories(crypto_lib PUBLIC include ${SODIUM_INCLUDE_DIRS})

@@ -1,6 +1,10 @@
 #ifndef SYNAPSED_FFI_H
 #define SYNAPSED_FFI_H
 
+// C ABI for libsynapsed. The Tauri/Rust side calls these, not C++ methods.
+// Strings from synapsed_rpc_call / synapsed_get_status must be freed with
+// synapsed_free_string. config_path may be NULL (then ~/.synapsenet is used).
+
 #ifdef __cplusplus
 extern "C" {
 #endif

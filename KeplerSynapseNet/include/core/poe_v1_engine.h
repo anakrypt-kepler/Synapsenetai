@@ -1,5 +1,11 @@
 #pragma once
 
+// PoE v1 engine: submit → PoW gate → validator votes → epoch reward.
+// powBits is a small spam filter, not Bitcoin-style mining.
+// Novelty uses SimHash Hamming distance (noveltyMaxHamming). Rewards are in
+// NGT atoms: base + PoW bonus - size penalty, clamped to min/max.
+// allowSelfBootstrapValidator lets a lone devnet node vote on its own work.
+
 #include "core/poe_v1_objects.h"
 #include "crypto/crypto.h"
 #include <cstdint>

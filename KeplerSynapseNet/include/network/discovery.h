@@ -7,6 +7,10 @@
 #include <functional>
 #include <cstdint>
 
+// Peer exchange (PEX). GETPEERS at most once per minute per peer.
+// Seed onions are compiled in; a new node should find the mesh without a config.
+// Skip localhost and banned IDs. estimatedNetworkSize is a cached heuristic.
+
 namespace synapse {
 namespace network {
 

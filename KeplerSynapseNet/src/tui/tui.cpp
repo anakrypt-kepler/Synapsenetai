@@ -1,3 +1,6 @@
+// ncurses UI. Screens live in tui/screens.h. Hotkeys: A=agent, H=harvest, E=exploits.
+// Shared state is mutex-guarded; the draw loop must not block on RPC.
+
 #include "tui/tui.h"
 #include "tui/bip39_wordlist.h"
 #include "tui/primary_ui_spec.h"
@@ -352,7 +355,7 @@ static bool ensureNaanWebConfigFileExists(const std::string& path) {
     out << "route_clearnet_through_tor=1\n";
     out << "naan_force_tor_mode=1\n";
     out << "naan_auto_search_enabled=1\n";
-    out << "naan_auto_search_mode=both\n";
+    out << "naan_auto_search_mode=tor\n";
     out << "naan_auto_search_queries=latest space engineering research,latest ai research papers,open source systems engineering best practices\n";
     out << "naan_auto_search_max_results=4\n";
     out << "clearnet_site_allowlist=\n";

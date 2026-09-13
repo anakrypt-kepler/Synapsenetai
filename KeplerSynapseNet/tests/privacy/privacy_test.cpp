@@ -1,6 +1,8 @@
 #include "privacy/privacy.h"
+#include "privacy/private_transfer.h"
 #include "crypto/ring_signature.h"
 #include "crypto/confidential_tx.h"
+#include "crypto/crypto.h"
 
 #include <sodium.h>
 
@@ -108,10 +110,89 @@ static void testConfidential() {
     assert(ConfidentialTx::verifyBalance(inputs, badOutputs, 0) == false);
 }
 
+static void testPaymentOpen() {
+    StealthAddress recipient;
+    assert(recipient.generateKeys());
+    StealthAddress sender;
+    synapse::privacy::StealthPayment pay;
+    assert(sender.createPayment(recipient.getViewPublicKey(), recipient.getSpendPublicKey(), 12345678ULL, pay));
+    assert(pay.oneTimeAddress.size() == 32);
+    assert(pay.commitment.size() == 32);
+    assert(!pay.ecdh.empty());
+    assert(recipient.checkOwnership(pay.oneTimeAddress, pay.ephemeralPub));
+
+    uint64_t atoms = 0;
+    std::vector<uint8_t> blinding;
+    assert(recipient.tryOpenPayment(pay.ephemeralPub, pay.ecdh, atoms, blinding));
+    assert(atoms == 12345678ULL);
+    synapse::crypto::PedersenCommitment c;
+    c.commitment = pay.commitment;
+    c.blinding = blinding;
+    assert(c.verify(atoms));
+
+    StealthAddress other;
+    assert(other.generateKeys());
+    uint64_t bad = 0;
+    std::vector<uint8_t> b2;
+    assert(other.tryOpenPayment(pay.ephemeralPub, pay.ecdh, bad, b2) == false);
+}
+
+static void testPrivateSend() {
+    using synapse::privacy::OwnedOutput;
+    using synapse::privacy::PrivateSendResult;
+    using synapse::privacy::mintOwnedOutput;
+    using synapse::privacy::buildPrivateSend;
+    using synapse::privacy::verifyPrivateTx;
+    using synapse::privacy::scanOutput;
+
+    StealthAddress alice;
+    StealthAddress bob;
+    assert(alice.generateKeys());
+    assert(bob.generateKeys());
+
+    std::vector<OwnedOutput> wallet;
+    OwnedOutput minted;
+    assert(mintOwnedOutput(alice, 500000000ULL, minted));
+    wallet.push_back(minted);
+
+    PrivateSendResult result;
+    std::string err;
+    std::vector<synapse::privacy::DecoyMember> decoys;
+    assert(buildPrivateSend(alice, bob.encodeAddress(), 150000000ULL, wallet, decoys, result, err));
+    assert(err.empty());
+    assert(result.tx.vins.size() == 1);
+    assert(result.tx.vins[0].ringP.size() == synapse::privacy::kPrivateRingSize);
+    assert(result.tx.vouts.size() == 2);
+    assert(verifyPrivateTx(result.tx, err));
+    assert(err.empty());
+
+    std::string pubDump;
+    for (const auto& o : result.tx.vouts) {
+        pubDump += synapse::crypto::toHex(o.oneTime);
+        pubDump += synapse::crypto::toHex(o.commitment);
+        pubDump += synapse::crypto::toHex(o.ecdh);
+    }
+    assert(pubDump.find(bob.encodeAddress().substr(2, 16)) == std::string::npos);
+
+    int found = 0;
+    uint64_t got = 0;
+    for (const auto& o : result.tx.vouts) {
+        OwnedOutput owned;
+        if (scanOutput(bob, o, owned)) {
+            found++;
+            got = owned.amountAtoms;
+        }
+    }
+    assert(found == 1);
+    assert(got == 150000000ULL);
+}
+
 int main() {
     assert(sodium_init() >= 0);
     testStealth();
     testRing();
     testConfidential();
+    testPaymentOpen();
+    testPrivateSend();
     return 0;
 }

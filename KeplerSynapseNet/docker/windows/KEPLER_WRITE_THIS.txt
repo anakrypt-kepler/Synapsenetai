@@ -1,0 +1,23 @@
+WINDOWS DOCKER NOTES
+--------------------
+This file is a placeholder on purpose.
+
+Kepler writes the Windows Docker notes in his own voice. Do not fill this
+with marketing, and do not pretend a Windows-native container is finished.
+
+Until those notes exist, the working paths are:
+
+  1) WSL2 (Ubuntu) + KeplerSynapseNet/scripts/lego-linux.sh
+     Native Linux toolchain inside Windows. This is the supported build.
+
+  2) Docker Desktop on Windows, building the Linux image:
+
+       docker buildx build --platform linux/amd64 -t keplersynapsenet:local KeplerSynapseNet
+
+     That is a Linux container. It is not a Windows binary.
+
+Sections Kepler can drop in later:
+  - Docker Desktop vs WSL2
+  - Tor on Windows (expert bundle, not Tor Browser)
+  - Where the data dir lives
+  - What still does not work

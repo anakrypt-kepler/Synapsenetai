@@ -1,5 +1,10 @@
 #pragma once
 
+// Knowledge chain index sitting on top of the ledger.
+// Entries are signed Q&A (or similar) records. Validators vote; score + vote
+// count decide whether the entry is "validated" and how much NGT it pays.
+// Duplicate detection uses the entry hash, not an LLM.
+
 #include "crypto/crypto.h"
 #include "ledger.h"
 #include <string>

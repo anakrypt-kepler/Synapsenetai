@@ -1,3 +1,6 @@
+// Peer discovery / PEX. Rate-limit GETPEERS, skip loopback, announce ourselves
+// once we know an external address (or 0.0.0.0 until Tor tells us).
+
 #include "network/discovery.h"
 #include "infrastructure/messages.h"
 #include <set>

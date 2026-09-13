@@ -11,3 +11,8 @@ synapsed
 data/*.db
 models/*.gguf
 node_modules/
+tauri-app/src-tauri/target/
+tauri-app/src-tauri/gen/
+tauri-app/dist/
+wallet.dat
+**/wallet.dat

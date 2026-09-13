@@ -1,3 +1,6 @@
+// MLSAG ring sign/verify over ed25519 (libsodium). Do not log key images
+// next to addresses — that pairing is what privacy is trying to hide.
+
 #include "crypto/ring_signature.h"
 
 #include <sodium.h>
@@ -169,6 +172,43 @@ RingSignature RingSignature::deserialize(const std::vector<uint8_t>& data) {
     return sig;
 }
 
+std::vector<uint8_t> MlsagSignature::serialize() const {
+    std::vector<uint8_t> buffer;
+    appendU32(buffer, static_cast<uint32_t>(keyImage.size()));
+    appendBytes(buffer, keyImage);
+    appendU32(buffer, static_cast<uint32_t>(c0.size()));
+    appendBytes(buffer, c0);
+    appendU32(buffer, static_cast<uint32_t>(respKey.size()));
+    for (const auto& response : respKey) {
+        appendU32(buffer, static_cast<uint32_t>(response.size()));
+        appendBytes(buffer, response);
+    }
+    appendU32(buffer, static_cast<uint32_t>(respCommit.size()));
+    for (const auto& response : respCommit) {
+        appendU32(buffer, static_cast<uint32_t>(response.size()));
+        appendBytes(buffer, response);
+    }
+    return buffer;
+}
+
+MlsagSignature MlsagSignature::deserialize(const std::vector<uint8_t>& data) {
+    MlsagSignature sig;
+    size_t offset = 0;
+    sig.keyImage = readField(data, offset);
+    sig.c0 = readField(data, offset);
+    uint32_t nKey = readU32(data, offset);
+    sig.respKey.reserve(nKey);
+    for (uint32_t i = 0; i < nKey; ++i) {
+        sig.respKey.push_back(readField(data, offset));
+    }
+    uint32_t nCommit = readU32(data, offset);
+    sig.respCommit.reserve(nCommit);
+    for (uint32_t i = 0; i < nCommit; ++i) {
+        sig.respCommit.push_back(readField(data, offset));
+    }
+    return sig;
+}
+
 RingSign::RingSign() {
     requireSodium();
 }
@@ -198,7 +238,8 @@ RingSignature RingSign::sign(
     const std::vector<uint8_t>& message,
     const std::vector<std::vector<uint8_t>>& ring,
     const std::vector<uint8_t>& privateKey,
-    size_t signerIndex
+    size_t signerIndex,
+    bool recordImage
 ) {
     requireSodium();
     const size_t n = ring.size();
@@ -263,7 +304,9 @@ RingSignature RingSign::sign(
     sig.c0 = challenges[0];
     sig.responses = responses;
 
-    recordKeyImage(keyImage);
+    if (recordImage) {
+        recordKeyImage(keyImage);
+    }
 
     secureZero(secret.data(), secret.size());
     secureZero(alpha.data(), alpha.size());
@@ -381,6 +424,165 @@ void RingSign::saveKeyImages(const std::string& path) {
         }
     }
     std::rename(tmp.c_str(), path.c_str());
+}
+
+std::vector<uint8_t> RingSign::pointSub(
+    const std::vector<uint8_t>& a,
+    const std::vector<uint8_t>& b
+) {
+    requireSodium();
+    if (a.size() != kPointSize || b.size() != kPointSize) {
+        throw std::runtime_error("pointSub size");
+    }
+    std::vector<uint8_t> out(kPointSize);
+    if (crypto_core_ed25519_sub(out.data(), a.data(), b.data()) != 0) {
+        throw std::runtime_error("ed25519 point subtraction failed");
+    }
+    return out;
+}
+
+std::vector<uint8_t> RingSign::pointAddPublic(
+    const std::vector<uint8_t>& a,
+    const std::vector<uint8_t>& b
+) {
+    requireSodium();
+    return pointAdd(a, b);
+}
+
+MlsagSignature RingSign::signMlsag(
+    const std::vector<uint8_t>& message,
+    const std::vector<std::vector<uint8_t>>& ringP,
+    const std::vector<std::vector<uint8_t>>& ringC,
+    const std::vector<uint8_t>& privP,
+    const std::vector<uint8_t>& privC,
+    size_t signerIndex,
+    bool recordImage
+) {
+    requireSodium();
+    const size_t n = ringP.size();
+    if (n == 0 || n != ringC.size()) {
+        throw std::runtime_error("mlsag ring size mismatch");
+    }
+    if (signerIndex >= n) {
+        throw std::runtime_error("mlsag signer index out of range");
+    }
+    if (privP.size() != kScalarSize || privC.size() != kScalarSize) {
+        throw std::runtime_error("mlsag secrets must be 32 byte scalars");
+    }
+    for (size_t i = 0; i < n; ++i) {
+        if (ringP[i].size() != kPointSize || ringC[i].size() != kPointSize) {
+            throw std::runtime_error("mlsag ring member must be a 32 byte point");
+        }
+    }
+
+    std::vector<uint8_t> x(kScalarSize);
+    std::vector<uint8_t> z(kScalarSize);
+    {
+        std::vector<uint8_t> padded(crypto_core_ed25519_NONREDUCEDSCALARBYTES, 0);
+        std::memcpy(padded.data(), privP.data(), kScalarSize);
+        crypto_core_ed25519_scalar_reduce(x.data(), padded.data());
+        std::memcpy(padded.data(), privC.data(), kScalarSize);
+        crypto_core_ed25519_scalar_reduce(z.data(), padded.data());
+    }
+
+    std::vector<uint8_t> hpSigner = hashToPoint(ringP[signerIndex]);
+    std::vector<uint8_t> keyImage = scalarMultPoint(x, hpSigner);
+
+    std::vector<std::vector<uint8_t>> s0(n);
+    std::vector<std::vector<uint8_t>> s1(n);
+    std::vector<std::vector<uint8_t>> challenges(n);
+
+    std::vector<uint8_t> alpha0 = randomScalar();
+    std::vector<uint8_t> alpha1 = randomScalar();
+    std::vector<uint8_t> l0Init = scalarMultBase(alpha0);
+    std::vector<uint8_t> r0Init = scalarMultPoint(alpha0, hpSigner);
+    std::vector<uint8_t> l1Init = scalarMultBase(alpha1);
+
+    auto computeChallenge = [&](const std::vector<uint8_t>& l0,
+                                const std::vector<uint8_t>& r0,
+                                const std::vector<uint8_t>& l1) {
+        std::vector<uint8_t> data;
+        appendBytes(data, message);
+        appendBytes(data, l0);
+        appendBytes(data, r0);
+        appendBytes(data, l1);
+        return hashToScalar(data);
+    };
+
+    size_t next = (signerIndex + 1) % n;
+    challenges[next] = computeChallenge(l0Init, r0Init, l1Init);
+
+    for (size_t step = 1; step < n; ++step) {
+        size_t i = (signerIndex + step) % n;
+        s0[i] = randomScalar();
+        s1[i] = randomScalar();
+        std::vector<uint8_t> hp = hashToPoint(ringP[i]);
+        std::vector<uint8_t> l0 = pointAdd(scalarMultBase(s0[i]), scalarMultPoint(challenges[i], ringP[i]));
+        std::vector<uint8_t> r0 = pointAdd(scalarMultPoint(s0[i], hp), scalarMultPoint(challenges[i], keyImage));
+        std::vector<uint8_t> l1 = pointAdd(scalarMultBase(s1[i]), scalarMultPoint(challenges[i], ringC[i]));
+        size_t following = (i + 1) % n;
+        challenges[following] = computeChallenge(l0, r0, l1);
+    }
+
+    s0[signerIndex] = scalarSub(alpha0, scalarMul(challenges[signerIndex], x));
+    s1[signerIndex] = scalarSub(alpha1, scalarMul(challenges[signerIndex], z));
+
+    MlsagSignature sig;
+    sig.keyImage = keyImage;
+    sig.c0 = challenges[0];
+    sig.respKey = s0;
+    sig.respCommit = s1;
+
+    if (recordImage) {
+        recordKeyImage(keyImage);
+    }
+
+    secureZero(x.data(), x.size());
+    secureZero(z.data(), z.size());
+    secureZero(alpha0.data(), alpha0.size());
+    secureZero(alpha1.data(), alpha1.size());
+    return sig;
+}
+
+bool RingSign::verifyMlsag(
+    const std::vector<uint8_t>& message,
+    const std::vector<std::vector<uint8_t>>& ringP,
+    const std::vector<std::vector<uint8_t>>& ringC,
+    const MlsagSignature& sig
+) {
+    requireSodium();
+    const size_t n = ringP.size();
+    if (n == 0 || n != ringC.size()) return false;
+    if (sig.respKey.size() != n || sig.respCommit.size() != n) return false;
+    if (sig.keyImage.size() != kPointSize || sig.c0.size() != kScalarSize) return false;
+    if (crypto_core_ed25519_is_valid_point(sig.keyImage.data()) != 1) return false;
+    for (size_t i = 0; i < n; ++i) {
+        if (ringP[i].size() != kPointSize || ringC[i].size() != kPointSize) return false;
+        if (sig.respKey[i].size() != kScalarSize || sig.respCommit[i].size() != kScalarSize) return false;
+        if (crypto_core_ed25519_is_valid_point(ringP[i].data()) != 1) return false;
+        if (crypto_core_ed25519_is_valid_point(ringC[i].data()) != 1) return false;
+    }
+
+    auto computeChallenge = [&](const std::vector<uint8_t>& l0,
+                                const std::vector<uint8_t>& r0,
+                                const std::vector<uint8_t>& l1) {
+        std::vector<uint8_t> data;
+        appendBytes(data, message);
+        appendBytes(data, l0);
+        appendBytes(data, r0);
+        appendBytes(data, l1);
+        return hashToScalar(data);
+    };
+
+    std::vector<uint8_t> challenge = sig.c0;
+    for (size_t i = 0; i < n; ++i) {
+        std::vector<uint8_t> hp = hashToPoint(ringP[i]);
+        std::vector<uint8_t> l0 = pointAdd(scalarMultBase(sig.respKey[i]), scalarMultPoint(challenge, ringP[i]));
+        std::vector<uint8_t> r0 = pointAdd(scalarMultPoint(sig.respKey[i], hp), scalarMultPoint(challenge, sig.keyImage));
+        std::vector<uint8_t> l1 = pointAdd(scalarMultBase(sig.respCommit[i]), scalarMultPoint(challenge, ringC[i]));
+        challenge = computeChallenge(l0, r0, l1);
+    }
+    return sodium_memcmp(challenge.data(), sig.c0.data(), kScalarSize) == 0;
 }
 
 }

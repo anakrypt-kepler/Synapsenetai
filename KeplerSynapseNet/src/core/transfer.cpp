@@ -1,8 +1,16 @@
+// NGT UTXO transfers. DB v4: RingCT coinbase for PoE rewards (no ngt1 UTXO).
+// Test faucet creditRewardDeterministic stays transparent. Spend: UTXO or MLSAG.
+
 #include "core/transfer.h"
+#include "core/ringct.h"
 #include "crypto/address.h"
+#include "crypto/confidential_tx.h"
+#include "crypto/ring_signature.h"
 #include "database/database.h"
+#include "privacy/private_transfer.h"
 #include "quantum/application_signature.h"
 #include "quantum/identity_registry.h"
+#include "quantum/quantum_security.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <mutex>
@@ -10,11 +18,13 @@
 #include <ctime>
 #include <algorithm>
 #include <cctype>
+#include <sodium.h>
+#include <utility>
 
 namespace synapse {
 namespace core {
 
-static constexpr uint64_t TRANSFER_DB_VERSION = 2;
+static constexpr uint64_t TRANSFER_DB_VERSION = 4;
 
 static void writeU64(std::vector<uint8_t>& out, uint64_t val) {
     for (int i = 0; i < 8; i++) out.push_back((val >> (i * 8)) & 0xff);
@@ -94,6 +104,34 @@ static bool matchesAddressAlias(const std::array<std::string, 2>& aliases, const
     return address == aliases[0] || address == aliases[1];
 }
 
+// Min-fee / mempool rate use the classical body. Dilithium envelope is capped
+// separately (TX_MAX_QUANTUM_SIGNATURE_SIZE) so hybrid spends stay submit-compatible.
+static size_t serializedSizeForFee(const Transaction& tx) {
+    if (tx.quantumSignature.empty()) return std::max<size_t>(1, tx.serialize().size());
+    Transaction body = tx;
+    body.quantumSignature.clear();
+    return std::max<size_t>(1, body.serialize().size());
+}
+
+// Empty quantumSignature is allowed only for faucet/coinbase (no inputs),
+// first reward sweep (secp claim), and MLSAG RingCT when Dilithium is simulated.
+// Transparent and shield spends fail closed. Present envelopes must verifyBinding.
+static bool quantumSignaturePolicyOk(const Transaction& tx) {
+    if (!tx.quantumSignature.empty()) {
+        if (tx.inputs.empty()) return true;
+        const std::string ownerAddress = addressFromPubKey(tx.inputs.front().pubKey);
+        if (ownerAddress.empty()) return tx.isRingCtSpend();
+        return quantum::IdentityRegistry::instance().verifyBinding(ownerAddress, tx.quantumSignature);
+    }
+    if (tx.inputs.empty()) return true;
+    if (tx.isRewardClaim()) return true;
+    if (tx.isRingCtSpend()) {
+        // MLSAG private send: require Dilithium when the real backend is on.
+        return !quantum::getPQCBackendStatus().dilithiumReal;
+    }
+    return false;
+}
+
 static bool safeAddU64(uint64_t a, uint64_t b, uint64_t& out) {
     if (UINT64_MAX - a < b) return false;
     out = a + b;
@@ -104,14 +142,37 @@ static constexpr size_t MAX_TX_INPUTS = 1024;
 static constexpr size_t MAX_TX_OUTPUTS = 1024;
 static constexpr uint64_t MAX_TX_FUTURE_SKEW_SECONDS = 2 * 60 * 60;
 static constexpr uint8_t TX_TRAILER_V1_QUANTUM_SIG = 0x01;
+static constexpr uint8_t TX_TRAILER_V1_BALANCE_PROOF = 0x02;
 static constexpr uint32_t TX_MAX_QUANTUM_SIGNATURE_SIZE = 65536;
+static constexpr uint32_t TX_MAX_BALANCE_PROOF_SIZE = 256;
+static constexpr uint8_t TXIN_TRAILER_V1_RINGCT = 0x02;
+static constexpr uint32_t TX_MAX_INPUT_SIZE = 65536;
+static constexpr uint32_t TX_MAX_OUTPUT_SIZE = 131072;
+static constexpr uint8_t TXOUT_TRAILER_V1_CONFIDENTIAL = 0x01;
+static constexpr uint8_t TXOUT_TRAILER_V2_RINGCT = 0x02;
+static constexpr uint32_t TXOUT_MAX_CONFIDENTIAL_FIELD_SIZE = 131072;
+static constexpr size_t kRingCtGenesisDecoys = 16;
+
+struct RewardMint {
+    uint64_t amount = 0;
+    crypto::PublicKey author{};
+    bool claimed = false;
+    std::vector<uint8_t> lockP;
+};
+
+static std::string mintDbKey(const crypto::Hash256& rewardId);
+static std::vector<uint8_t> encodeMint(uint64_t amount, const crypto::PublicKey& author,
+                                       bool claimed, const std::vector<uint8_t>& lockP);
+static bool decodeMint(const std::vector<uint8_t>& rec, RewardMint& out);
 
 static bool verifyTransactionLocked(
     const Transaction& tx,
     const std::unordered_map<std::string, std::vector<UTXO>>& utxoSet,
     const std::unordered_map<std::string, Transaction>& mempool,
     const std::vector<Transaction>& pending,
-    uint64_t minFeePerKB);
+    uint64_t minFeePerKB,
+    const std::unordered_map<std::string, std::vector<uint8_t>>& rctOuts,
+    const std::unordered_set<std::string>& rctKeyImages);
 
 std::vector<uint8_t> TxInput::serialize() const {
     std::vector<uint8_t> out;
@@ -119,6 +180,22 @@ std::vector<uint8_t> TxInput::serialize() const {
     writeU32(out, outputIndex);
     out.insert(out.end(), signature.begin(), signature.end());
     out.insert(out.end(), pubKey.begin(), pubKey.end());
+    if (isRingCt()) {
+        out.push_back(TXIN_TRAILER_V1_RINGCT);
+        writeU32(out, static_cast<uint32_t>(ringP.size()));
+        for (size_t i = 0; i < ringP.size(); ++i) {
+            if (ringP[i].size() != 32 || i >= ringC.size() || ringC[i].size() != 32) continue;
+            out.insert(out.end(), ringP[i].begin(), ringP[i].end());
+            out.insert(out.end(), ringC[i].begin(), ringC[i].end());
+        }
+        if (ctilde.size() == 32) {
+            out.insert(out.end(), ctilde.begin(), ctilde.end());
+        } else {
+            out.insert(out.end(), 32, 0);
+        }
+        writeU32(out, static_cast<uint32_t>(mlsag.size()));
+        out.insert(out.end(), mlsag.begin(), mlsag.end());
+    }
     return out;
 }
 
@@ -126,21 +203,47 @@ TxInput TxInput::deserialize(const std::vector<uint8_t>& data) {
     TxInput inp;
     if (data.size() < 32 + 4 + 64 + 33) return inp;
     const uint8_t* p = data.data();
+    const uint8_t* end = data.data() + data.size();
     std::memcpy(inp.prevTxHash.data(), p, 32); p += 32;
     inp.outputIndex = readU32(p); p += 4;
     std::memcpy(inp.signature.data(), p, 64); p += 64;
-    std::memcpy(inp.pubKey.data(), p, 33);
+    std::memcpy(inp.pubKey.data(), p, 33); p += 33;
+    if (p < end && *p == TXIN_TRAILER_V1_RINGCT) {
+        ++p;
+        if (static_cast<size_t>(end - p) < 4) return TxInput{};
+        uint32_t n = readU32(p); p += 4;
+        if (n > 64 || n == 0) return TxInput{};
+        if (static_cast<size_t>(end - p) < n * 64ull + 32 + 4) return TxInput{};
+        inp.ringP.reserve(n);
+        inp.ringC.reserve(n);
+        for (uint32_t i = 0; i < n; ++i) {
+            inp.ringP.emplace_back(p, p + 32); p += 32;
+            inp.ringC.emplace_back(p, p + 32); p += 32;
+        }
+        inp.ctilde.assign(p, p + 32); p += 32;
+        uint32_t mlen = readU32(p); p += 4;
+        if (mlen > 8192 || static_cast<size_t>(end - p) < mlen) return TxInput{};
+        inp.mlsag.assign(p, p + mlen); p += mlen;
+        if (p != end) return TxInput{};
+    }
     return inp;
 }
-
-static constexpr uint8_t TXOUT_TRAILER_V1_CONFIDENTIAL = 0x01;
-static constexpr uint32_t TXOUT_MAX_CONFIDENTIAL_FIELD_SIZE = 4096;
 
 std::vector<uint8_t> TxOutput::serialize() const {
     std::vector<uint8_t> out;
     writeU64(out, amount);
     writeString(out, address);
-    if (!commitment.empty() || !ephemeralPub.empty()) {
+    if (isRingCt() || !rangeProof.empty() || !ecdh.empty()) {
+        out.push_back(TXOUT_TRAILER_V2_RINGCT);
+        writeU32(out, static_cast<uint32_t>(commitment.size()));
+        out.insert(out.end(), commitment.begin(), commitment.end());
+        writeU32(out, static_cast<uint32_t>(ephemeralPub.size()));
+        out.insert(out.end(), ephemeralPub.begin(), ephemeralPub.end());
+        writeU32(out, static_cast<uint32_t>(rangeProof.size()));
+        out.insert(out.end(), rangeProof.begin(), rangeProof.end());
+        writeU32(out, static_cast<uint32_t>(ecdh.size()));
+        out.insert(out.end(), ecdh.begin(), ecdh.end());
+    } else if (!commitment.empty() || !ephemeralPub.empty()) {
         out.push_back(TXOUT_TRAILER_V1_CONFIDENTIAL);
         writeU32(out, static_cast<uint32_t>(commitment.size()));
         out.insert(out.end(), commitment.begin(), commitment.end());
@@ -158,20 +261,23 @@ TxOutput TxOutput::deserialize(const std::vector<uint8_t>& data) {
     outp.amount = readU64(p);
     p += 8;
     if (!readStringSafe(p, end, outp.address)) return TxOutput{};
-    if (end - p >= 1 && *p == TXOUT_TRAILER_V1_CONFIDENTIAL) {
-        ++p;
-        if (static_cast<size_t>(end - p) < sizeof(uint32_t)) return TxOutput{};
-        uint32_t cLen = readU32(p); p += 4;
-        if (cLen > TXOUT_MAX_CONFIDENTIAL_FIELD_SIZE) return TxOutput{};
-        if (static_cast<size_t>(end - p) < cLen) return TxOutput{};
-        outp.commitment.assign(p, p + cLen);
-        p += cLen;
-        if (static_cast<size_t>(end - p) < sizeof(uint32_t)) return TxOutput{};
-        uint32_t eLen = readU32(p); p += 4;
-        if (eLen > TXOUT_MAX_CONFIDENTIAL_FIELD_SIZE) return TxOutput{};
-        if (static_cast<size_t>(end - p) < eLen) return TxOutput{};
-        outp.ephemeralPub.assign(p, p + eLen);
-        p += eLen;
+    if (end - p >= 1 && (*p == TXOUT_TRAILER_V1_CONFIDENTIAL || *p == TXOUT_TRAILER_V2_RINGCT)) {
+        uint8_t flag = *p++;
+        auto readField = [&](std::vector<uint8_t>& dest) -> bool {
+            if (static_cast<size_t>(end - p) < sizeof(uint32_t)) return false;
+            uint32_t len = readU32(p); p += 4;
+            if (len > TXOUT_MAX_CONFIDENTIAL_FIELD_SIZE) return false;
+            if (static_cast<size_t>(end - p) < len) return false;
+            dest.assign(p, p + len);
+            p += len;
+            return true;
+        };
+        if (!readField(outp.commitment)) return TxOutput{};
+        if (!readField(outp.ephemeralPub)) return TxOutput{};
+        if (flag == TXOUT_TRAILER_V2_RINGCT) {
+            if (!readField(outp.rangeProof)) return TxOutput{};
+            if (!readField(outp.ecdh)) return TxOutput{};
+        }
     }
     if (p != end) return TxOutput{};
     return outp;
@@ -198,6 +304,11 @@ std::vector<uint8_t> Transaction::serialize() const {
         out.insert(out.end(), outpData.begin(), outpData.end());
     }
 
+    if (!balanceProof.empty()) {
+        out.push_back(TX_TRAILER_V1_BALANCE_PROOF);
+        writeU32(out, static_cast<uint32_t>(balanceProof.size()));
+        out.insert(out.end(), balanceProof.begin(), balanceProof.end());
+    }
     if (!quantumSignature.empty()) {
         out.push_back(TX_TRAILER_V1_QUANTUM_SIG);
         writeU32(out, static_cast<uint32_t>(quantumSignature.size()));
@@ -236,7 +347,7 @@ Transaction Transaction::deserialize(const std::vector<uint8_t>& data) {
         if (!need(4)) return Transaction{};
         uint32_t inpLen = readU32(p);
         p += 4;
-        if (inpLen != 32 + 4 + 64 + 33) return Transaction{};
+        if (inpLen < 32 + 4 + 64 + 33 || inpLen > TX_MAX_INPUT_SIZE) return Transaction{};
         if (!need(inpLen)) return Transaction{};
         std::vector<uint8_t> inpData(p, p + inpLen);
         p += inpLen;
@@ -252,7 +363,7 @@ Transaction Transaction::deserialize(const std::vector<uint8_t>& data) {
         if (!need(4)) return Transaction{};
         uint32_t outpLen = readU32(p);
         p += 4;
-        if (outpLen < 12 || outpLen > 4096) return Transaction{};
+        if (outpLen < 12 || outpLen > TX_MAX_OUTPUT_SIZE) return Transaction{};
         if (!need(outpLen)) return Transaction{};
         std::vector<uint8_t> outpData(p, p + outpLen);
         p += outpLen;
@@ -261,17 +372,23 @@ Transaction Transaction::deserialize(const std::vector<uint8_t>& data) {
         tx.outputs.push_back(std::move(outp));
     }
 
-    if (end - p >= 1 && *p == TX_TRAILER_V1_QUANTUM_SIG) {
-        ++p;
-        if (static_cast<size_t>(end - p) < sizeof(uint32_t)) return Transaction{};
-        uint32_t qsLen = readU32(p); p += 4;
-        if (qsLen > TX_MAX_QUANTUM_SIGNATURE_SIZE) return Transaction{};
-        if (static_cast<size_t>(end - p) < qsLen) return Transaction{};
-        tx.quantumSignature.assign(p, p + qsLen);
-        p += qsLen;
+    while (p < end) {
+        uint8_t flag = *p++;
+        if (static_cast<size_t>(end - p) < 4) return Transaction{};
+        uint32_t len = readU32(p); p += 4;
+        if (static_cast<size_t>(end - p) < len) return Transaction{};
+        if (flag == TX_TRAILER_V1_QUANTUM_SIG) {
+            if (len > TX_MAX_QUANTUM_SIGNATURE_SIZE) return Transaction{};
+            tx.quantumSignature.assign(p, p + len);
+        } else if (flag == TX_TRAILER_V1_BALANCE_PROOF) {
+            if (len > TX_MAX_BALANCE_PROOF_SIZE) return Transaction{};
+            tx.balanceProof.assign(p, p + len);
+        } else {
+            return Transaction{};
+        }
+        p += len;
     }
 
-    if (p != end) return Transaction{};
     return tx;
 }
 
@@ -279,15 +396,65 @@ crypto::Hash256 Transaction::computeHash() const {
     std::vector<uint8_t> buf;
     writeU64(buf, timestamp);
     writeU64(buf, fee);
+    const bool privateLike = isRingCtSpend() || isShield() || isRewardCoinbase() || isRewardClaim();
     for (const auto& inp : inputs) {
         buf.insert(buf.end(), inp.prevTxHash.begin(), inp.prevTxHash.end());
         writeU32(buf, inp.outputIndex);
+        if (privateLike && inp.isRingCt()) {
+            buf.insert(buf.end(), inp.ctilde.begin(), inp.ctilde.end());
+            buf.insert(buf.end(), inp.mlsag.begin(), inp.mlsag.end());
+            for (size_t i = 0; i < inp.ringP.size(); ++i) {
+                buf.insert(buf.end(), inp.ringP[i].begin(), inp.ringP[i].end());
+                if (i < inp.ringC.size()) buf.insert(buf.end(), inp.ringC[i].begin(), inp.ringC[i].end());
+            }
+        }
     }
     for (const auto& outp : outputs) {
-        writeU64(buf, outp.amount);
-        buf.insert(buf.end(), outp.address.begin(), outp.address.end());
+        if (privateLike && outp.isRingCt()) {
+            buf.insert(buf.end(), outp.commitment.begin(), outp.commitment.end());
+            buf.insert(buf.end(), outp.rangeProof.begin(), outp.rangeProof.end());
+            buf.insert(buf.end(), outp.ephemeralPub.begin(), outp.ephemeralPub.end());
+            buf.insert(buf.end(), outp.ecdh.begin(), outp.ecdh.end());
+            buf.insert(buf.end(), outp.address.begin(), outp.address.end());
+        } else {
+            writeU64(buf, outp.amount);
+            buf.insert(buf.end(), outp.address.begin(), outp.address.end());
+        }
+    }
+    if (privateLike && !balanceProof.empty()) {
+        buf.insert(buf.end(), balanceProof.begin(), balanceProof.end());
     }
     return crypto::doubleSha256(buf.data(), buf.size());
+}
+
+bool Transaction::isRingCtSpend() const {
+    for (const auto& inp : inputs) {
+        if (inp.isRingCt()) return true;
+    }
+    return false;
+}
+
+bool Transaction::isRewardCoinbase() const {
+    if (!inputs.empty() || outputs.size() != 1) return false;
+    return outputs.front().isRingCt() && balanceProof.size() == 64;
+}
+
+bool Transaction::isRewardClaim() const {
+    if (isRingCtSpend()) return false;
+    if (inputs.size() != 1 || outputs.empty() || fee != 0) return false;
+    if (inputs.front().isRingCt()) return false;
+    for (const auto& outp : outputs) {
+        if (!outp.isRingCt()) return false;
+    }
+    return balanceProof.size() == 64;
+}
+
+bool Transaction::isShield() const {
+    if (isRingCtSpend() || isRewardClaim() || isRewardCoinbase()) return false;
+    for (const auto& outp : outputs) {
+        if (outp.isRingCt()) return true;
+    }
+    return false;
 }
 
 uint64_t Transaction::totalInput() const {
@@ -304,14 +471,44 @@ uint64_t Transaction::totalOutput() const {
 }
 
 bool Transaction::verify() const {
-    for (const auto& inp : inputs) {
-        crypto::Hash256 sigHash = computeHash();
-        if (!crypto::verify(sigHash, inp.signature, inp.pubKey)) {
-            return false;
+    if (isRingCtSpend()) {
+        std::string err;
+        if (!verifyRingCtCrypto(*this, err)) return false;
+    } else if (isRewardCoinbase()) {
+        const auto& o = outputs.front();
+        if (!crypto::ConfidentialTx::verifyRange(o.commitment, o.rangeProof)) return false;
+    } else {
+        for (const auto& inp : inputs) {
+            crypto::Hash256 sigHash = computeHash();
+            if (!crypto::verify(sigHash, inp.signature, inp.pubKey)) {
+                return false;
+            }
+        }
+        if (isShield() || isRewardClaim()) {
+            bool anyHidden = false;
+            for (const auto& outp : outputs) {
+                if (!outp.isRingCt()) continue;
+                anyHidden = true;
+                if (!crypto::ConfidentialTx::verifyRange(outp.commitment, outp.rangeProof)) return false;
+            }
+            if (!anyHidden || balanceProof.size() != 64) return false;
         }
     }
-    if (!quantumSignature.empty() && !quantum::isApplicationSignatureEnvelope(quantumSignature)) {
-        return false;
+    if (!quantumSignature.empty()) {
+        if (!quantum::isApplicationSignatureEnvelope(quantumSignature)) return false;
+        Transaction body = *this;
+        body.quantumSignature.clear();
+        std::vector<uint8_t> binding;
+        if (!inputs.empty()) {
+            binding.assign(inputs.front().pubKey.begin(), inputs.front().pubKey.end());
+        }
+        if (!quantum::verifyApplicationPayload(
+                "core.transfer.transaction",
+                body.serialize(),
+                binding,
+                quantumSignature)) {
+            return false;
+        }
     }
     return true;
 }
@@ -319,6 +516,10 @@ bool Transaction::verify() const {
 struct TransferManager::Impl {
     database::Database db;
     std::unordered_map<std::string, std::vector<UTXO>> utxoSet;
+    std::unordered_map<std::string, std::vector<uint8_t>> rctOuts;
+    std::unordered_set<std::string> rctKeyImages;
+    std::unordered_set<std::string> rctGenesis;
+    std::unordered_map<std::string, RewardMint> mints;
     std::vector<Transaction> pending;
     std::vector<Transaction> confirmed;
     std::unordered_map<std::string, Transaction> mempool;
@@ -335,6 +536,69 @@ struct TransferManager::Impl {
         uint64_t mempoolExpiry = 86400;
     } config;
 };
+
+static void seedAndLoadRct(
+    database::Database& db,
+    std::unordered_map<std::string, std::vector<uint8_t>>& rctOuts,
+    std::unordered_set<std::string>& rctKeyImages,
+    std::unordered_set<std::string>& rctGenesis
+) {
+    rctOuts.clear();
+    rctKeyImages.clear();
+    rctGenesis.clear();
+    auto genesis = db.get("meta:rctGenesis");
+    if (genesis.empty()) {
+        for (size_t i = 0; i < kRingCtGenesisDecoys; ++i) {
+            try {
+                auto P = privacy::randomValidPoint();
+                auto blind = crypto::ConfidentialTx::generateBlindingFactor();
+                auto C = crypto::ConfidentialTx::commit(0, blind).commitment;
+                sodium_memzero(blind.data(), blind.size());
+                if (C.size() != 32 || P.size() != 32) continue;
+                std::string hex = crypto::toHex(P);
+                rctOuts[hex] = C;
+                rctGenesis.insert(hex);
+                std::vector<uint8_t> rec = C;
+                rec.push_back(1);
+                db.put("rct:" + hex, rec);
+            } catch (...) {
+                continue;
+            }
+        }
+        db.put("meta:rctGenesis", std::vector<uint8_t>{1});
+        return;
+    }
+    db.forEach("rct:", [&](const std::string& key, const std::vector<uint8_t>& value) {
+        if (key.size() <= 4 || value.size() < 32) return true;
+        std::string hex = key.substr(4);
+        rctOuts[hex] = std::vector<uint8_t>(value.begin(), value.begin() + 32);
+        if (value.size() >= 33 && value[32] == 1) rctGenesis.insert(hex);
+        return true;
+    });
+    db.forEach("rctki:", [&](const std::string& key, const std::vector<uint8_t>&) {
+        if (key.size() > 6) rctKeyImages.insert(key.substr(6));
+        return true;
+    });
+}
+
+static bool rctMemberKnown(
+    const std::unordered_map<std::string, std::vector<uint8_t>>& rctOuts,
+    const std::unordered_map<std::string, std::vector<uint8_t>>& createdRct,
+    const std::vector<uint8_t>& P,
+    const std::vector<uint8_t>& C
+) {
+    if (P.size() != 32 || C.size() != 32) return false;
+    std::string hex = crypto::toHex(P);
+    auto it = createdRct.find(hex);
+    if (it != createdRct.end()) {
+        return it->second.size() == C.size() &&
+               sodium_memcmp(it->second.data(), C.data(), C.size()) == 0;
+    }
+    auto it2 = rctOuts.find(hex);
+    if (it2 == rctOuts.end()) return false;
+    return it2->second.size() == C.size() &&
+           sodium_memcmp(it2->second.data(), C.data(), C.size()) == 0;
+}
 
 TransferManager::TransferManager() : impl_(std::make_unique<Impl>()) {}
 TransferManager::~TransferManager() { close(); }
@@ -359,10 +623,14 @@ bool TransferManager::open(const std::string& dbPath) {
         impl_->db.put("meta:totalSupply", z);
         impl_->db.put("meta:feePool", z);
         impl_->utxoSet.clear();
+        impl_->rctOuts.clear();
+        impl_->rctKeyImages.clear();
         impl_->pending.clear();
         impl_->confirmed.clear();
         impl_->mempool.clear();
         impl_->recentTxs.clear();
+        impl_->mints.clear();
+        seedAndLoadRct(impl_->db, impl_->rctOuts, impl_->rctKeyImages, impl_->rctGenesis);
         return true;
     }
 
@@ -413,6 +681,17 @@ bool TransferManager::open(const std::string& dbPath) {
         return true;
     });
 
+    seedAndLoadRct(impl_->db, impl_->rctOuts, impl_->rctKeyImages, impl_->rctGenesis);
+
+    impl_->mints.clear();
+    impl_->db.forEach("mint:", [this](const std::string& key, const std::vector<uint8_t>& value) {
+        if (key.size() <= 5) return true;
+        RewardMint mint;
+        if (!decodeMint(value, mint)) return true;
+        impl_->mints[key.substr(5)] = std::move(mint);
+        return true;
+    });
+
     uint64_t rebuiltSupply = 0;
     bool supplyOverflow = false;
     for (const auto& [_, utxos] : impl_->utxoSet) {
@@ -425,11 +704,15 @@ bool TransferManager::open(const std::string& dbPath) {
         if (supplyOverflow) break;
     }
     if (supplyOverflow) return false;
-    if (impl_->totalSupply_ != rebuiltSupply) {
-        impl_->totalSupply_ = rebuiltSupply;
-        std::vector<uint8_t> supplyBuf;
-        writeU64(supplyBuf, impl_->totalSupply_);
-        impl_->db.put("meta:totalSupply", supplyBuf);
+    if (impl_->rctOuts.size() <= impl_->rctGenesis.size()) {
+        if (impl_->totalSupply_ != rebuiltSupply) {
+            impl_->totalSupply_ = rebuiltSupply;
+            std::vector<uint8_t> supplyBuf;
+            writeU64(supplyBuf, impl_->totalSupply_);
+            impl_->db.put("meta:totalSupply", supplyBuf);
+        }
+    } else if (rebuiltSupply > impl_->totalSupply_) {
+        return false;
     }
 
     std::vector<Transaction> loadedTxs;
@@ -437,7 +720,7 @@ bool TransferManager::open(const std::string& dbPath) {
         (void)key;
         Transaction tx = Transaction::deserialize(value);
         if (tx.txid == crypto::Hash256{}) return true;
-        if (tx.computeHash() != tx.txid) return true;
+        if (!tx.isRewardCoinbase() && tx.computeHash() != tx.txid) return true;
         if (tx.status != TxStatus::PENDING &&
             tx.status != TxStatus::CONFIRMED &&
             tx.status != TxStatus::REJECTED) {
@@ -594,20 +877,16 @@ bool TransferManager::submitTransaction(const Transaction& tx) {
 
     const std::string hex = crypto::toHex(tx.txid);
     if (impl_->mempool.find(hex) != impl_->mempool.end()) return false;
-    if (!verifyTransactionLocked(tx, impl_->utxoSet, impl_->mempool, impl_->pending, impl_->config.minFeePerKB)) return false;
-
-    if (!tx.quantumSignature.empty() && !tx.inputs.empty()) {
-        auto& registry = quantum::IdentityRegistry::instance();
-        const std::string ownerAddress = addressFromPubKey(tx.inputs.front().pubKey);
-        if (!registry.verifyBinding(ownerAddress, tx.quantumSignature)) {
-            return false;
-        }
+    if (tx.isRewardClaim()) {
+        // First owner sweep stays secp-signed and linkable; do not require Dilithium.
+        return applyRewardClaimLocked(tx);
     }
+    if (!verifyTransactionLocked(tx, impl_->utxoSet, impl_->mempool, impl_->pending, impl_->config.minFeePerKB, impl_->rctOuts, impl_->rctKeyImages)) return false;
 
     if (impl_->mempool.size() >= impl_->config.maxMempoolSize) {
         auto feeRateLess = [](const Transaction& lhs, const Transaction& rhs) -> bool {
-            const size_t lhsSize = std::max<size_t>(1, lhs.serialize().size());
-            const size_t rhsSize = std::max<size_t>(1, rhs.serialize().size());
+            const size_t lhsSize = serializedSizeForFee(lhs);
+            const size_t rhsSize = serializedSizeForFee(rhs);
             unsigned __int128 lhsRate = static_cast<unsigned __int128>(lhs.fee) * static_cast<unsigned __int128>(rhsSize);
             unsigned __int128 rhsRate = static_cast<unsigned __int128>(rhs.fee) * static_cast<unsigned __int128>(lhsSize);
             if (lhsRate != rhsRate) return lhsRate < rhsRate;
@@ -616,8 +895,8 @@ bool TransferManager::submitTransaction(const Transaction& tx) {
             return crypto::toHex(lhs.txid) < crypto::toHex(rhs.txid);
         };
         auto hasStrictlyHigherFeeRate = [](const Transaction& lhs, const Transaction& rhs) -> bool {
-            const size_t lhsSize = std::max<size_t>(1, lhs.serialize().size());
-            const size_t rhsSize = std::max<size_t>(1, rhs.serialize().size());
+            const size_t lhsSize = serializedSizeForFee(lhs);
+            const size_t rhsSize = serializedSizeForFee(rhs);
             unsigned __int128 lhsRate = static_cast<unsigned __int128>(lhs.fee) * static_cast<unsigned __int128>(rhsSize);
             unsigned __int128 rhsRate = static_cast<unsigned __int128>(rhs.fee) * static_cast<unsigned __int128>(lhsSize);
             return lhsRate > rhsRate;
@@ -833,12 +1112,105 @@ size_t TransferManager::getUTXOCount(const std::string& address) const {
     return count;
 }
 
+static std::vector<uint8_t> mlsagKeyImageOf(const std::vector<uint8_t>& blob) {
+    try {
+        return crypto::MlsagSignature::deserialize(blob).keyImage;
+    } catch (...) {
+        return {};
+    }
+}
+
+static std::vector<uint8_t> outputP(const TxOutput& o) {
+    if (o.address.size() > 4 && o.address.rfind("rct1", 0) == 0) {
+        return crypto::fromHex(o.address.substr(4));
+    }
+    return {};
+}
+
+static std::string mintDbKey(const crypto::Hash256& rewardId) {
+    return "mint:" + crypto::toHex(rewardId);
+}
+
+static std::vector<uint8_t> encodeMint(uint64_t amount, const crypto::PublicKey& author,
+                                       bool claimed, const std::vector<uint8_t>& lockP) {
+    std::vector<uint8_t> rec;
+    writeU64(rec, amount);
+    rec.insert(rec.end(), author.begin(), author.end());
+    rec.push_back(claimed ? 1 : 0);
+    rec.insert(rec.end(), lockP.begin(), lockP.end());
+    return rec;
+}
+
+static bool decodeMint(const std::vector<uint8_t>& rec, RewardMint& out) {
+    out = RewardMint{};
+    if (rec.size() < 8 + crypto::PUBLIC_KEY_SIZE + 1 + 32) return false;
+    const uint8_t* p = rec.data();
+    out.amount = readU64(p);
+    p += 8;
+    std::memcpy(out.author.data(), p, crypto::PUBLIC_KEY_SIZE);
+    p += crypto::PUBLIC_KEY_SIZE;
+    out.claimed = (*p++ != 0);
+    out.lockP.assign(p, p + 32);
+    return out.amount > 0 && out.lockP.size() == 32;
+}
+
+static bool verifyRingCtAgainstPool(
+    const Transaction& tx,
+    const std::unordered_map<std::string, std::vector<uint8_t>>& rctOuts,
+    const std::unordered_set<std::string>& rctKeyImages,
+    std::unordered_set<std::string>& spentImages,
+    std::unordered_map<std::string, std::vector<uint8_t>>& createdRct
+) {
+    std::string err;
+    if (!verifyRingCtCrypto(tx, err)) return false;
+    for (const auto& inp : tx.inputs) {
+        if (!inp.isRingCt()) return false;
+        auto ki = mlsagKeyImageOf(inp.mlsag);
+        if (ki.size() != 32) return false;
+        std::string hex = crypto::toHex(ki);
+        if (rctKeyImages.count(hex) || spentImages.count(hex)) return false;
+        spentImages.insert(hex);
+        if (inp.ringP.size() != inp.ringC.size() || inp.ringP.size() < 2) return false;
+        for (size_t i = 0; i < inp.ringP.size(); ++i) {
+            if (!rctMemberKnown(rctOuts, createdRct, inp.ringP[i], inp.ringC[i])) return false;
+        }
+    }
+    for (const auto& o : tx.outputs) {
+        if (!o.isRingCt()) return false;
+        auto P = outputP(o);
+        if (P.size() != 32) return false;
+        std::string hex = crypto::toHex(P);
+        if (rctOuts.count(hex) || createdRct.count(hex)) return false;
+        createdRct[hex] = o.commitment;
+    }
+    return true;
+}
+
+static bool sumOutputCommitments(const std::vector<TxOutput>& outputs, std::vector<uint8_t>& sum) {
+    sum.clear();
+    for (const auto& o : outputs) {
+        if (o.commitment.size() != 32) return false;
+        if (sum.empty()) {
+            sum = o.commitment;
+        } else {
+            try {
+                sum = crypto::RingSign::pointAddPublic(sum, o.commitment);
+            } catch (...) {
+                return false;
+            }
+        }
+    }
+    return sum.size() == 32;
+}
+
 static bool verifyTransactionLocked(
     const Transaction& tx,
     const std::unordered_map<std::string, std::vector<UTXO>>& utxoSet,
     const std::unordered_map<std::string, Transaction>& mempool,
     const std::vector<Transaction>& pending,
-    uint64_t minFeePerKB) {
+    uint64_t minFeePerKB,
+    const std::unordered_map<std::string, std::vector<uint8_t>>& rctOuts,
+    const std::unordered_set<std::string>& rctKeyImages) {
     if (tx.inputs.empty() || tx.outputs.empty()) return false;
     if (tx.inputs.size() > MAX_TX_INPUTS || tx.outputs.size() > MAX_TX_OUTPUTS) return false;
     if (tx.timestamp == 0) return false;
@@ -846,16 +1218,39 @@ static bool verifyTransactionLocked(
     if (tx.timestamp > nowTs + MAX_TX_FUTURE_SKEW_SECONDS) return false;
     if (tx.computeHash() != tx.txid) return false;
     if (!tx.verify()) return false;
-    if (tx.fee < (tx.serialize().size() / 1000 + 1) * minFeePerKB) return false;
+    if (!quantumSignaturePolicyOk(tx)) return false;
+    if (!tx.isRingCtSpend()) {
+        if (tx.fee < (serializedSizeForFee(tx) / 1000 + 1) * minFeePerKB) return false;
+    } else if (tx.fee != 0) {
+        return false;
+    }
+
+    if (tx.isRingCtSpend()) {
+        std::unordered_set<std::string> pendingImages = rctKeyImages;
+        auto takeImages = [&](const Transaction& ptx) {
+            if (!ptx.isRingCtSpend()) return;
+            for (const auto& inp : ptx.inputs) {
+                auto ki = mlsagKeyImageOf(inp.mlsag);
+                if (!ki.empty()) pendingImages.insert(crypto::toHex(ki));
+            }
+        };
+        for (const auto& [_, ptx] : mempool) takeImages(ptx);
+        for (const auto& ptx : pending) takeImages(ptx);
+        std::unordered_set<std::string> spentImages;
+        std::unordered_map<std::string, std::vector<uint8_t>> createdRct;
+        return verifyRingCtAgainstPool(tx, rctOuts, pendingImages, spentImages, createdRct);
+    }
 
     std::unordered_set<std::string> seenInputs;
     std::unordered_set<std::string> pendingInputs;
     for (const auto& [_, pendingTx] : mempool) {
+        if (pendingTx.isRingCtSpend()) continue;
         for (const auto& inp : pendingTx.inputs) {
             pendingInputs.insert(crypto::toHex(inp.prevTxHash) + ":" + std::to_string(inp.outputIndex));
         }
     }
     for (const auto& pendingTx : pending) {
+        if (pendingTx.isRingCtSpend()) continue;
         for (const auto& inp : pendingTx.inputs) {
             pendingInputs.insert(crypto::toHex(inp.prevTxHash) + ":" + std::to_string(inp.outputIndex));
         }
@@ -891,6 +1286,26 @@ static bool verifyTransactionLocked(
         if (!found) return false;
     }
 
+    if (tx.isShield()) {
+        std::vector<TxOutput> hidden;
+        uint64_t transparentOut = 0;
+        for (const auto& outp : tx.outputs) {
+            if (outp.isRingCt()) {
+                hidden.push_back(outp);
+            } else {
+                if (outp.amount == 0 || !isValidWalletAddress(outp.address)) return false;
+                if (!safeAddU64(transparentOut, outp.amount, transparentOut)) return false;
+            }
+        }
+        if (hidden.empty()) return false;
+        std::vector<uint8_t> sumC;
+        if (!sumOutputCommitments(hidden, sumC)) return false;
+        if (totalInput < tx.fee) return false;
+        uint64_t rest = totalInput - tx.fee;
+        if (rest < transparentOut) return false;
+        return crypto::ConfidentialTx::verifyKnownAmount(sumC, rest - transparentOut, tx.balanceProof);
+    }
+
     for (const auto& outp : tx.outputs) {
         if (outp.amount == 0) return false;
         if (!isValidWalletAddress(outp.address)) return false;
@@ -906,7 +1321,7 @@ static bool verifyTransactionLocked(
 
 bool TransferManager::verifyTransaction(const Transaction& tx) const {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-    return verifyTransactionLocked(tx, impl_->utxoSet, impl_->mempool, impl_->pending, impl_->config.minFeePerKB);
+    return verifyTransactionLocked(tx, impl_->utxoSet, impl_->mempool, impl_->pending, impl_->config.minFeePerKB, impl_->rctOuts, impl_->rctKeyImages);
 }
 
 namespace {
@@ -920,14 +1335,30 @@ struct SimUtxo {
 static bool verifyTransactionForBlock(
     const synapse::core::Transaction& tx,
     const std::unordered_map<std::string, std::vector<synapse::core::UTXO>>& utxoSet,
+    const std::unordered_map<std::string, std::vector<uint8_t>>& rctOuts,
+    const std::unordered_set<std::string>& rctKeyImages,
     uint64_t minFeePerKB,
     std::unordered_set<std::string>& spentOutpoints,
-    std::unordered_map<std::string, SimUtxo>& createdOutpoints) {
+    std::unordered_map<std::string, SimUtxo>& createdOutpoints,
+    std::unordered_set<std::string>& spentImages,
+    std::unordered_map<std::string, std::vector<uint8_t>>& createdRct) {
 
     if (tx.inputs.empty() || tx.outputs.empty()) return false;
     if (tx.computeHash() != tx.txid) return false;
     if (!tx.verify()) return false;
-    if (tx.fee < (tx.serialize().size() / 1000 + 1) * minFeePerKB) return false;
+    if (!quantumSignaturePolicyOk(tx)) return false;
+    if (tx.isRewardClaim()) {
+        return tx.fee == 0 && !tx.outputs.empty();
+    }
+    if (!tx.isRingCtSpend()) {
+        if (tx.fee < (serializedSizeForFee(tx) / 1000 + 1) * minFeePerKB) return false;
+    } else if (tx.fee != 0) {
+        return false;
+    }
+
+    if (tx.isRingCtSpend()) {
+        return verifyRingCtAgainstPool(tx, rctOuts, rctKeyImages, spentImages, createdRct);
+    }
 
     std::unordered_set<std::string> seenInputs;
     uint64_t totalInput = 0;
@@ -973,6 +1404,37 @@ static bool verifyTransactionForBlock(
         spentOutpoints.insert(key);
     }
 
+    if (tx.isShield()) {
+        std::vector<synapse::core::TxOutput> hidden;
+        uint64_t transparentOut = 0;
+        for (uint32_t i = 0; i < tx.outputs.size(); ++i) {
+            const auto& outp = tx.outputs[i];
+            if (outp.isRingCt()) {
+                hidden.push_back(outp);
+                auto P = outputP(outp);
+                if (P.size() != 32) return false;
+                std::string hex = synapse::crypto::toHex(P);
+                if (rctOuts.count(hex) || createdRct.count(hex)) return false;
+                createdRct[hex] = outp.commitment;
+            } else {
+                if (outp.amount == 0 || !isValidWalletAddress(outp.address)) return false;
+                if (!safeAddU64(transparentOut, outp.amount, transparentOut)) return false;
+                std::string outKey = synapse::crypto::toHex(tx.txid) + ":" + std::to_string(i);
+                SimUtxo su;
+                su.amount = outp.amount;
+                su.address = outp.address;
+                createdOutpoints[outKey] = std::move(su);
+            }
+        }
+        if (hidden.empty()) return false;
+        std::vector<uint8_t> sumC;
+        if (!sumOutputCommitments(hidden, sumC)) return false;
+        if (totalInput < tx.fee) return false;
+        uint64_t rest = totalInput - tx.fee;
+        if (rest < transparentOut) return false;
+        return crypto::ConfidentialTx::verifyKnownAmount(sumC, rest - transparentOut, tx.balanceProof);
+    }
+
     for (uint32_t i = 0; i < tx.outputs.size(); ++i) {
         const auto& outp = tx.outputs[i];
         if (outp.amount == 0) return false;
@@ -1002,10 +1464,13 @@ bool TransferManager::verifyTransactionsInBlockOrder(const std::vector<Transacti
     std::lock_guard<std::mutex> lock(impl_->mtx);
     std::unordered_set<std::string> spent;
     std::unordered_map<std::string, SimUtxo> created;
+    std::unordered_set<std::string> spentImages;
+    std::unordered_map<std::string, std::vector<uint8_t>> createdRct;
     spent.reserve(txs.size() * 8);
     created.reserve(txs.size() * 4);
     for (const auto& tx : txs) {
-        if (!verifyTransactionForBlock(tx, impl_->utxoSet, impl_->config.minFeePerKB, spent, created)) return false;
+        if (!verifyTransactionForBlock(tx, impl_->utxoSet, impl_->rctOuts, impl_->rctKeyImages,
+                                       impl_->config.minFeePerKB, spent, created, spentImages, createdRct)) return false;
     }
     return true;
 }
@@ -1031,11 +1496,15 @@ bool TransferManager::applyBlockTransactionsFromBlock(
 
     std::unordered_set<std::string> spent;
     std::unordered_map<std::string, SimUtxo> created;
-    if (!verifyTransactionForBlock(txs.front(), impl_->utxoSet, impl_->config.minFeePerKB, spent, created)) {
+    std::unordered_set<std::string> spentImages;
+    std::unordered_map<std::string, std::vector<uint8_t>> createdRct;
+    if (!verifyTransactionForBlock(txs.front(), impl_->utxoSet, impl_->rctOuts, impl_->rctKeyImages,
+                                   impl_->config.minFeePerKB, spent, created, spentImages, createdRct)) {
         return false;
     }
     for (size_t i = 1; i < txs.size(); ++i) {
-        if (!verifyTransactionForBlock(txs[i], impl_->utxoSet, impl_->config.minFeePerKB, spent, created)) return false;
+        if (!verifyTransactionForBlock(txs[i], impl_->utxoSet, impl_->rctOuts, impl_->rctKeyImages,
+                                       impl_->config.minFeePerKB, spent, created, spentImages, createdRct)) return false;
     }
 
     std::unordered_set<std::string> blockTxIds;
@@ -1044,7 +1513,15 @@ bool TransferManager::applyBlockTransactionsFromBlock(
 
     std::unordered_set<std::string> blockSpentInputs;
     blockSpentInputs.reserve(spent.size() * 2);
+    std::unordered_set<std::string> blockSpentImages;
     for (const auto& tx : txs) {
+        if (tx.isRingCtSpend()) {
+            for (const auto& inp : tx.inputs) {
+                auto ki = mlsagKeyImageOf(inp.mlsag);
+                if (!ki.empty()) blockSpentImages.insert(crypto::toHex(ki));
+            }
+            continue;
+        }
         for (const auto& inp : tx.inputs) {
             blockSpentInputs.insert(synapse::crypto::toHex(inp.prevTxHash) + ":" + std::to_string(inp.outputIndex));
         }
@@ -1054,6 +1531,8 @@ bool TransferManager::applyBlockTransactionsFromBlock(
 
     struct Snapshot {
         std::unordered_map<std::string, std::vector<UTXO>> utxoSet;
+        std::unordered_map<std::string, std::vector<uint8_t>> rctOuts;
+        std::unordered_set<std::string> rctKeyImages;
         std::vector<Transaction> pending;
         std::vector<Transaction> confirmed;
         std::unordered_map<std::string, Transaction> mempool;
@@ -1064,6 +1543,8 @@ bool TransferManager::applyBlockTransactionsFromBlock(
 
     Snapshot snapshot;
     snapshot.utxoSet = impl_->utxoSet;
+    snapshot.rctOuts = impl_->rctOuts;
+    snapshot.rctKeyImages = impl_->rctKeyImages;
     snapshot.pending = impl_->pending;
     snapshot.confirmed = impl_->confirmed;
     snapshot.mempool = impl_->mempool;
@@ -1074,6 +1555,8 @@ bool TransferManager::applyBlockTransactionsFromBlock(
     auto rollback = [&]() {
         impl_->db.rollbackTransaction();
         impl_->utxoSet = std::move(snapshot.utxoSet);
+        impl_->rctOuts = std::move(snapshot.rctOuts);
+        impl_->rctKeyImages = std::move(snapshot.rctKeyImages);
         impl_->pending = std::move(snapshot.pending);
         impl_->confirmed = std::move(snapshot.confirmed);
         impl_->mempool = std::move(snapshot.mempool);
@@ -1107,11 +1590,21 @@ bool TransferManager::applyBlockTransactionsFromBlock(
         std::string phex = synapse::crypto::toHex(ptx.txid);
         bool inBlock = (blockTxIds.count(phex) > 0);
         bool conflict = false;
-        for (const auto& inp : ptx.inputs) {
-            std::string key = synapse::crypto::toHex(inp.prevTxHash) + ":" + std::to_string(inp.outputIndex);
-            if (blockSpentInputs.count(key) > 0) {
-                conflict = true;
-                break;
+        if (ptx.isRingCtSpend()) {
+            for (const auto& inp : ptx.inputs) {
+                auto ki = mlsagKeyImageOf(inp.mlsag);
+                if (!ki.empty() && blockSpentImages.count(crypto::toHex(ki)) > 0) {
+                    conflict = true;
+                    break;
+                }
+            }
+        } else {
+            for (const auto& inp : ptx.inputs) {
+                std::string key = synapse::crypto::toHex(inp.prevTxHash) + ":" + std::to_string(inp.outputIndex);
+                if (blockSpentInputs.count(key) > 0) {
+                    conflict = true;
+                    break;
+                }
             }
         }
         if (!conflict) {
@@ -1140,6 +1633,50 @@ bool TransferManager::applyBlockTransactionsFromBlock(
             std::vector<uint8_t> counterBuf;
             writeU64(counterBuf, impl_->txCounter);
             impl_->db.put("meta:txCounter", counterBuf);
+        }
+
+        auto persistRctOutput = [&](const TxOutput& o) -> bool {
+            auto P = outputP(o);
+            if (P.size() != 32 || o.commitment.size() != 32) return false;
+            std::string phex = crypto::toHex(P);
+            impl_->rctOuts[phex] = o.commitment;
+            std::vector<uint8_t> rec = o.commitment;
+            rec.push_back(0);
+            impl_->db.put("rct:" + phex, rec);
+            return true;
+        };
+
+        if (tx.isRingCtSpend()) {
+            for (const auto& inp : tx.inputs) {
+                auto ki = mlsagKeyImageOf(inp.mlsag);
+                if (ki.size() != 32) {
+                    rollback();
+                    return false;
+                }
+                std::string kihex = crypto::toHex(ki);
+                impl_->rctKeyImages.insert(kihex);
+                impl_->db.put("rctki:" + kihex, std::vector<uint8_t>{1});
+            }
+            for (const auto& o : tx.outputs) {
+                if (!persistRctOutput(o)) {
+                    rollback();
+                    return false;
+                }
+            }
+            impl_->db.put(txKey, tx.serialize());
+            impl_->mempool.erase(hex);
+            impl_->confirmed.push_back(tx);
+            impl_->recentTxs.push_back(tx);
+            if (impl_->recentTxs.size() > 1000) impl_->recentTxs.erase(impl_->recentTxs.begin());
+            continue;
+        }
+
+        if (tx.isRewardClaim()) {
+            if (!applyRewardClaimLocked(tx)) {
+                rollback();
+                return false;
+            }
+            continue;
         }
 
         uint64_t totalInput = 0;
@@ -1195,6 +1732,65 @@ bool TransferManager::applyBlockTransactionsFromBlock(
             totalInput = tmp;
 
             impl_->db.del(key);
+        }
+
+        if (tx.isShield()) {
+            uint64_t transparentOut = 0;
+            std::vector<TxOutput> hidden;
+            for (uint32_t i = 0; i < tx.outputs.size(); ++i) {
+                const auto& outp = tx.outputs[i];
+                if (outp.isRingCt()) {
+                    hidden.push_back(outp);
+                    if (!persistRctOutput(outp)) {
+                        rollback();
+                        return false;
+                    }
+                    continue;
+                }
+                if (outp.amount == 0 || !isValidWalletAddress(outp.address)) {
+                    rollback();
+                    return false;
+                }
+                if (!safeAddU64(transparentOut, outp.amount, transparentOut)) {
+                    rollback();
+                    return false;
+                }
+                UTXO utxo;
+                utxo.txHash = tx.txid;
+                utxo.outputIndex = i;
+                utxo.amount = outp.amount;
+                utxo.address = outp.address;
+                utxo.spent = false;
+                impl_->utxoSet[utxo.address].push_back(utxo);
+                UndoCreated uc;
+                uc.txHash = tx.txid;
+                uc.outputIndex = i;
+                uc.amount = outp.amount;
+                uc.address = outp.address;
+                undoCreated.push_back(std::move(uc));
+                std::string utxoKey = synapse::crypto::toHex(tx.txid) + ":" + std::to_string(i);
+                std::vector<uint8_t> utxoData;
+                writeU64(utxoData, utxo.amount);
+                writeString(utxoData, utxo.address);
+                impl_->db.put(utxoKey, utxoData);
+            }
+            std::vector<uint8_t> sumC;
+            if (hidden.empty() || !sumOutputCommitments(hidden, sumC) || totalInput < tx.fee) {
+                rollback();
+                return false;
+            }
+            uint64_t rest = totalInput - tx.fee;
+            if (rest < transparentOut ||
+                !crypto::ConfidentialTx::verifyKnownAmount(sumC, rest - transparentOut, tx.balanceProof)) {
+                rollback();
+                return false;
+            }
+            impl_->db.put(txKey, tx.serialize());
+            impl_->mempool.erase(hex);
+            impl_->confirmed.push_back(tx);
+            impl_->recentTxs.push_back(tx);
+            if (impl_->recentTxs.size() > 1000) impl_->recentTxs.erase(impl_->recentTxs.begin());
+            continue;
         }
 
         for (uint32_t i = 0; i < tx.outputs.size(); ++i) {
@@ -1491,7 +2087,7 @@ bool TransferManager::rollbackBlockTransactions(uint64_t blockHeight, const cryp
         if (tx.txid == crypto::Hash256{}) continue;
         if (tx.status != TxStatus::PENDING) continue;
         if (existingPending.count(hex) > 0) continue;
-        if (!verifyTransactionLocked(tx, impl_->utxoSet, impl_->mempool, impl_->pending, impl_->config.minFeePerKB)) continue;
+        if (!verifyTransactionLocked(tx, impl_->utxoSet, impl_->mempool, impl_->pending, impl_->config.minFeePerKB, impl_->rctOuts, impl_->rctKeyImages)) continue;
         impl_->pending.push_back(tx);
         impl_->mempool[hex] = tx;
         existingPending.insert(hex);
@@ -1565,6 +2161,206 @@ bool TransferManager::creditRewardDeterministic(const std::string& address, cons
     writeU64(supplyBuf, impl_->totalSupply_);
     impl_->db.put("meta:totalSupply", supplyBuf);
 
+    return true;
+}
+
+bool TransferManager::applyRewardClaimLocked(const Transaction& tx) {
+    if (!tx.isRewardClaim()) return false;
+    if (tx.computeHash() != tx.txid) return false;
+    if (!tx.verify()) return false;
+    if (tx.inputs.size() != 1) return false;
+
+    const auto& inp = tx.inputs.front();
+    std::string ridHex = crypto::toHex(inp.prevTxHash);
+    auto mit = impl_->mints.find(ridHex);
+    if (mit == impl_->mints.end()) return false;
+    RewardMint& mint = mit->second;
+    if (mint.claimed) {
+        return impl_->db.exists("tx:" + crypto::toHex(tx.txid));
+    }
+    if (inp.pubKey != mint.author) return false;
+    if (inp.outputIndex != 0) return false;
+
+    std::vector<TxOutput> hidden;
+    for (const auto& o : tx.outputs) {
+        if (!o.isRingCt()) return false;
+        hidden.push_back(o);
+    }
+    if (hidden.empty()) return false;
+    std::vector<uint8_t> sumC;
+    if (!sumOutputCommitments(hidden, sumC)) return false;
+    if (!crypto::ConfidentialTx::verifyKnownAmount(sumC, mint.amount, tx.balanceProof)) return false;
+
+    std::string hex = crypto::toHex(tx.txid);
+    if (impl_->mempool.count(hex) || impl_->db.exists("tx:" + hex)) {
+        // Already stored as pending/confirmed.
+    }
+
+    for (const auto& o : hidden) {
+        auto P = outputP(o);
+        if (P.size() != 32 || o.commitment.size() != 32) return false;
+        std::string phex = crypto::toHex(P);
+        if (impl_->rctOuts.count(phex)) return false;
+        impl_->rctOuts[phex] = o.commitment;
+        std::vector<uint8_t> rec = o.commitment;
+        rec.push_back(0);
+        impl_->db.put("rct:" + phex, rec);
+    }
+
+    mint.claimed = true;
+    impl_->db.put(mintDbKey(inp.prevTxHash), encodeMint(mint.amount, mint.author, true, mint.lockP));
+
+    Transaction stored = tx;
+    stored.status = TxStatus::CONFIRMED;
+    impl_->db.put("tx:" + hex, stored.serialize());
+    impl_->mempool.erase(hex);
+    auto pit = std::find_if(impl_->pending.begin(), impl_->pending.end(),
+                            [&](const Transaction& p) { return p.txid == tx.txid; });
+    if (pit != impl_->pending.end()) impl_->pending.erase(pit);
+    impl_->confirmed.push_back(stored);
+    impl_->recentTxs.push_back(stored);
+    if (impl_->recentTxs.size() > 1000) impl_->recentTxs.erase(impl_->recentTxs.begin());
+
+    impl_->txCounter++;
+    std::vector<uint8_t> counterBuf;
+    writeU64(counterBuf, impl_->txCounter);
+    impl_->db.put("meta:txCounter", counterBuf);
+
+    if (impl_->newTxCallback) impl_->newTxCallback(stored);
+    return true;
+}
+
+bool TransferManager::creditRewardConfidential(const crypto::PublicKey& author,
+                                               const crypto::Hash256& rewardId,
+                                               uint64_t amount) {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    if (amount == 0) return false;
+
+    std::string ridHex = crypto::toHex(rewardId);
+    if (impl_->mints.count(ridHex) || impl_->db.exists("tx:" + ridHex)) return false;
+
+    TxOutput hidden;
+    std::vector<uint8_t> known;
+    if (!buildRewardCoinbaseOutput(author, rewardId, amount, hidden, known)) return false;
+    auto P = outputP(hidden);
+    if (P.size() != 32) return false;
+
+    Transaction tx;
+    tx.timestamp = 0;
+    tx.fee = 0;
+    tx.status = TxStatus::CONFIRMED;
+    tx.outputs.push_back(hidden);
+    tx.balanceProof = known;
+    tx.txid = rewardId;
+
+    RewardMint mint;
+    mint.amount = amount;
+    mint.author = author;
+    mint.claimed = false;
+    mint.lockP = P;
+    impl_->mints[ridHex] = mint;
+    impl_->db.put(mintDbKey(rewardId), encodeMint(amount, author, false, P));
+
+    std::string phex = crypto::toHex(P);
+    impl_->rctOuts[phex] = hidden.commitment;
+    std::vector<uint8_t> rec = hidden.commitment;
+    rec.push_back(0);
+    impl_->db.put("rct:" + phex, rec);
+
+    impl_->confirmed.push_back(tx);
+    impl_->recentTxs.push_back(tx);
+    if (impl_->recentTxs.size() > 1000) impl_->recentTxs.erase(impl_->recentTxs.begin());
+    impl_->db.put("tx:" + ridHex, tx.serialize());
+
+    impl_->txCounter++;
+    std::vector<uint8_t> counterBuf;
+    writeU64(counterBuf, impl_->txCounter);
+    impl_->db.put("meta:txCounter", counterBuf);
+
+    impl_->totalSupply_ += amount;
+    std::vector<uint8_t> supplyBuf;
+    writeU64(supplyBuf, impl_->totalSupply_);
+    impl_->db.put("meta:totalSupply", supplyBuf);
+    return true;
+}
+
+uint64_t TransferManager::getClaimableBalance(const crypto::PublicKey& author) const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    uint64_t total = 0;
+    for (const auto& [_, mint] : impl_->mints) {
+        if (mint.claimed || mint.author != author) continue;
+        if (UINT64_MAX - total < mint.amount) return UINT64_MAX;
+        total += mint.amount;
+    }
+    return total;
+}
+
+bool TransferManager::claimMintToStealth(const crypto::Hash256& rewardId,
+                                         const crypto::PrivateKey& authorKey,
+                                         const privacy::StealthAddress& dest,
+                                         privacy::OwnedOutput* ownedOut) {
+    if (ownedOut) *ownedOut = privacy::OwnedOutput{};
+    if (!dest.hasKeys()) return false;
+
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    std::string ridHex = crypto::toHex(rewardId);
+    auto mit = impl_->mints.find(ridHex);
+    if (mit == impl_->mints.end() || mit->second.claimed) return false;
+    const uint64_t amount = mit->second.amount;
+    if (crypto::derivePublicKey(authorKey) != mit->second.author) return false;
+
+    privacy::StealthPayment pay;
+    if (!dest.createPayment(dest.getViewPublicKey(), dest.getSpendPublicKey(), amount, pay)) {
+        return false;
+    }
+    auto range = crypto::ConfidentialTx::proveRange(amount, pay.blinding);
+    auto known = crypto::ConfidentialTx::proveKnownAmount(pay.commitment, amount, pay.blinding);
+    if (range.empty() || known.size() != 64) {
+        sodium_memzero(pay.blinding.data(), pay.blinding.size());
+        return false;
+    }
+
+    Transaction tx;
+    tx.timestamp = static_cast<uint64_t>(std::time(nullptr));
+    if (tx.timestamp == 0) tx.timestamp = 1;
+    tx.fee = 0;
+    tx.status = TxStatus::CONFIRMED;
+    tx.balanceProof = known;
+    TxInput inp;
+    inp.prevTxHash = rewardId;
+    inp.outputIndex = 0;
+    tx.inputs.push_back(inp);
+    TxOutput hidden;
+    hidden.amount = 0;
+    hidden.address = "rct1" + crypto::toHex(pay.oneTimeAddress);
+    hidden.commitment = pay.commitment;
+    hidden.ephemeralPub = pay.ephemeralPub;
+    hidden.rangeProof = range;
+    hidden.ecdh = pay.ecdh;
+    tx.outputs.push_back(hidden);
+    tx.txid = tx.computeHash();
+    crypto::Hash256 sigHash = tx.txid;
+    tx.inputs.front().pubKey = crypto::derivePublicKey(authorKey);
+    tx.inputs.front().signature = crypto::sign(sigHash, authorKey);
+
+    if (!applyRewardClaimLocked(tx)) {
+        sodium_memzero(pay.blinding.data(), pay.blinding.size());
+        return false;
+    }
+
+    if (ownedOut) {
+        privacy::PrivateTxOut scanOut;
+        scanOut.oneTime = pay.oneTimeAddress;
+        scanOut.ephemeralPub = pay.ephemeralPub;
+        scanOut.commitment = pay.commitment;
+        scanOut.ecdh = pay.ecdh;
+        scanOut.rangeProof = range;
+        if (!privacy::scanOutput(dest, scanOut, *ownedOut)) {
+            sodium_memzero(pay.blinding.data(), pay.blinding.size());
+            return false;
+        }
+    }
+    sodium_memzero(pay.blinding.data(), pay.blinding.size());
     return true;
 }
 
@@ -1666,6 +2462,23 @@ uint64_t TransferManager::collectFeePool() {
     writeU64(z, 0);
     impl_->db.put("meta:feePool", z);
     return collected;
+}
+
+size_t TransferManager::confidentialOutputCount() const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    return impl_->rctOuts.size();
+}
+
+std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> TransferManager::confidentialMixins(size_t limit) const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> out;
+    for (const auto& kv : impl_->rctOuts) {
+        if (out.size() >= limit) break;
+        auto P = crypto::fromHex(kv.first);
+        if (P.size() != 32 || kv.second.size() != 32) continue;
+        out.emplace_back(std::move(P), kv.second);
+    }
+    return out;
 }
 
 }

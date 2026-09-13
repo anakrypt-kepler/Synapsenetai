@@ -6,6 +6,9 @@
 #include <unordered_map>
 #include <vector>
 
+// Trust-on-first-use map: wallet address → hybrid identity id.
+// Stored in <data>/identities.json. A later tx with a different PQ key is rejected.
+
 namespace synapse::quantum {
 
 class IdentityRegistry {

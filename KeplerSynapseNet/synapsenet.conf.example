@@ -1,8 +1,11 @@
 # SynapseNet Node Configuration
 # Copy to ~/.synapsenet/synapsenet.conf
 
-# Network - Alpha Seed Nodes (auto-discovery via Tor)
-network.seed_nodes=nv2b7cjwjzwrnwtrdaniogtnjkly6lcapg7ubkcou5pppzdcc2ki7cid.onion:8333,ny6duwaudeb76ym5zhtet2qtc5fmbkx7zp3pz7dlbroibj6jh5s2acqd.onion:8333
+# Tor — the desktop app starts a session Tor (SOCKS + ControlPort) and publishes
+# a new v3 onion via ADD_ONION on every launch. Closing the app kills that Tor.
+# Optional extra bootstrap peers (onion or hostname). Empty = mesh via your onion.
+# network.seed_nodes=example.onion:8333
+network.seed_nodes=
 network.port=8333
 network.rpc_port=8332
 
@@ -16,3 +19,7 @@ agent.tor.socks_host=127.0.0.1
 agent.tor.socks_port=9050
 agent.routing.allow_clearnet_fallback=false
 agent.routing.allow_p2p_clearnet_fallback=false
+
+# UPnP/NAT-PMP punch holes on the LAN router. Off for anonymity.
+network.enable_upnp=false
+network.enable_natpmp=false

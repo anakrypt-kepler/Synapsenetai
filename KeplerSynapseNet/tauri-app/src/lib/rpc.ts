@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 
+// Thin wrappers over Tauri commands in src-tauri/src/commands.rs.
+// Those commands dlopen libsynapsed and call the C ABI in synapsed_ffi.h.
+// rpcCall(method, params) is the same JSON-RPC the TUI/HTTP server uses.
+
 export async function checkFirstLaunch(): Promise<boolean> {
   return invoke<boolean>("check_first_launch");
 }
@@ -170,8 +174,11 @@ export interface NodeStatus {
   last_block: number;
   model_loaded: boolean;
   model_name: string;
+  model_path?: string;
+  inference?: boolean;
   tor_bootstrap: string;
   tor_circuits: number;
+  onion: string;
   bandwidth_in: number;
   bandwidth_out: number;
   version: string;
@@ -189,8 +196,11 @@ export function parseStatus(raw: string): NodeStatus {
       last_block: 0,
       model_loaded: false,
       model_name: "",
+      model_path: "",
+      inference: false,
       tor_bootstrap: "",
       tor_circuits: 0,
+      onion: "",
       bandwidth_in: 0,
       bandwidth_out: 0,
       version: "v0.1.0-V9",

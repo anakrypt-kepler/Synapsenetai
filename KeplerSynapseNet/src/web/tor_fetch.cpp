@@ -1,3 +1,6 @@
+// HTTP(S) over Tor SOCKS. Prefer this over curl_fetch when torRequired is set.
+// Hostname resolution happens inside Tor (socks5h), not via local DNS.
+
 #include "web/web.h"
 #include "web/curl_fetch.h"
 #include <mutex>

@@ -1,5 +1,11 @@
 #pragma once
 
+// Append-only knowledge chain.
+// Events go into blocks. Blocks are hashed, optionally PQ-signed by the producer,
+// and stored on disk. This is not a Bitcoin clone: the payload is knowledge /
+// PoE / NGT transfers, not a UTXO set by itself (UTXO lives in TransferManager).
+// BLOCK_PQ_MANDATORY_HEIGHT (1,000,000) is when producer PQ signatures become required.
+
 #include "crypto/crypto.h"
 #include <string>
 #include <vector>
@@ -20,6 +26,7 @@ enum class EventType : uint8_t {
     PENALTY = 6,
     POE_ENTRY = 7,
     POE_VOTE = 8,
+    // First hybrid-signed tx/event from an address binds it to a PQ identity.
     IDENTITY_BIND = 9
 };
 
@@ -76,6 +83,7 @@ public:
     bool open(const std::string& dbPath);
     void close();
     
+    // Event is pending until some later block includes it.
     bool append(const Event& event);
     bool appendBlock(const Block& block);
     
@@ -101,6 +109,7 @@ public:
     void onNewEvent(std::function<void(const Event&)> callback);
     void setSigner(std::function<crypto::Signature(const crypto::Hash256&)> signer);
     
+    // Same genesis on every honest node. Changing it is a hard fork.
     static Block createGenesisBlock();
     
     struct LedgerStats {

@@ -1,3 +1,6 @@
+// On-disk queue of knowledge drafts waiting for PoE submit.
+// Status moves draft → queued → submitted / rejected. Binary length-prefixed.
+
 #include "core/agent_draft_queue.h"
 
 #include <algorithm>

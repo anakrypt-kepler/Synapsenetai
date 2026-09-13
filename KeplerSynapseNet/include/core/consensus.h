@@ -1,5 +1,10 @@
 #pragma once
 
+// Validator set + voting around ledger events.
+// Not Proof of Work. Validators are selected from stake/reputation, they vote
+// APPROVE/REJECT/ABSTAIN, and a majority + quorum finalizes the event.
+// Proposer selection is deterministic from (seed, height) so every node agrees.
+
 #include "crypto/crypto.h"
 #include "ledger.h"
 #include "quantum/quantum_security.h"

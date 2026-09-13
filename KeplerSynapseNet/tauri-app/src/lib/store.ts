@@ -1,6 +1,9 @@
 import { writable, derived } from "svelte/store";
 import { getStatus, parseStatus, type NodeStatus } from "./rpc";
 
+// Shared UI state. Tabs match the desktop nav. nodeStatus is polled from
+// synapsed_get_status; if polling dies the bars freeze, they do not crash.
+
 export type TabId =
   | "dashboard"
   | "wallet"
@@ -17,6 +20,8 @@ export type TabId =
   | "settings";
 
 export const activeTab = writable<TabId>("dashboard");
+// 1 = new tab is to the right (slide in from right). -1 = from the left.
+export const tabSlideDir = writable<1 | -1>(1);
 export const showSetupWizard = writable<boolean>(false);
 export const myWalletAddress = writable<string>("");
 
@@ -30,6 +35,7 @@ export const nodeStatus = writable<NodeStatus>({
   model_name: "",
   tor_bootstrap: "",
   tor_circuits: 0,
+  onion: "",
   bandwidth_in: 0,
   bandwidth_out: 0,
   version: "v0.1.0-V9",
@@ -37,13 +43,11 @@ export const nodeStatus = writable<NodeStatus>({
 
 export const connectionColor = derived(nodeStatus, ($s) => {
   if ($s.connection === "tor") return "green";
-  if ($s.connection === "clearnet") return "yellow";
   return "red";
 });
 
 export const connectionLabel = derived(nodeStatus, ($s) => {
   if ($s.connection === "tor") return "TOR";
-  if ($s.connection === "clearnet") return "NET";
   return "OFF";
 });
 
@@ -51,13 +55,14 @@ let pollInterval: ReturnType<typeof setInterval> | null = null;
 
 export function startStatusPolling() {
   if (pollInterval) return;
-  pollInterval = setInterval(async () => {
+  const tick = async () => {
     try {
       const raw = await getStatus();
-      const parsed = parseStatus(raw);
-      nodeStatus.set(parsed);
+      nodeStatus.set(parseStatus(raw));
     } catch {}
-  }, 2000);
+  };
+  tick();
+  pollInterval = setInterval(tick, 2000);
 }
 
 export function stopStatusPolling() {
@@ -75,7 +80,7 @@ export const tabs: { id: TabId; label: string }[] = [
   { id: "knowledge", label: "KNOW" },
   { id: "naan", label: "NAAN" },
   { id: "harvest", label: "HARVEST" },
-  { id: "exploits", label: "EXPLOITS" },
+  { id: "exploits", label: "INTEL" },
   { id: "messages", label: "MSG" },
   { id: "ide", label: "IDE" },
   { id: "network", label: "NET" },

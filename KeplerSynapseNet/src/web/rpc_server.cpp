@@ -1,3 +1,5 @@
+// JSON-RPC HTTP server (port 8332). Same methods the desktop FFI uses.
+
 #include "web/rpc_server.h"
 #include "web/web.h"
 #include <string>

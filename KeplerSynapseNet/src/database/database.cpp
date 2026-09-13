@@ -1,3 +1,6 @@
+// Local KV/SQLite wrapper for wallet/chain metadata. If SYNAPSE_HAVE_SQLITE3
+// is off, some paths no-op — do not assume every build has a real DB.
+
 #include "database/database.h"
 #include <algorithm>
 #include <map>

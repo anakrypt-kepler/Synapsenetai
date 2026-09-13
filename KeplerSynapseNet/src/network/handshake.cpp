@@ -1,3 +1,6 @@
+// Peer handshake: X25519 + optional ML-KEM-768, then HKDF session key.
+// Magic 0x534E4554 = "SNET". SYNAPSE_HANDSHAKE_PQ_STRICT=1 refuses classic-only.
+
 #include "network/network.h"
 #include "crypto/crypto.h"
 #include "crypto/keys.h"

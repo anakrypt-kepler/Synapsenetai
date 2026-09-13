@@ -1,3 +1,5 @@
+// Take drafts from the queue, run PoE checks, submit. This is "publish", not "fetch".
+
 #include "core/agent_submission_pipeline.h"
 #include "core/poe_v1.h"
 

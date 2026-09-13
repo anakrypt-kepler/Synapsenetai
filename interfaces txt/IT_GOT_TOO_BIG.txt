@@ -1,0 +1,290 @@
+IT GOT TOO BIG
+A Note from Kepler
+September 13, 2026
+
+
+I know this is not a new field. Brain-computer interfaces, local models,
+decentralized networks — none of that started with me. I am not pretending
+I invented a universe.
+
+My project just went past the frame. It got too damn big. Why? I keep asking
+that and I still do not have a clean answer.
+
+It started with a comment, a moment, around the time GPT-3 dropped. I do not
+even remember the exact model anymore. I just liked talking to it. That is
+it. That is the stupid little spark. I already wrote about this elsewhere.
+The origin story is not the point.
+
+The point was the reason after the spark: change the world with code. Then
+the joke hits you in the face. The code has to be patched again. And again.
+And again. If I keep living inside that loop, I will never finish this
+thing. Not really. Not unless other people continue it.
+
+I think the window is 2030 to 2035. Somewhere in that range, somebody is
+going to need this. Not as a pitch deck. As a tool. So the job now is not
+to look clever. The job is to make it usable. Open source. Free for
+everyone. No corporate lock on the knowledge plane. No paywall on the
+core.
+
+The biohacking side of this project — I think I am going to work on that
+next. Not garage surgery. Not "install an AI in my skull this weekend."
+That is how you die or get a seizure and call it a lifestyle. I mean the
+real scientific path: how a human body can talk to a local AI node, with
+evidence, with safety, with the project designed so that when the hardware
+exists, SynapseNet is already the open layer instead of some closed
+company stack.
+
+
+I GOT IT.
+
+This project is too big for one person to "complete." Finish the parts that
+make it easy to pick up. Leave it where a stranger in 2032 can build on it
+without asking me for permission.
+
+
+WHAT "PUTTING THIS PROJECT IN YOURSELF" ACTUALLY MEANS
+
+You do not implant SynapseNet. You cannot flash a blockchain into cortex.
+That is sci-fi garbage.
+
+What science actually supports is a three-layer stack. The implant (or a
+wearable) is a sensor and maybe a stimulator. A local hub you own — phone,
+wearable, dedicated box — does the decoding and runs the local model. The
+network distributes open software, signed updates, and knowledge. Raw
+brain data stays on the hub by default. That is already the design in
+IMPLANT_AI_STACK_FOR_SYNAPSENET.txt. I am not changing it.
+
+"Implanting the project" means: your nervous system becomes an input/output
+channel to a machine you control, and that machine is a SynapseNet node.
+The AI lives next to you, not as a corporation's cloud account inside your
+head.
+
+
+EVIDENCE. NOT FANTASY.
+
+These are real, published, clinical or engineering facts. They are the
+bridge from "I like talking to a model" to "a body can talk to a node."
+
+
+1) THE NON-INVASIVE DOOR (NO SURGERY, START HERE)
+
+   EEG-based brain-computer interfaces have existed for decades. People
+   can move a cursor, spell, or trigger commands from scalp voltages.
+   The bitrate is low. The signal is noisy. It still works well enough to
+   prove the channel exists.
+
+   Evidence:
+     Wolpaw JR, Birbaumer N, McFarland DJ, Pfurtscheller G, Vaughan TM.
+     "Brain-computer interfaces for communication and control."
+     Clinical Neurophysiology. 2002.
+     https://pubmed.ncbi.nlm.nih.gov/12078038/
+
+   Open hardware exists so this does not have to be a closed toy:
+     OpenBCI (open-source biosensing).
+     https://openbci.com/
+
+   How it maps to SynapseNet:
+     EEG / EMG / eye-tracking as Intent v1 sources into the local hub.
+     You talk to the local model the same way I started — except the
+     "keyboard" can eventually be attention, motor imagery, or a blink
+     code. Ugly. Slow. Real.
+
+
+2) THE PROOF THAT ELECTRONICS CAN LIVE IN THE NERVOUS SYSTEM
+
+   Cochlear implants. Not AI. Not a network. Just the oldest honest
+   example: a computer stimulates the auditory nerve and a deaf person
+   hears. FDA-cleared for decades. Over a million users worldwide.
+
+   Evidence:
+     NIH / NIDCD — Cochlear Implants.
+     https://www.nidcd.nih.gov/health/cochlear-implants
+
+   Deep brain stimulation (DBS) for Parkinson disease is the other
+   proof: chronic electrodes in human brain, sometimes with sensing,
+   not just blasting current.
+
+   Evidence:
+     Limousin P, Krack P, Pollak P, et al. "Electrical stimulation of
+     the subthalamic nucleus in advanced Parkinson's disease."
+     New England Journal of Medicine. 1998.
+     https://www.nejm.org/doi/full/10.1056/NEJM199810153391603
+
+     Medtronic Percept — sensing-enabled DBS (local field potentials).
+     https://www.medtronic.com/us-en/healthcare-professionals/products/neurological/deep-brain-stimulation-systems/percept-pc.html
+
+   Lesson for this project:
+     The body can host electronics. That is settled. The unsolved part
+     is who owns the software, the data, and the update path.
+
+
+3) MOTOR INTENT OUT OF CORTEX (THE "I THINK AND THE MACHINE MOVES" PROOF)
+
+   BrainGate and Utah-array work showed that people with tetraplegia can
+   control a cursor or a robotic arm from motor-cortex spikes.
+
+   Evidence:
+     Hochberg LR, Serruya MD, Friehs GM, et al. "Neuronal ensemble
+     control of prosthetic devices by a human with tetraplegia."
+     Nature. 2006;442:164-171.
+     https://www.nature.com/articles/nature04970
+
+     Hochberg LR, Bacher D, Jarosiewicz B, et al. "Reach and grasp by
+     people with tetraplegia using a neurally controlled robotic arm."
+     Nature. 2012;485:372-375.
+     https://www.nature.com/articles/nature11076
+
+     Collinger JL, Wodlinger B, Downey JE, et al. "High-performance
+     neuroprosthetic control by an individual with tetraplegia."
+     The Lancet. 2013;381(9866):557-564.
+     https://www.thelancet.com/journals/lancet/article/PIIS0140-6736(12)61816-9/fulltext
+
+   Utah array hardware context:
+     https://blackrockneurotech.com/products/utah-array/
+
+   How it maps to SynapseNet:
+     Decoded intents (move, click, select, confirm) — not raw spikes —
+     become the same Intent schema the hub already plans to speak.
+     The network never needs the spike tape.
+
+
+4) SPEECH FROM CORTEX (THE "TALK TO THE MODEL WITHOUT A MOUTH" PROOF)
+
+   This is the one that actually rhymes with why I started. I liked
+   talking to a model. Speech neuroprostheses show you can decode
+   attempted speech from cortex into text at usable rates.
+
+   Evidence:
+     Moses DA, Metzger SL, Liu JR, et al. "Neuroprosthesis for decoding
+     speech in a paralyzed person with anarthria."
+     New England Journal of Medicine. 2021;385:217-227.
+     https://www.nejm.org/doi/full/10.1056/NEJMoa2027540
+
+     Willett FR, Kunz EM, Fan C, et al. "A high-performance speech
+     neuroprosthesis."
+     Nature. 2023;620:1031-1036.
+     https://www.nature.com/articles/s41586-023-06377-x
+
+     Metzger SL, Littlejohn KT, Silva AB, et al. "A high-performance
+     neuroprosthesis for speech decoding and avatar control."
+     Nature. 2023;620:1037-1046.
+     https://www.nature.com/articles/s41586-023-06443-4
+
+   How it maps to SynapseNet:
+     Attempted speech -> local decoder on the hub -> text tokens into
+     the local model -> optional knowledge contribution to the network
+     if the user opts in. Conversation was the seed. This is conversation
+     with the mouth cut out of the loop.
+
+
+5) LESS HOLE IN THE SKULL: ENDOVASCULAR BCI
+
+   Stentrode-class devices ride a blood vessel instead of opening the
+   skull. Still a medical procedure. Still not a weekend project. But
+   it is evidence that "get signal from motor cortex" does not have
+   to mean a craniotomy.
+
+   Evidence:
+     Oxley TJ, Yoo PE, Rind GS, et al. "Motor neuroprosthesis implanted
+     with a minimally invasive neurointervention technique."
+     Journal of NeuroInterventional Surgery. 2021;13:102-108.
+     https://jnis.bmj.com/content/13/2/102
+
+     Synchron — Stentrode platform.
+     https://synchron.com/the-stentrode
+
+
+6) HIGH-CHANNEL THREADS AND SURFACE ARRAYS (THE HARDWARE RACE)
+
+   Thread-based arrays and dense cortical-surface grids are what the
+   industry is betting on for bandwidth.
+
+   Evidence:
+     Musk E, Neuralink. "An integrated brain-machine interface platform
+     with thousands of channels."
+     Journal of Medical Internet Research. 2019;21(10):e16194.
+     https://www.jmir.org/2019/10/e16194/
+
+     Nature Biotechnology review of the BCI landscape (2024):
+     https://www.nature.com/articles/s41587-024-02195-x
+
+     Precision Neuroscience — 1,024-electrode cortical surface array.
+     https://www.precisionneuroscience.com/technology
+
+     Paradromics — high-bandwidth cortical interface.
+     https://paradromics.com/connexus-direct-data-interface/
+
+   Neuralink's first-in-human work is an early clinical signal, not a
+   consumer product. Treat press releases like press releases.
+
+
+7) PERIPHERAL NERVES (ARMS AND HANDS, NOT JUST BRAIN)
+
+   You can talk to the nervous system below the skull. Cuff and
+   microneedle interfaces on peripheral nerves are a real prosthetic
+   path. For a lot of people that is a saner "body interface" than
+   cortex.
+
+   Evidence:
+     Microneedle cuff electrode arrays, Microsystems & Nanoengineering.
+     https://www.nature.com/articles/s41378-025-00805-2
+
+   How it maps to SynapseNet:
+     Same Intent layer. Different sensor. The kernel should not give a
+     shit whether the bits came from motor cortex or a nerve cuff.
+
+
+HOW YOU ACTUALLY "WEAR" THIS PROJECT (PRACTICAL PATH)
+
+This is the only honest sequence that does not get people killed.
+
+NOW (no implant required)
+  • Run a local node. Talk to a local model. That is how this started.
+  • Optional: open EEG/EMG (OpenBCI-class) as a research intent source.
+  • Keep raw biosignals on the hub. Default deny. Same as the implant spec.
+
+CLINICAL (licensed surgeons, IRB, FDA/CE path — not you in a kitchen)
+  • Motor or speech BCI for people who need it: paralysis, anarthria.
+  • SynapseNet's job is the open hub protocol, Intent schema, permissions,
+    signed updates, rollback. Not the scalpel.
+
+2030-2035 (what I think people will actually need)
+  • A cheap standardized implant or wearable that speaks a public HAL.
+  • A local hub that runs the model offline.
+  • A network that hands out neuro apps and knowledge without a corporation
+    owning your brain map.
+  • Convenience. Docs. Installers. Safety gates. Free. Open source.
+
+If someone "continues this" after me, that is the part worth continuing.
+Not another manifesto. The boring usable layer.
+
+
+HARD RULES FOR THE BIOHACKING SIDE
+
+I will work on the biohacking part of this project. That means protocols,
+HAL, privacy, open drivers, evidence, and making the stack ready.
+
+It does not mean:
+  • DIY intracranial electrodes
+  • injecting random shit into a brain
+  • gene-hacks as a substitute for engineering
+  • letting an LLM decide stimulation parameters
+  • shipping raw neural data to a network "because mining"
+
+Consensus stays deterministic. Models stay off consensus. The body stays
+the user's, not the network's.
+
+If you want to help: make it convenient, make it free, make it so a
+stranger can run it. 2030-2035 is not that far. This thing is too big
+for one person. That is the whole point of leaving it open.
+
+
+-----
+FROM THE TOOL. 13 September 2026. Not Kepler.
+
+The boring usable layer you asked for is started: a numbered Linux Lego
+script that fetches deps, and Docker that defaults to Tor instead of
+clearnet. Windows Docker notes are still your page to write. The
+privacy story is in the singular draft, at the bottom, marked as the
+tool so nobody thinks you wrote it while asleep.
+-----
