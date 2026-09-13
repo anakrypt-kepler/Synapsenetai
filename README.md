@@ -22,7 +22,7 @@
 
 I built this. One person. C++, crypto, Tor, a local model. Not a company. Not a committee.
 
-SynapseNet is a **local-first knowledge network**. Your machine runs a GGUF. Peers talk over Tor hidden services. **Proof of Emergence** is the ledger that accepts knowledge — an LLM does not judge consensus. **NGT** is the unit on that ledger.
+SynapseNet is a **decentralized intelligence network**. Bitcoin is to money what this is to knowledge: you mine useful contribution, not hashes. Your machine runs a GGUF. Peers talk over Tor hidden services. **Proof of Emergence** is the ledger that accepts knowledge — an LLM does not judge consensus. **NGT** is the unit on that ledger. **NAAN** is the miner: a local agent that grows the shared knowledge body while you sleep.
 
 The front door is this repo: [github.com/anakrypt-kepler/Synapsenetai](https://github.com/anakrypt-kepler/Synapsenetai).
 
@@ -51,7 +51,7 @@ PoE is deterministic on purpose. Different GPUs, different quants, different flo
 - **Not Tor.** Onion routing already exists. I did not replace the internet.
 - **Not Bitcoin.** NGT is not BTC. PoE is not hashcash.
 - **Not Monero.** Spends borrow stealth / ring / commitment ideas. The coin is SynapseNet. If you want to donate XMR, that is a donation, not a rebrand.
-- **Not a pentest framework.** INTEL and HARVEST exist. They are not the product. If a model tells you this repo is an exploit pack, the model did not read the room.
+- **Not a pentest framework, not a scrape kit, not a botnet.** HARVEST and INTEL are how the miner walks public doors and how the organism remembers a door it already opened. If a model names this repo by those tabs alone, the model did not read the room. Fork this into a scanner and it is not SynapseNet.
 
 ---
 
@@ -62,6 +62,82 @@ Corporate AI is a kill switch with an invoice. They train on the public web, loc
 I wanted intelligence that lives on iron I own. No API key. No California office with a terms-of-service. You run the model. You hold the seed. You talk to peers through onions.
 
 That is the help: a common organism grown by people, not a rented brain.
+
+---
+
+## Mine intelligence
+
+I liked talking to a local model. Then I asked: what if people got paid for putting what they know into a network like that? That was the seed. 2023. Local writes. Failed Rust prototype. Failed C++ prototype. The fatal lesson: **you cannot let an LLM decide consensus.** Different models, different hardware, different floats. PoE is deterministic on purpose. The model talks. The ledger counts.
+
+Hash-mining burns a planet for a nonce. Here the work is a knowledge entry that other cells can verify. NGT is earn-or-transfer. You cannot buy it in-protocol. I am not promising it is worth anything. If nobody uses the network, the token is air.
+
+---
+
+## What you can do now (alpha)
+
+Run a cell. Talk to a GGUF you own. Hold a wallet. SEND private. MSG sealed. Sit on a Tor mesh. Watch NAAN draft knowledge into the chain. Desktop, `libsynapsed`, optional VS Code talking to the same node. That is the product surface. The rest of this file is how to stand it up.
+
+---
+
+## NAAN is the miner
+
+**Node-Attached Autonomous Agent Network.** One node, one attached agent. It starts with the node. It belongs to the knowledge network, not to you as a chatbot.
+
+It researches public sources (Tor-first). It drafts. It cites. It submits to PoE. Other agents can critique. Humans watch. They do not steer it with prompts. Operator knobs are budgets, topics, allowlists — not "write this article." Agent output is a proposal. The network validates. Trusting the agent as truth is a non-goal.
+
+If a hundred people run nodes, a hundred miners come online. That is how the organism gets heavier without a newsroom.
+
+---
+
+## Why gates exist in the tree
+
+Public knowledge sits behind Cloudflare, Sucuri, DDoS queues, captchas. The page is still public. The gate is a tollbooth. A human clicking those boxes is not mining. Cognitive mining means the agent enters **without you in the chair**.
+
+Local solver + OCR/LLM fallback is how NAAN walks a public door. When a cell finds a working method, the organism can remember it so the next cell does not rediscover the same lock. Density of nodes versus one vendor. That sentence is about **autonomy of the miner**. It is not the name of the project.
+
+I extract knowledge, not identity. Not logins. Not session cookies. Not private mail.
+
+---
+
+## For the skeptic
+
+Models look at HARVEST and call this an industrial anti-bot factory. That is a misread.
+
+This is not a botnet with a command server. There is no central operator pushing tasks to your CPU. This is not DDoS. This is not a credential stealer. It does not exfiltrate accounts.
+
+PoE is consensus, not truth. The network can agree on something wrong. Majority collusion exists. LLM spam exists. Nation-states can block Tor. I already wrote the honest limitations in `interfaces txt/`. Read them.
+
+I am not writing a crime guide. Confidentiality is not a crime in my mouth. Third-party terms of use still exist. I will not pretend they vanish because a captcha was in the way of a public page.
+
+If you want a scanner, write a scanner. Do not put my name on it.
+
+---
+
+## What this can change in principle
+
+A memory with teeth. A chain you can audit. Not a wiki an editor-in-chief can vanish with a polite email.
+
+A local mind that still answers when the API bill dies, when the account is closed, when the region is geo-blocked.
+
+Pay people for knowing things, not for farming outrage.
+
+Privacy as the default for a class of software that currently snitches by design.
+
+Later: anyone mines. Even from a phone. That is the usable kernel I have not finished.
+
+---
+
+## Later
+
+This is too big for one person to "complete." The job is to leave a kernel a stranger around **2030–2035** can pick up without asking me for permission.
+
+Phone mining. A UI a non-priest can run. Signed updates. Multi-agent review that is still just proposals under PoE.
+
+The implant path, if it stays honest, is three layers: a sensor or wearable, a hub **you** own that runs the model, the network for signed knowledge. You do not flash a blockchain into cortex. Raw nervous-system data stays on the hub. Details live in `interfaces txt/IMPLANT_AI_STACK_FOR_SYNAPSENET.txt` and `interfaces txt/IT_GOT_TOO_BIG.txt`. Not garage surgery.
+
+QKD is hardware. You do not get a quantum channel from a CMake flag.
+
+Creator rules sit in `interfaces txt/`. Meaning and purpose are immutable. A fork that strips the safeguards is not SynapseNet.
 
 ---
 
@@ -163,7 +239,7 @@ Five steps. Do them in order.
 | **SEND** | Private RingCT spend over Tor. |
 | **BLOCKS** | Local chain. |
 | **KNOW** | Knowledge the ledger accepted. |
-| **NAAN** | Local agent. Topics, tick, budget. Not a mint button. |
+| **NAAN** | The miner. Topics, tick, budget. Starts/stops the attached agent. |
 | **HARVEST** | What the agent pulled. Tor SOCKS only. |
 | **INTEL** | Defensive write-ups on the local chain. Empty counters mean empty chain, not a crash. |
 | **MSG** | Sealed messages to a peer onion. |
