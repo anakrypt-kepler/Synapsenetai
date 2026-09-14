@@ -6,11 +6,79 @@
   import { rpcCall } from "../../lib/rpc";
   import { activeTab, nodeStatus } from "../../lib/store";
 
+  // PoE stores the file as text. Language is only the tab name / extension.
+  const langs: { id: string; ext: string; label: string }[] = [
+    { id: "rust", ext: "rs", label: "Rust" },
+    { id: "python", ext: "py", label: "Python" },
+    { id: "javascript", ext: "js", label: "JavaScript" },
+    { id: "typescript", ext: "ts", label: "TypeScript" },
+    { id: "go", ext: "go", label: "Go" },
+    { id: "c", ext: "c", label: "C" },
+    { id: "cpp", ext: "cpp", label: "C++" },
+    { id: "java", ext: "java", label: "Java" },
+    { id: "kotlin", ext: "kt", label: "Kotlin" },
+    { id: "swift", ext: "swift", label: "Swift" },
+    { id: "csharp", ext: "cs", label: "C#" },
+    { id: "php", ext: "php", label: "PHP" },
+    { id: "ruby", ext: "rb", label: "Ruby" },
+    { id: "lua", ext: "lua", label: "Lua" },
+    { id: "shell", ext: "sh", label: "Shell" },
+    { id: "sql", ext: "sql", label: "SQL" },
+    { id: "html", ext: "html", label: "HTML" },
+    { id: "css", ext: "css", label: "CSS" },
+    { id: "json", ext: "json", label: "JSON" },
+    { id: "text", ext: "txt", label: "Other" },
+  ];
+
   let files: { name: string; content: string }[] = [
-    { name: "main.rs", content: '// SynapseNet code\nfn main() {\n    println!("Hello, SynapseNet!");\n}' },
+    { name: "snippet.rs", content: '// SynapseNet code\nfn main() {\n    println!("Hello, SynapseNet!");\n}' },
   ];
   let activeFile = 0;
   let nextUntitled = 2;
+  let langId = "rust";
+
+  function extOf(name: string): string {
+    const i = name.lastIndexOf(".");
+    return i >= 0 ? name.slice(i + 1) : "txt";
+  }
+
+  function stemOf(name: string): string {
+    const i = name.lastIndexOf(".");
+    return i >= 0 ? name.slice(0, i) : name;
+  }
+
+  function withExt(name: string, ext: string): string {
+    return `${stemOf(name)}.${ext}`;
+  }
+
+  // Engine rejects title < 10. Keep the filename visible, pad if short.
+  function poeTitle(name: string): string {
+    return name.length >= 10 ? name : `snippet_${name}`;
+  }
+
+  function langById(id: string) {
+    return langs.find((l) => l.id === id) || langs[langs.length - 1];
+  }
+
+  function syncLangFromFile() {
+    const ext = extOf(files[activeFile]?.name || "");
+    langId = langs.find((l) => l.ext === ext)?.id || "text";
+  }
+
+  function setActive(i: number) {
+    activeFile = i;
+    syncLangFromFile();
+  }
+
+  function setLang(id: string) {
+    langId = id;
+    const lang = langById(id);
+    const f = files[activeFile];
+    if (!f) return;
+    files[activeFile] = { ...f, name: withExt(f.name, lang.ext) };
+    files = files;
+  }
+
   let submitResult = "";
   let submitting = false;
   let poeStats = { current_epoch: 0, total_entries: 0, chain_height: 0, next_epoch_in: "0h 0m" };
@@ -34,7 +102,9 @@
   }
 
   function addFile() {
-    files = [...files, { name: `untitled${nextUntitled}.rs`, content: "" }];
+    const lang = langById(langId);
+    const n = String(nextUntitled).padStart(3, "0");
+    files = [...files, { name: `patch_${n}.${lang.ext}`, content: "" }];
     nextUntitled += 1;
     activeFile = files.length - 1;
   }
@@ -50,7 +120,7 @@
     try {
       const result = await rpcCall(
         "poe.submit_code",
-        JSON.stringify({ title: file.name, patch: file.content })
+        JSON.stringify({ title: poeTitle(file.name), patch: file.content })
       );
       const parsed = JSON.parse(result);
       if (parsed.error) {
@@ -72,7 +142,7 @@
   <div class="ide-editor">
     <div class="editor-tabs">
       {#each files as file, i}
-        <button class="editor-tab" class:active={activeFile === i} type="button" on:click={() => (activeFile = i)}>
+        <button class="editor-tab" class:active={activeFile === i} type="button" on:click={() => setActive(i)}>
           {file.name}
         </button>
       {/each}
@@ -94,7 +164,7 @@
         <span>Epoch {poeStats.current_epoch}</span>
       </div>
       <div class="earn-hint">
-        PoE code: submit → recorded on your chain → NGT on finalize (votes), RingCT to stealth. Not hash mining. Author stays public.
+        Any language. PoE stores text, it does not compile. Submit → chain → NGT on finalize. Author stays public.
       </div>
       {#if myCode.length > 0}
         <div class="code-subs">
@@ -110,6 +180,11 @@
     </div>
     <div class="editor-status">
       <span>LN:{files[activeFile] ? files[activeFile].content.split("\n").length : 0}</span>
+      <select class="lang-pick" bind:value={langId} on:change={() => setLang(langId)}>
+        {#each langs as lang}
+          <option value={lang.id}>{lang.label}</option>
+        {/each}
+      </select>
       <button class="btn-secondary sub-btn" type="button" on:click={submitToPoe} disabled={submitting}>PoE</button>
       {#if submitResult}
         <span class="sub-result">{submitResult}</span>
@@ -251,6 +326,17 @@
     background: var(--surface);
     backdrop-filter: blur(22px) saturate(140%);
     -webkit-backdrop-filter: blur(22px) saturate(140%);
+  }
+
+  .lang-pick {
+    max-width: 140px;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm, 10px);
+    background: var(--surface-solid, #111);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
   }
 
   .sub-btn {

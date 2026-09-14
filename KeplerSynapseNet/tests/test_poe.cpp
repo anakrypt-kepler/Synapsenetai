@@ -226,7 +226,7 @@ static void testAcceptanceRewardDeterminism() {
     cfg.acceptanceMinReward = 1000000ULL;
     cfg.acceptanceMaxReward = 100000000ULL;
     cfg.acceptanceBonusPerPowBit = 1000000U;
-    cfg.acceptanceSizePenaltyBytes = 2048;
+    cfg.acceptanceSizePenaltyBytes = 8192;
     cfg.acceptancePenaltyPerChunk = 1000000U;
     engine.setConfig(cfg);
 
@@ -242,6 +242,40 @@ static void testAcceptanceRewardDeterminism() {
     uint64_t r2 = engine.calculateAcceptanceReward(e);
     assert(r1 == r2);
     assert(r1 >= cfg.acceptanceMinReward && r1 <= cfg.acceptanceMaxReward);
+}
+
+static void testAcceptanceRewardIgnoresNormalPatchSize() {
+    synapse::core::PoeV1Engine engine;
+    synapse::core::PoeV1Config cfg;
+    cfg.limits.minPowBits = 12;
+    cfg.powBits = 12;
+    cfg.acceptanceBaseReward = 10000000ULL;
+    cfg.acceptanceMinReward = 1000000ULL;
+    cfg.acceptanceMaxReward = 100000000ULL;
+    cfg.acceptanceBonusPerPowBit = 1000000U;
+    cfg.acceptanceSizePenaltyBytes = 8192;
+    cfg.acceptancePenaltyPerChunk = 1000000U;
+    engine.setConfig(cfg);
+
+    synapse::core::poe_v1::KnowledgeEntryV1 e;
+    e.version = 1;
+    e.timestamp = 1;
+    e.authorPubKey = makePk(1);
+    e.contentType = synapse::core::poe_v1::ContentType::CODE;
+    e.title = "patch.rs";
+    e.powBits = 12;
+
+    // 3 KiB patch used to pay 0.09 at the old 2 KiB step. Now full base.
+    e.body = std::string(3000, 'a');
+    uint64_t shortish = engine.calculateAcceptanceReward(e);
+    assert(shortish == cfg.acceptanceBaseReward);
+
+    e.body = std::string(static_cast<size_t>(cfg.acceptanceSizePenaltyBytes) - e.title.size() - 1, 'b');
+    assert(engine.calculateAcceptanceReward(e) == cfg.acceptanceBaseReward);
+
+    e.body = std::string(static_cast<size_t>(cfg.acceptanceSizePenaltyBytes), 'c');
+    uint64_t dump = engine.calculateAcceptanceReward(e);
+    assert(dump == cfg.acceptanceBaseReward - cfg.acceptancePenaltyPerChunk);
 }
 
 static void testEpochDeterminism() {
@@ -827,6 +861,7 @@ int main() {
     testKnowledgeEntryV1Roundtrip();
     testValidationVoteV1Roundtrip();
     testAcceptanceRewardDeterminism();
+    testAcceptanceRewardIgnoresNormalPatchSize();
     testEpochDeterminism();
     testDuplicateContentRejected();
     testVoteSelectionAndDeterministicFinalizationRecord();

@@ -44,6 +44,8 @@ static bool openCell(const std::string& dir, PoeV1Engine& engine,
     cfg.powBits = 12;
     cfg.limits.minPowBits = 12;
     cfg.limits.maxPowBits = 28;
+    cfg.limits.maxBodyBytes = 65536;
+    cfg.acceptanceSizePenaltyBytes = 8192;
     cfg.adaptiveQuorum = true;
     cfg.adaptiveMajority = true;
     cfg.validatorsN = 0;

@@ -21,7 +21,7 @@ enum class ContentType : uint8_t {
 
 struct LimitsV1 {
     uint32_t maxTitleBytes = 256;
-    uint32_t maxBodyBytes = 8192;
+    uint32_t maxBodyBytes = 65536;
     uint32_t maxCitations = 16;
     uint32_t minPowBits = 16;
     uint32_t maxPowBits = 28;

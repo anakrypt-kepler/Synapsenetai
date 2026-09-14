@@ -447,6 +447,7 @@ uint64_t PoeV1Engine::calculateAcceptanceReward(const poe_v1::KnowledgeEntryV1& 
         reward += bonus;
     }
     uint64_t size = static_cast<uint64_t>(entry.title.size() + entry.body.size());
+    // Floor division: size < threshold => 0 chunks => full base. No length bonus.
     if (cfg.acceptanceSizePenaltyBytes > 0) {
         uint64_t chunks = size / static_cast<uint64_t>(cfg.acceptanceSizePenaltyBytes);
         uint64_t pen = chunks * static_cast<uint64_t>(cfg.acceptancePenaltyPerChunk);
