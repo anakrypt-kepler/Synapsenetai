@@ -51,7 +51,9 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#ifdef __linux__
 #include <sys/prctl.h>
+#endif
 #include <sys/stat.h>
 #include <sys/wait.h>
 #endif
