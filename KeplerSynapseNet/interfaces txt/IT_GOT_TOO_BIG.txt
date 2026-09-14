@@ -277,3 +277,14 @@ the user's, not the network's.
 If you want to help: make it convenient, make it free, make it so a
 stranger can run it. 2030-2035 is not that far. This thing is too big
 for one person. That is the whole point of leaving it open.
+
+
+-----
+FROM THE TOOL. 13 September 2026. Not Kepler.
+
+The boring usable layer you asked for is started: a numbered Linux Lego
+script that fetches deps, and Docker that defaults to Tor instead of
+clearnet. Windows Docker notes are still your page to write. The
+privacy story is in the singular draft, at the bottom, marked as the
+tool so nobody thinks you wrote it while asleep.
+-----

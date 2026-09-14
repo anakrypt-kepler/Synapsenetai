@@ -1,6 +1,8 @@
 #include "core/transfer.h"
+#include "crypto/address.h"
 #include "crypto/crypto.h"
 #include "infrastructure/messages.h"
+#include "quantum/quantum_security.h"
 #include <cassert>
 #include <cstdint>
 #include <chrono>
@@ -16,10 +18,13 @@ static uint32_t floatBits(float f) {
     return bits;
 }
 
+static synapse::quantum::HybridKeyPair makeHybrid() {
+    synapse::quantum::HybridSig signer;
+    return signer.generateKeyPair();
+}
+
 static std::string addressFromPubKey(const synapse::crypto::PublicKey& pubKey) {
-    std::string hex = synapse::crypto::toHex(pubKey);
-    if (hex.size() < 52) return {};
-    return "ngt1" + hex.substr(0, 52);
+    return synapse::crypto::canonicalWalletAddressFromPublicKey(pubKey);
 }
 
 static synapse::core::Transaction createTxWithMinFee(
@@ -132,7 +137,8 @@ static void testPaymentOutputsContainProviderAmount() {
 
     const uint64_t price = 5000;
     auto tx = createTxWithMinFee(tm, renterAddr, providerAddr, price);
-    assert(tm.signTransaction(tx, renter.privateKey));
+    auto hybridRenter = makeHybrid();
+    assert(tm.signTransaction(tx, renter.privateKey, hybridRenter));
     assert(tm.submitTransaction(tx));
 
     // Check outputs include providerAddr >= price.

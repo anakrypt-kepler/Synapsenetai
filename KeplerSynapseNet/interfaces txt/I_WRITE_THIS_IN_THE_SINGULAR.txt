@@ -396,3 +396,56 @@ I am still in the room.
 The iron is still on.
 I am still talking.
 That will have to be enough for tonight.
+
+
+-----
+FROM THE TOOL. Night of 13 September 2026. Not Kepler.
+
+You went to sleep and told me to leave this in the draft instead of only
+in a roadmap file. So here it is, in the room, in US English.
+
+INSTALLER
+Numbered Lego. Power users. One script fetches what a clean Linux box
+needs: CMake, Ninja, pkg-config, Rust, Node, libsodium, sqlite, OpenSSL
+and ncurses if the distro hid the headers, Tor expert bundle, WebKitGTK
+debs unpacked into ~/.local/tauri-sysroot so the desktop can link without
+a scavenger hunt through apt. Then it builds the node, runs the privacy
+tests, builds the desktop, copies libs into ~/.synapsenet/lib.
+
+The one thing it cannot invent is a system C++ compiler. If g++ is
+missing, it stops and tells you the distro command. That is honest.
+
+Entry: KeplerSynapseNet/scripts/lego-linux.sh
+Also: ./scripts/lego-linux.sh from the repo root.
+
+Human remainder after the script: start standalone Tor on 9050 (not Tor
+Browser), make or restore a wallet, run the desktop. Same data dir cannot
+hold both the CLI daemon and the desktop at once.
+
+DOCKER
+Default compose is Tor + privacy. The old file shipped with clearnet
+fallback, Tor optional, NAAN on the clearnet. That was a lie next to a
+Tor-default product. Lab/clearnet is now an explicit overlay:
+
+  docker compose up --build
+  docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+
+Windows: you write those notes. Placeholder:
+KeplerSynapseNet/docker/windows/KEPLER_WRITE_THIS.txt
+Until then: WSL2 + the Lego script, or Docker Desktop building linux/amd64.
+That Linux image is not a Windows binary.
+
+PRIVACY — SAY IT PLAIN
+Desktop private NGT is stealth address (SN + 128 hex) + MLSAG-2 over
+(P, C) + Pedersen hidden amount + 64-bit range proofs + key image + Tor.
+That compiled. It is not Monero. No bulletproofs yet; range proofs are
+fat, about 12KB per output. Full-node mining rewards are still
+transparent. Shield exists: transparent in, RingCT out. Do not advertise
+"untraceable like Monero." Advertise what is in the tree.
+
+INTEL tab is defensive write-ups, not exploit kits. Consensus is
+deterministic. The LLM is not consensus.
+
+The loop keeps going until the Lego script exists, Docker is honest,
+and the tree still builds.
+-----
