@@ -456,10 +456,12 @@ private:
     void ingestPoeVoteHex(const std::string& hex) const;
     void maybePoeAutoVote(const synapse::crypto::Hash256& submitId) const;
     void gossipPoeLine(const std::string& line) const;
+    std::vector<std::string> meshPoeDests() const;
     bool meshSend(const std::string& onion, const std::string& payload) const;
     void appendKnowledgeJsonl(const std::string& submitHex, const std::string& kind,
                               const std::string& title, bool finalized) const;
-    void markKnowledgeFinalized(const std::string& submitHex) const;
+    void markKnowledgeFinalized(const std::string& submitHex, uint64_t creditedAtoms = 0) const;
+    uint64_t maybeCreditPoeStealth(const synapse::crypto::Hash256& submitId) const;
 
     mutable std::mutex poeMtx_;
     mutable std::unique_ptr<synapse::core::PoeV1Engine> poeV1_;

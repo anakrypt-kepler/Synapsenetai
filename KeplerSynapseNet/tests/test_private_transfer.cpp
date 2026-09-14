@@ -103,6 +103,21 @@ int main() {
         }
     }
 
+    OwnedOutput owned;
+    std::vector<uint8_t> rid(32, 0x11);
+    synapse::privacy::PrivateTx coin;
+    std::string cerr;
+    if (!synapse::privacy::buildPoeStealthCoinbase(alice, 10000000ULL, rid, coin, owned, cerr))
+        return fail(std::string("buildPoeStealthCoinbase: ") + cerr);
+    if (!coin.coinbase || coin.vins.size() != 0 || coin.vouts.size() != 1)
+        return fail("coinbase shape");
+    if (owned.amountAtoms != 10000000ULL) return fail("coinbase amount");
+    OwnedOutput scanned;
+    if (!scanOutput(alice, coin.vouts[0], scanned) || scanned.amountAtoms != 10000000ULL)
+        return fail("coinbase scan");
+    std::string vErr;
+    if (verifyPrivateTx(coin, vErr)) return fail("network verify must reject coinbase");
+
     std::cout << "PrivateTransferTests OK\n";
     return 0;
 }

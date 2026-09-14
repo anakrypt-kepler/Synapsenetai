@@ -26,7 +26,7 @@ SynapseNet is a **decentralized intelligence network**. Bitcoin is to money what
 
 The front door is this repo: [github.com/anakrypt-kepler/Synapsenetai](https://github.com/anakrypt-kepler/Synapsenetai).
 
-The mesh is already live. Two cells are talking over Tor. Put the peer you trust in `~/.synapsenet/synapsenet.conf` as `network.seed_nodes=`. I do not bake seed onions into the binary.
+The mesh is already live. Two cells are talking over Tor. The bootstrap seed (always-on cell) is in `synapsenet.conf.example` as `network.seed_nodes=`. First install copies that file to `~/.synapsenet/synapsenet.conf`. I do not bake seed onions into the binary — rotate the seed by editing the example, not by shipping a new `.so`.
 
 A full cell is peer + miner + validator. PoE is votes, not a roll call of every onion. Each full cell casts its own vote over the mesh (`POE_ENTRY` / `POE_VOTE`). Two full cells: both must vote, then it finalizes. When the set grows, the threshold is a strict majority (2 of 3, 3 of 5, …). A thin mailbox with no `poe_pk` stays mail — it does not judge.
 
@@ -212,13 +212,13 @@ Session Tor is a standalone daemon the app starts. **Not Tor Browser.** Browser 
 
 Skip the GUI: `--skip-desktop`. Skip tests: `--skip-tests`.
 
-Peers are not baked into the binary. If you have a bootstrap onion, put it in `~/.synapsenet/synapsenet.conf`:
+Peers are not baked into the binary. A fresh `lego-linux.sh` install writes this seed from `synapsenet.conf.example`. PEX learns the rest over Tor.
 
 ```
-network.seed_nodes=YOURPEER.onion:8333
+network.seed_nodes=ybyamaztw24233b2l7sgbxnouuncfxlrlkkgkipj7355iztjmnll7iqd.onion:8333
 ```
 
-PEX learns the rest over Tor.
+Already have a config with an empty `network.seed_nodes=`? Paste that line. Extra seeds go in the same value, comma-separated.
 
 ---
 

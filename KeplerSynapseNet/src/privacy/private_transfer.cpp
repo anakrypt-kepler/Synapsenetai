@@ -176,6 +176,53 @@ bool mintOwnedOutput(const StealthAddress& self, uint64_t amountAtoms, OwnedOutp
     return out.spendScalar.size() == crypto_core_ed25519_SCALARBYTES;
 }
 
+bool buildPoeStealthCoinbase(const StealthAddress& self,
+                             uint64_t amountAtoms,
+                             const std::vector<uint8_t>& txid,
+                             PrivateTx& tx,
+                             OwnedOutput& owned,
+                             std::string& err) {
+    tx = PrivateTx{};
+    owned = OwnedOutput{};
+    err.clear();
+    if (!self.hasKeys()) {
+        err = "stealth keys missing";
+        return false;
+    }
+    if (amountAtoms == 0) {
+        err = "invalid amount";
+        return false;
+    }
+    if (txid.size() != 32) {
+        err = "bad reward id";
+        return false;
+    }
+
+    StealthPayment pay;
+    if (!self.createPayment(self.getViewPublicKey(), self.getSpendPublicKey(), amountAtoms, pay)) {
+        err = "stealth payment failed";
+        return false;
+    }
+    PrivateTxOut vout;
+    if (!fillStealthOut(pay, amountAtoms, vout, err)) {
+        sodium_memzero(pay.blinding.data(), pay.blinding.size());
+        return false;
+    }
+    if (!scanOutput(self, vout, owned) || owned.amountAtoms != amountAtoms) {
+        err = "coinbase scan failed";
+        sodium_memzero(pay.blinding.data(), pay.blinding.size());
+        return false;
+    }
+
+    tx.coinbase = true;
+    tx.version = 2;
+    tx.txid = txid;
+    tx.vouts.push_back(std::move(vout));
+    if (!pay.ecdh.empty() && pay.ecdh[0] == 0x03 && pay.ecdh.size() > 80) tx.version = 3;
+    sodium_memzero(pay.blinding.data(), pay.blinding.size());
+    return true;
+}
+
 bool selectSpendable(const std::vector<OwnedOutput>& wallet,
                      uint64_t amountAtoms,
                      std::vector<size_t>& indices,

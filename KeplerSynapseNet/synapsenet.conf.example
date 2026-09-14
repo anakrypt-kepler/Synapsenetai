@@ -3,9 +3,10 @@
 
 # Tor — the desktop app starts a session Tor (SOCKS + ControlPort) and publishes
 # a new v3 onion via ADD_ONION on every launch. Closing the app kills that Tor.
-# Optional extra bootstrap peers (onion or hostname). Empty = mesh via your onion.
-# network.seed_nodes=example.onion:8333
-network.seed_nodes=
+# Public bootstrap cell (always-on). Not compiled into the binary.
+# First lego install copies this file to ~/.synapsenet/synapsenet.conf.
+# Extra seeds: comma-separated. PEX learns the rest over Tor.
+network.seed_nodes=ybyamaztw24233b2l7sgbxnouuncfxlrlkkgkipj7355iztjmnll7iqd.onion:8333
 network.port=8333
 network.rpc_port=8332
 

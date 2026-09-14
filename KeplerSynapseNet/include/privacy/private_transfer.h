@@ -60,6 +60,8 @@ struct PrivateTx {
     // MLSAG-only verify still accepts wrapped ecdh without pqc_sig.
     int version = 2;
     int64_t ts = 0;
+    // Local PoE acceptance mint. Never ingest from RELAY_TX.
+    bool coinbase = false;
 };
 
 struct PrivateSendResult {
@@ -75,6 +77,14 @@ std::vector<uint8_t> privateTxMessage(const std::vector<PrivateTxOut>& vouts,
 
 // Test/dev helper. Production NAAN must not mint stealth outputs.
 bool mintOwnedOutput(const StealthAddress& self, uint64_t amountAtoms, OwnedOutput& out);
+
+// PoE acceptance coinbase to own stealth. Not a NAAN faucet. Empty vins.
+bool buildPoeStealthCoinbase(const StealthAddress& self,
+                             uint64_t amountAtoms,
+                             const std::vector<uint8_t>& txid,
+                             PrivateTx& tx,
+                             OwnedOutput& owned,
+                             std::string& err);
 
 bool selectSpendable(const std::vector<OwnedOutput>& wallet,
                      uint64_t amountAtoms,

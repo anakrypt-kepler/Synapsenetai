@@ -5,21 +5,27 @@
 #include "core/poe_v1_objects.h"
 #include "crypto/keys.h"
 #include "crypto/crypto.h"
+#include "privacy/private_transfer.h"
 #include "../third_party/llama.cpp/vendor/nlohmann/json.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <vector>
-
-int64_t nowMillis();
 
 namespace synapse {
 namespace ide {
 namespace {
+
+int64_t nowMillis() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch()).count();
+}
 
 bool isHexChars(const std::string& s, size_t n) {
     if (s.size() != n) return false;
@@ -100,13 +106,8 @@ void SynapsedEngine::refreshPoeValidators() const {
 }
 
 void SynapsedEngine::gossipPoeLine(const std::string& line) const {
-    std::vector<std::string> dests;
-    {
-        std::lock_guard<std::mutex> lock(knownPeersMtx_);
-        dests.reserve(knownPeers_.size());
-        for (const auto& kv : knownPeers_) dests.push_back(kv.first);
-    }
-    for (const auto& onion : dests) {
+    // Seeds plus live peers. knownPeers_ alone misses the VPS until PEX lands.
+    for (const auto& onion : meshPoeDests()) {
         meshSend(onion, line);
     }
 }
@@ -126,7 +127,7 @@ void SynapsedEngine::appendKnowledgeJsonl(const std::string& submitHex, const st
     if (kf.good()) kf << row.dump() << "\n";
 }
 
-void SynapsedEngine::markKnowledgeFinalized(const std::string& submitHex) const {
+void SynapsedEngine::markKnowledgeFinalized(const std::string& submitHex, uint64_t creditedAtoms) const {
     const std::string path = dataDir_ + "/knowledge.jsonl";
     std::ifstream in(path);
     if (!in.good()) return;
@@ -141,6 +142,13 @@ void SynapsedEngine::markKnowledgeFinalized(const std::string& submitHex) const 
             if (sid.rfind(submitHex.substr(0, std::min<size_t>(sid.size(), submitHex.size())), 0) == 0
                 || submitHex.rfind(sid, 0) == 0) {
                 j["status"] = "finalized";
+                if (creditedAtoms > 0) {
+                    std::ostringstream ngt;
+                    ngt << std::fixed << std::setprecision(2)
+                        << (static_cast<double>(creditedAtoms) /
+                            static_cast<double>(synapse::privacy::kNgtAtoms));
+                    j["ngt_earned"] = ngt.str();
+                }
                 line = j.dump();
                 changed = true;
             }
@@ -155,30 +163,38 @@ void SynapsedEngine::markKnowledgeFinalized(const std::string& submitHex) const 
 
 void SynapsedEngine::maybePoeAutoVote(const crypto::Hash256& submitId) const {
     if (!poeReady_.load() || !poeV1_) return;
-    std::lock_guard<std::mutex> lock(poeMtx_);
-    if (!poeV1_ || poeV1_->isFinalized(submitId)) return;
-    auto entry = poeV1_->getEntry(submitId);
-    if (!entry) return;
-    auto validators = poeV1_->getDeterministicValidators();
-    if (validators.empty()) return;
-    uint32_t selectedCount = poeV1_->effectiveSelectedValidators();
-    if (selectedCount == 0) return;
-    auto selected = core::poe_v1::selectValidators(poeV1_->chainSeed(), submitId, validators, selectedCount);
-    if (std::find(selected.begin(), selected.end(), poePk_) == selected.end()) return;
-    for (const auto& v : poeV1_->getVotesForSubmit(submitId)) {
-        if (v.validatorPubKey == poePk_) return;
+    std::string voteHex;
+    bool finalized = false;
+    {
+        std::lock_guard<std::mutex> lock(poeMtx_);
+        if (!poeV1_ || poeV1_->isFinalized(submitId)) return;
+        auto entry = poeV1_->getEntry(submitId);
+        if (!entry) return;
+        auto validators = poeV1_->getDeterministicValidators();
+        if (validators.empty()) return;
+        uint32_t selectedCount = poeV1_->effectiveSelectedValidators();
+        if (selectedCount == 0) return;
+        auto selected = core::poe_v1::selectValidators(poeV1_->chainSeed(), submitId, validators, selectedCount);
+        if (std::find(selected.begin(), selected.end(), poePk_) == selected.end()) return;
+        for (const auto& v : poeV1_->getVotesForSubmit(submitId)) {
+            if (v.validatorPubKey == poePk_) return;
+        }
+        core::poe_v1::ValidationVoteV1 vote;
+        vote.version = 1;
+        vote.submitId = submitId;
+        vote.prevBlockHash = poeV1_->chainSeed();
+        vote.flags = 0;
+        vote.scores = {100, 100, 100};
+        if (!core::poe_v1::signValidationVoteV1(vote, poeSk_)) return;
+        if (!poeV1_->addVote(vote)) return;
+        voteHex = crypto::toHex(vote.serialize());
+        finalized = static_cast<bool>(poeV1_->finalize(submitId));
     }
-    core::poe_v1::ValidationVoteV1 vote;
-    vote.version = 1;
-    vote.submitId = submitId;
-    vote.prevBlockHash = poeV1_->chainSeed();
-    vote.flags = 0;
-    vote.scores = {100, 100, 100};
-    if (!core::poe_v1::signValidationVoteV1(vote, poeSk_)) return;
-    if (!poeV1_->addVote(vote)) return;
-    gossipPoeLine("POE_VOTE " + crypto::toHex(vote.serialize()) + "\n");
-    auto fin = poeV1_->finalize(submitId);
-    if (fin) markKnowledgeFinalized(crypto::toHex(submitId));
+    if (!voteHex.empty()) gossipPoeLine("POE_VOTE " + voteHex + "\n");
+    if (finalized) {
+        const uint64_t paid = maybeCreditPoeStealth(submitId);
+        markKnowledgeFinalized(crypto::toHex(submitId), paid);
+    }
 }
 
 void SynapsedEngine::ingestPoeEntryHex(const std::string& hexRaw) const {
@@ -219,10 +235,17 @@ void SynapsedEngine::ingestPoeVoteHex(const std::string& hexRaw) const {
         added = poeV1_->addVote(*vote);
     }
     if (added) gossipPoeLine("POE_VOTE " + hex + "\n");
-    std::lock_guard<std::mutex> lock(poeMtx_);
-    if (!poeV1_) return;
-    auto fin = poeV1_->finalize(vote->submitId);
-    if (fin) markKnowledgeFinalized(crypto::toHex(vote->submitId));
+    bool finalized = false;
+    crypto::Hash256 sid = vote->submitId;
+    {
+        std::lock_guard<std::mutex> lock(poeMtx_);
+        if (!poeV1_) return;
+        finalized = static_cast<bool>(poeV1_->finalize(sid));
+    }
+    if (finalized) {
+        const uint64_t paid = maybeCreditPoeStealth(sid);
+        markKnowledgeFinalized(crypto::toHex(sid), paid);
+    }
 }
 
 std::string SynapsedEngine::submitPoeKnowledge(const std::string& title, const std::string& body,
@@ -250,13 +273,17 @@ std::string SynapsedEngine::submitPoeKnowledge(const std::string& title, const s
         return err.dump();
     }
     const std::string sidHex = crypto::toHex(res.submitId);
+    appendKnowledgeJsonl(sidHex, type == core::poe_v1::ContentType::CODE ? "code" : "knowledge",
+                         title, res.finalized);
+    appendLocalChainBlock("poe_entry", sidHex.size() >= 32 ? sidHex.substr(0, 32) : sidHex);
+    // Record first. Onion gossip is slow; do not stall the local ledger on SOCKS.
     if (!entryBlob.empty())
         gossipPoeLine("POE_ENTRY " + crypto::toHex(entryBlob) + "\n");
     if (!voteBlob.empty())
         gossipPoeLine("POE_VOTE " + crypto::toHex(voteBlob) + "\n");
-    appendKnowledgeJsonl(sidHex, type == core::poe_v1::ContentType::CODE ? "code" : "knowledge",
-                         title, res.finalized);
-    appendLocalChainBlock("poe_entry", sidHex.size() >= 32 ? sidHex.substr(0, 32) : sidHex);
+    uint64_t credited = 0;
+    if (res.finalized) credited = maybeCreditPoeStealth(res.submitId);
+    if (credited > 0) markKnowledgeFinalized(sidHex, credited);
     nlohmann::json out;
     out["ok"] = true;
     out["id"] = sidHex.size() >= 16 ? sidHex.substr(0, 16) : sidHex;
@@ -264,12 +291,16 @@ std::string SynapsedEngine::submitPoeKnowledge(const std::string& title, const s
     out["hash"] = sidHex.size() >= 32 ? sidHex.substr(0, 32) : sidHex;
     out["status"] = res.finalized ? "finalized" : "pending";
     out["finalized"] = res.finalized;
-    out["creditedAtoms"] = 0;
+    out["creditedAtoms"] = credited;
     out["requiredVotes"] = poeV1_ ? poeV1_->effectiveRequiredVotes() : 0;
     out["selectedValidators"] = poeV1_ ? poeV1_->effectiveSelectedValidators() : 0;
-    out["message"] = res.finalized
-        ? "PoE finalized. NGT still pays on epoch coinbase, not here."
-        : "PoE submitted. Waiting for the other full cell to vote.";
+    if (credited > 0) {
+        out["message"] = "PoE finalized. Stealth coinbase credited.";
+    } else if (res.finalized) {
+        out["message"] = "PoE finalized. NGT waits for a second full cell.";
+    } else {
+        out["message"] = "PoE submitted. Waiting for the other full cell to vote.";
+    }
     return out.dump();
 }
 

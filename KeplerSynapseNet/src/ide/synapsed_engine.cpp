@@ -11,6 +11,7 @@
 #include "privacy/private_transfer.h"
 #include "model/model_inference.h"
 #include "quantum/quantum_security.h"
+#include "node/poe_runtime.h"
 #include "../third_party/llama.cpp/vendor/nlohmann/json.hpp"
 
 #include <sodium.h>
@@ -431,6 +432,7 @@ nlohmann::json privateTxToJson(const synapse::privacy::PrivateTx& tx) {
     j["v"] = ver;
     j["txid"] = synapse::crypto::toHex(tx.txid);
     j["ts"] = tx.ts;
+    if (tx.coinbase || tx.vins.empty()) j["coinbase"] = true;
     nlohmann::json vins = nlohmann::json::array();
     for (const auto& vin : tx.vins) {
         nlohmann::json v;
@@ -467,7 +469,12 @@ bool jsonToPrivateTx(const nlohmann::json& j, synapse::privacy::PrivateTx& tx, s
         tx.txid = synapse::crypto::fromHex(j.value("txid", std::string()));
         tx.ts = j.value("ts", static_cast<int64_t>(0));
         tx.version = j.value("v", 2);
+        tx.coinbase = j.value("coinbase", false) || j.value("poe_coinbase", false);
         if (!j.contains("vins") || !j.contains("outputs") || !j["vins"].is_array() || !j["outputs"].is_array()) {
+            err = "missing vins/outputs";
+            return false;
+        }
+        if (!tx.coinbase && j["vins"].empty()) {
             err = "missing vins/outputs";
             return false;
         }
@@ -2380,6 +2387,86 @@ std::string SynapsedEngine::stealthReceiveAddress() const {
     return privacy_->stealth().encodeAddress();
 }
 
+uint64_t SynapsedEngine::maybeCreditPoeStealth(const crypto::Hash256& submitId) const {
+    // Pay only the author, only after a real quorum (2-of-2 or majority). Not NAAN.
+    if (!privacy_ || !privacy_->stealth().hasKeys()) return 0;
+
+    core::poe_v1::KnowledgeEntryV1 entry;
+    uint32_t selected = 0;
+    uint32_t required = 0;
+    uint32_t votes = 0;
+    {
+        std::lock_guard<std::mutex> lock(poeMtx_);
+        if (!poeReady_.load() || !poeV1_ || !poeV1_->isFinalized(submitId)) return 0;
+        auto e = poeV1_->getEntry(submitId);
+        if (!e) return 0;
+        if (e->authorPubKey != poePk_) return 0;
+        entry = *e;
+        selected = poeV1_->effectiveSelectedValidators();
+        required = poeV1_->effectiveRequiredVotes();
+        votes = static_cast<uint32_t>(poeV1_->getVotesForSubmit(submitId).size());
+    }
+    if (selected < 2 || required < 2 || votes < required) return 0;
+
+    uint64_t amount = 0;
+    {
+        std::lock_guard<std::mutex> lock(poeMtx_);
+        if (!poeV1_) return 0;
+        amount = poeV1_->calculateAcceptanceReward(entry);
+    }
+    if (amount == 0) return 0;
+
+    const auto rewardId = synapse::node::rewardIdForAcceptance(submitId);
+    const std::string ridHex = crypto::toHex(rewardId);
+    std::vector<uint8_t> txid(rewardId.begin(), rewardId.end());
+
+    std::lock_guard<std::mutex> wlock(privateWalletMtx_);
+    if (publicTxSeen(dataDir_, ridHex)) return 0;
+
+    synapse::privacy::PrivateTx tx;
+    synapse::privacy::OwnedOutput owned;
+    std::string err;
+    if (!synapse::privacy::buildPoeStealthCoinbase(privacy_->stealth(), amount, txid, tx, owned, err))
+        return 0;
+    tx.ts = nowMillis();
+
+    auto wallet = loadOwnedOutputs(dataDir_);
+    const std::string phex = synapse::crypto::toHex(owned.oneTime);
+    for (const auto& o : wallet) {
+        if (synapse::crypto::toHex(o.oneTime) == phex) return 0;
+    }
+    wallet.push_back(owned);
+    saveOwnedOutputs(dataDir_, wallet);
+
+    nlohmann::json pub = privateTxToJson(tx);
+    pub["coinbase"] = true;
+    pub["poe_submit"] = crypto::toHex(submitId);
+    appendPublicTx(dataDir_, pub);
+
+    uint64_t unspent = 0;
+    for (const auto& o : wallet) {
+        if (!o.spent) unspent += o.amountAtoms;
+    }
+    naanTotalNgt_ = atomsToNgt(unspent);
+    std::ostringstream bs;
+    bs << std::fixed << std::setprecision(2) << naanTotalNgt_;
+    balance_ = bs.str();
+    {
+        std::ofstream bf(dataDir_ + "/balance.dat", std::ios::trunc);
+        if (bf.good()) bf << balance_;
+    }
+
+    nlohmann::json note;
+    note["txid"] = ridHex;
+    note["type"] = "poe_reward";
+    note["amount"] = atomsToNgt(amount);
+    note["ts"] = tx.ts;
+    note["status"] = "confirmed";
+    note["submitId"] = crypto::toHex(submitId);
+    appendWalletNote(dataDir_, note);
+    return amount;
+}
+
 void SynapsedEngine::loadMigratePrivateWallet() const {
     std::lock_guard<std::mutex> lock(privateWalletMtx_);
     auto wallet = loadOwnedOutputs(dataDir_);
@@ -2516,9 +2603,12 @@ std::string SynapsedEngine::sendPrivateNgt(const std::string& recipient, double 
 void SynapsedEngine::ingestPrivateTxJson(const std::string& jsonLine) const {
     nlohmann::json j = nlohmann::json::parse(jsonLine, nullptr, false);
     if (j.is_discarded()) return;
+    // PoE coinbase is local-only. Network blobs must be MLSAG spends.
+    if (j.value("coinbase", false) || j.value("poe_coinbase", false)) return;
     synapse::privacy::PrivateTx tx;
     std::string err;
     if (!jsonToPrivateTx(j, tx, err)) return;
+    if (tx.coinbase || tx.vins.empty()) return;
     if (!synapse::privacy::verifyPrivateTx(tx, err)) return;
 
     std::string txidHex = synapse::crypto::toHex(tx.txid);
@@ -2591,6 +2681,31 @@ void SynapsedEngine::relayPrivateTxJson(const std::string& jsonLine) const {
 
 bool SynapsedEngine::meshSend(const std::string& onion, const std::string& payload) const {
     return sendOnionPayload(onion, 8333, payload, nullptr);
+}
+
+std::vector<std::string> SynapsedEngine::meshPoeDests() const {
+    // Seeds first, then full cells with poe_pk. Cap size: each hop is a 20s SOCKS wait.
+    std::vector<std::string> dests;
+    std::set<std::string> seen;
+    auto add = [&](const std::string& raw) {
+        const std::string host = onionHostOnly(raw);
+        if (!isValidV3Onion(host)) return;
+        if (!ownOnion_.empty() && host == onionHostOnly(ownOnion_)) return;
+        if (!seen.insert(host).second) return;
+        dests.push_back(host);
+    };
+    for (const auto& s : loadConfiguredSeeds(dataDir_)) add(s.host);
+    std::vector<std::string> poePeers;
+    {
+        std::lock_guard<std::mutex> lock(knownPeersMtx_);
+        for (const auto& kv : knownPeers_) {
+            if (kv.second.poePk.size() != crypto::PUBLIC_KEY_SIZE * 2) continue;
+            poePeers.push_back(kv.first);
+        }
+    }
+    for (const auto& o : poePeers) add(o);
+    if (dests.size() > 4) dests.resize(4);
+    return dests;
 }
 
 int SynapsedEngine::init(const std::string& configPath) {
@@ -8268,6 +8383,38 @@ void SynapsedEngine::stopNaan() {
     else naanState_ = "off";
 }
 
+// PoE rejects title < 10 and body < 50. NAAN used to send "NAAN AI" + a headline.
+static std::string buildNaanPoeTitle(const std::string& topic) {
+    std::string t = "NAAN harvest: " + topic;
+    if (t.size() < 10) t += " knowledge";
+    if (t.size() > 240) t.resize(240);
+    return t;
+}
+
+static std::string buildNaanPoeBody(const std::string& topic, const std::string& url,
+                                   const std::string& chosenTitle, const std::string& hash,
+                                   const std::string& via, const std::string& text) {
+    // Keep the body unique. Dumping the same search-page HTML makes SimHash
+    // reject later harvests as too_similar even when sha256 differs.
+    std::ostringstream o;
+    o << "SynapseNet NAAN harvest record.\n";
+    o << "topic: " << topic << "\n";
+    o << "url: " << url << "\n";
+    o << "title: " << chosenTitle << "\n";
+    o << "via: " << via << "\n";
+    o << "sha256: " << hash << "\n";
+    o << "ts: " << nowMillis() << "\n";
+    if (!text.empty()) {
+        std::string excerpt = text.size() > 240 ? text.substr(0, 240) : text;
+        o << "excerpt: " << excerpt << "\n";
+    }
+    std::string body = o.str();
+    if (body.size() < 50)
+        body += "Source fetched over Tor. Local draft is not a wallet credit.\n";
+    if (body.size() > 8000) body.resize(8000);
+    return body;
+}
+
 void SynapsedEngine::naanLoop() {
     static std::mt19937 rng(std::random_device{}());
 
@@ -8385,11 +8532,6 @@ void SynapsedEngine::naanLoop() {
             if (naanHist_.size() > 25) naanHist_.erase(naanHist_.begin());
 
             if (filed) persistDraft(d, hash);
-            if (filed) {
-                std::string body = chosenTitle;
-                if (body.size() > 8000) body.resize(8000);
-                submitPoeKnowledge("NAAN " + topic, body, synapse::core::poe_v1::ContentType::TEXT);
-            }
             naanState_ = "active";
 
             if (!br.cveId.empty() && !html.empty()) {
@@ -8413,6 +8555,30 @@ void SynapsedEngine::naanLoop() {
             auto harvest = extractAssets(html, url);
             NaanDraft hd{chosenTitle, topic, status, 0.0};
             persistHarvest(hd, hash, harvest);
+            // Submit outside mtx_: PoW + onion gossip must not freeze RPC.
+            const std::string poeTitle = buildNaanPoeTitle(topic);
+            const std::string poeBody = buildNaanPoeBody(topic, url, chosenTitle, hash,
+                                                        fetchedVia, harvest.text);
+            const std::string poeRes = submitPoeKnowledge(
+                poeTitle, poeBody, synapse::core::poe_v1::ContentType::TEXT);
+            {
+                std::lock_guard<std::mutex> lock(mtx_);
+                std::string note = "poe submit ok";
+                nlohmann::json jr = nlohmann::json::parse(poeRes, nullptr, false);
+                if (!jr.is_discarded() && jr.is_object()) {
+                    if (jr.contains("error")) {
+                        note = "poe reject: " + jr.value("error", "failed");
+                    } else {
+                        const std::string sid = jr.value("submitId", "");
+                        note = std::string("poe ") + jr.value("status", "pending")
+                            + " " + (sid.size() >= 12 ? sid.substr(0, 12) : sid);
+                    }
+                } else {
+                    note = "poe submit: " + poeRes.substr(0, 80);
+                }
+                naanLog_.push_back(NaanLogEntry{nowMillis(), note});
+                if (naanLog_.size() > 80) naanLog_.erase(naanLog_.begin());
+            }
         }
 
         for (int w = 0; w < tickSec && !naanStop_.load(); w++) {
