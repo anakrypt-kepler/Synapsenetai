@@ -454,6 +454,8 @@ private:
                                    synapse::core::poe_v1::ContentType type);
     void ingestPoeEntryHex(const std::string& hex) const;
     void ingestPoeVoteHex(const std::string& hex) const;
+    void ingestPoeRecipeHex(const std::string& hex) const;
+    void ingestPoeRecipeReplayHex(const std::string& hex) const;
     void maybePoeAutoVote(const synapse::crypto::Hash256& submitId) const;
     void gossipPoeLine(const std::string& line) const;
     std::vector<std::string> meshPoeDests() const;

@@ -3,6 +3,7 @@
 
 #include "core/poe_v1_engine.h"
 #include "core/poe_v1_objects.h"
+#include "core/poe_v1_layers.h"
 #include "crypto/crypto.h"
 #include "crypto/keys.h"
 
@@ -151,6 +152,37 @@ int main(int argc, char** argv) {
         engine.addVote(*vote);
         auto fin = engine.finalize(vote->submitId);
         if (fin) std::cout << "FINALIZED " << synapse::crypto::toHex(vote->submitId) << "\n";
+        return 0;
+    }
+    if (cmd == "ingest-recipe" && argc >= 4) {
+        auto bytes = synapse::crypto::fromHex(argv[3]);
+        auto recipe = synapse::core::poe_v1::HarvestRecipeV1::deserialize(bytes);
+        if (!recipe) {
+            std::cerr << "bad recipe\n";
+            return 1;
+        }
+        rememberAuthor(engine, recipe->authorPubKey, pk);
+        std::string reason;
+        engine.importRecipe(*recipe, &reason);
+        return 0;
+    }
+    if (cmd == "ingest-recipe-replay" && argc >= 4) {
+        auto bytes = synapse::crypto::fromHex(argv[3]);
+        auto replay = synapse::core::poe_v1::RecipeReplayV1::deserialize(bytes);
+        if (!replay) {
+            std::cerr << "bad recipe replay\n";
+            return 1;
+        }
+        rememberAuthor(engine, replay->reporterPubKey, pk);
+        std::string reason;
+        engine.addRecipeReplay(*replay, &reason);
+        for (const auto& sid : engine.listEntryIds()) {
+            auto rid = engine.getRecipeIdForSubmit(sid);
+            if (!rid || *rid != replay->recipeId) continue;
+            auto fin = engine.finalize(sid);
+            if (fin) std::cout << "FINALIZED " << synapse::crypto::toHex(sid) << "\n";
+            break;
+        }
         return 0;
     }
     std::cerr << "unknown cmd\n";

@@ -2,6 +2,7 @@
 // All numbers here must stay integer/deterministic — no floating LLM scores.
 
 #include "core/poe_v1_engine.h"
+#include "core/poe_v1_layers.h"
 #include "database/database.h"
 #include "utils/logger.h"
 #include <algorithm>
@@ -10,8 +11,10 @@
 #include <cstdlib>
 #include <ctime>
 #include <cstring>
+#include <functional>
 #include <numeric>
 #include <mutex>
+#include <optional>
 #include <unordered_set>
 #include <unordered_map>
 
@@ -191,6 +194,9 @@ struct PoeV1Engine::Impl {
     uint64_t finalizedCount = 0;
     mutable std::mutex mtx;
     std::unordered_map<std::string, uint64_t> authorLastSubmit_;
+    std::optional<uint64_t> nowOverride;
+    RecipeFetchFn recipeFetcher;
+    AbsenceSearchFn absenceSearch;
 };
 
 PoeV1Engine::PoeV1Engine() : impl_(std::make_unique<Impl>()) {}
@@ -504,6 +510,10 @@ PoeSubmitResult PoeV1Engine::submit(
         res.ok = false;
         return res;
     }
+    if (!poe_v1::consensusPayloadClean(entry.title, entry.body, &res.error)) {
+        res.ok = false;
+        return res;
+    }
 
     // Fast fail checks (fail-before expensive PoW)
     if (entry.title.size() > cfg.limits.maxTitleBytes) {
@@ -711,7 +721,11 @@ bool PoeV1Engine::precheckEntry(const poe_v1::KnowledgeEntryV1& entry, std::stri
         if (reason) *reason = "title_too_short";
         return false;
     }
-    if (entry.body.size() < 50) {
+    if (entry.contentType != poe_v1::ContentType::RECIPE && entry.body.size() < 50) {
+        if (reason) *reason = "body_too_short";
+        return false;
+    }
+    if (entry.contentType == poe_v1::ContentType::RECIPE && entry.body.empty()) {
         if (reason) *reason = "body_too_short";
         return false;
     }
@@ -732,6 +746,7 @@ bool PoeV1Engine::precheckEntry(const poe_v1::KnowledgeEntryV1& entry, std::stri
     }
 
     if (!entry.verifyAll(cfg.limits, reason)) return false;
+    if (!poe_v1::consensusPayloadClean(entry.title, entry.body, reason)) return false;
 
     crypto::Hash256 sid = entry.submitId();
     crypto::Hash256 cid = entry.contentId();
@@ -755,6 +770,7 @@ bool PoeV1Engine::precheckEntry(const poe_v1::KnowledgeEntryV1& entry, std::stri
 bool PoeV1Engine::importEntry(const poe_v1::KnowledgeEntryV1& entry, std::string* reason) {
     PoeV1Config cfg = getConfig();
     if (!entry.verifyAll(cfg.limits, reason)) return false;
+    if (!poe_v1::consensusPayloadClean(entry.title, entry.body, reason)) return false;
 
     crypto::Hash256 sid = entry.submitId();
     crypto::Hash256 cid = entry.contentId();
@@ -794,6 +810,8 @@ bool PoeV1Engine::importEntry(const poe_v1::KnowledgeEntryV1& entry, std::string
 
 bool PoeV1Engine::addVote(const poe_v1::ValidationVoteV1& vote) {
     if (vote.version != 1) return false;
+    if ((vote.flags & poe_v1::kVoteFlagInference) != 0) return false;
+    if (!poe_v1::voteNoteClean(vote.note)) return false;
     if (!vote.verifySignature()) return false;
 
     crypto::Hash256 seed{};
@@ -981,6 +999,20 @@ std::optional<poe_v1::FinalizationRecordV1> PoeV1Engine::finalize(const crypto::
     if (!entryOpt) return std::nullopt;
     auto existing = getFinalization(submitId);
     if (existing) return existing;
+    if (!poe_v1::consensusPayloadClean(entryOpt->title, entryOpt->body)) return std::nullopt;
+    if (isRetracted(submitId)) return std::nullopt;
+
+    // Harvest recipes mint/finalize only after a matching replay. Essays are not this path.
+    if (entryOpt->contentType == poe_v1::ContentType::RECIPE) {
+        auto recipeId = getRecipeIdForSubmit(submitId);
+        if (!recipeId || !hasMatchingReplay(*recipeId)) return std::nullopt;
+        // Knowledge clock: cited content must already be finalized. Not Tor arrival.
+        for (const auto& cit : entryOpt->citations) {
+            auto citedSid = getSubmitIdByContentId(cit);
+            if (!citedSid) return std::nullopt;
+            if (!isFinalized(*citedSid)) return std::nullopt;
+        }
+    }
 
     std::vector<crypto::PublicKey> validatorSet = getDeterministicValidators();
     if (validatorSet.empty()) return std::nullopt;
@@ -1015,6 +1047,8 @@ std::optional<poe_v1::FinalizationRecordV1> PoeV1Engine::finalize(const crypto::
         if (v->prevBlockHash != seed) continue;
         if (!v->verifySignature()) continue;
         if ((v->flags & 0x1u) != 0) return std::nullopt;
+        if ((v->flags & poe_v1::kVoteFlagInference) != 0) return std::nullopt;
+        if (!poe_v1::voteNoteClean(v->note)) return std::nullopt;
         auto it = std::find(selected.begin(), selected.end(), v->validatorPubKey);
         if (it == selected.end()) continue;
         votes.push_back(*v);
@@ -1037,6 +1071,15 @@ std::optional<poe_v1::FinalizationRecordV1> PoeV1Engine::finalize(const crypto::
     fin.votes = votes;
     fin.finalizedAt = entryOpt->timestamp;
 
+    const uint64_t witnessedAt = nowUnix();
+    bool independent = false;
+    for (const auto& v : votes) {
+        if (v.validatorPubKey != entryOpt->authorPubKey) {
+            independent = true;
+            break;
+        }
+    }
+
     {
         std::lock_guard<std::mutex> lock(impl_->mtx);
         std::string key = "poe:v1:final:" + crypto::toHex(submitId);
@@ -1047,6 +1090,12 @@ std::optional<poe_v1::FinalizationRecordV1> PoeV1Engine::finalize(const crypto::
         writeU64LE(fbuf, impl_->finalizedCount);
         impl_->db.put("meta:poe_v1:finalized", fbuf);
         impl_->db.put("poe:v1:reward_id:" + crypto::toHex(submitId), std::vector<uint8_t>(rewardIdForAcceptance(submitId).begin(), rewardIdForAcceptance(submitId).end()));
+        const std::string sidHex = crypto::toHex(submitId);
+        impl_->db.put("poe:v1:know_status:" + sidHex, std::vector<uint8_t>{static_cast<uint8_t>(poe_v1::KnowStatus::ACTIVE)});
+        impl_->db.put("poe:v1:last_witness:" + sidHex, u64le(witnessedAt));
+        if (independent) {
+            impl_->db.put("poe:v1:independent_witness:" + sidHex, std::vector<uint8_t>{1});
+        }
     }
 
     return fin;
@@ -1556,6 +1605,560 @@ bool PoeV1Engine::importEpoch(const PoeEpochResult& epoch) {
     }
 
     return true;
+}
+
+void PoeV1Engine::setNowUnix(uint64_t unixSeconds) {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    impl_->nowOverride = unixSeconds;
+}
+
+void PoeV1Engine::clearNowUnix() {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    impl_->nowOverride.reset();
+}
+
+uint64_t PoeV1Engine::nowUnix() const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    if (impl_->nowOverride.has_value()) return *impl_->nowOverride;
+    return static_cast<uint64_t>(std::time(nullptr));
+}
+
+void PoeV1Engine::setRecipeFetcher(RecipeFetchFn fn) {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    impl_->recipeFetcher = std::move(fn);
+}
+
+void PoeV1Engine::setAbsenceSearch(AbsenceSearchFn fn) {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    impl_->absenceSearch = std::move(fn);
+}
+
+bool PoeV1Engine::importRecipe(const poe_v1::HarvestRecipeV1& recipe, std::string* reason) {
+    if (!recipe.verifyAll(reason)) return false;
+    auto id = recipe.recipeId();
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    std::string key = "poe:v1:recipe:" + hex32(id);
+    if (impl_->db.exists(key)) {
+        if (reason) *reason = "duplicate_recipe";
+        return false;
+    }
+    impl_->db.put(key, recipe.serialize());
+    return true;
+}
+
+std::optional<poe_v1::HarvestRecipeV1> PoeV1Engine::getRecipe(const crypto::Hash256& recipeId) const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    auto data = impl_->db.get("poe:v1:recipe:" + hex32(recipeId));
+    if (data.empty()) return std::nullopt;
+    return poe_v1::HarvestRecipeV1::deserialize(data);
+}
+
+std::optional<crypto::Hash256> PoeV1Engine::getRecipeIdForSubmit(const crypto::Hash256& submitId) const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    std::string hex = impl_->db.getString("poe:v1:submit_recipe:" + hex32(submitId));
+    if (hex.size() != 64) return std::nullopt;
+    auto bytes = crypto::fromHex(hex);
+    if (bytes.size() != crypto::SHA256_SIZE) return std::nullopt;
+    crypto::Hash256 id{};
+    std::memcpy(id.data(), bytes.data(), id.size());
+    return id;
+}
+
+bool PoeV1Engine::linkSubmitToRecipe(const crypto::Hash256& submitId, const crypto::Hash256& recipeId, std::string* reason) {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    if (!impl_->db.exists("poe:v1:entry:" + hex32(submitId))) {
+        if (reason) *reason = "unknown_submit";
+        return false;
+    }
+    if (!impl_->db.exists("poe:v1:recipe:" + hex32(recipeId))) {
+        if (reason) *reason = "unknown_recipe";
+        return false;
+    }
+    impl_->db.put("poe:v1:submit_recipe:" + hex32(submitId), hex32(recipeId));
+    impl_->db.put("poe:v1:recipe_submit:" + hex32(recipeId), hex32(submitId));
+    return true;
+}
+
+bool PoeV1Engine::hasMatchingReplay(const crypto::Hash256& recipeId) const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    return impl_->db.exists("poe:v1:recipe_match:" + hex32(recipeId));
+}
+
+bool PoeV1Engine::addRecipeReplay(const poe_v1::RecipeReplayV1& replay, std::string* reason) {
+    if (replay.version != 1) {
+        if (reason) *reason = "unsupported_version";
+        return false;
+    }
+    if (!replay.verifySignature(reason)) return false;
+    auto recipe = getRecipe(replay.recipeId);
+    if (!recipe) {
+        if (reason) *reason = "unknown_recipe";
+        return false;
+    }
+    const bool match = (replay.observedBodyHash == recipe->bodyHash) && replay.match != 0;
+    const uint64_t now = nowUnix();
+    std::string reporterHex = crypto::toHex(replay.reporterPubKey);
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    impl_->db.put("poe:v1:recipe_replay:" + hex32(replay.recipeId) + ":" + reporterHex, replay.serialize());
+    if (match) {
+        impl_->db.put("poe:v1:recipe_match:" + hex32(replay.recipeId), std::vector<uint8_t>{1});
+        std::string submitHex = impl_->db.getString("poe:v1:recipe_submit:" + hex32(replay.recipeId));
+        if (submitHex.size() == 64) {
+            if (auto entryData = impl_->db.get("poe:v1:entry:" + submitHex); !entryData.empty()) {
+                auto entry = poe_v1::KnowledgeEntryV1::deserialize(entryData);
+                if (entry && entry->authorPubKey != replay.reporterPubKey) {
+                    impl_->db.put("poe:v1:last_witness:" + submitHex, u64le(now));
+                    impl_->db.put("poe:v1:independent_witness:" + submitHex, std::vector<uint8_t>{1});
+                }
+            }
+        }
+    }
+    if (!match && reason) *reason = "replay_mismatch";
+    return true;
+}
+
+bool PoeV1Engine::replayRecipe(const crypto::Hash256& recipeId, const crypto::PrivateKey& reporterKey, std::string* reason) {
+    auto recipe = getRecipe(recipeId);
+    if (!recipe) {
+        if (reason) *reason = "unknown_recipe";
+        return false;
+    }
+    RecipeFetchFn fetcher;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mtx);
+        fetcher = impl_->recipeFetcher;
+    }
+    if (!fetcher) {
+        if (reason) *reason = "no_recipe_fetcher";
+        return false;
+    }
+    auto body = fetcher(*recipe);
+    if (!body) {
+        if (reason) *reason = "recipe_fetch_failed";
+        return false;
+    }
+    poe_v1::RecipeReplayV1 replay;
+    replay.version = 1;
+    replay.recipeId = recipeId;
+    replay.observedBodyHash = poe_v1::hashFetchedBody(*body);
+    replay.match = (replay.observedBodyHash == recipe->bodyHash) ? 1 : 0;
+    poe_v1::signRecipeReplayV1(replay, reporterKey);
+    if (!addRecipeReplay(replay, reason)) return false;
+    if (replay.match == 0) {
+        if (reason) *reason = "replay_mismatch";
+        return false;
+    }
+    return true;
+}
+
+PoeSubmitResult PoeV1Engine::submitRecipe(
+    const poe_v1::HarvestRecipeV1& recipeIn,
+    const std::vector<crypto::Hash256>& knowledgeCitations,
+    const crypto::PrivateKey& authorKey,
+    bool autoFinalize
+) {
+    PoeSubmitResult res;
+    poe_v1::HarvestRecipeV1 recipe = recipeIn;
+    recipe.authoredAt = nowUnix();
+    poe_v1::signHarvestRecipeV1(recipe, authorKey);
+    if (!recipe.verifyAll(&res.error)) {
+        res.ok = false;
+        return res;
+    }
+    if (!importRecipe(recipe, &res.error)) {
+        res.ok = false;
+        return res;
+    }
+
+    std::string title = recipe.locator;
+    if (title.size() < 10) title = std::string("recipe://") + title;
+    if (title.size() > 256) title.resize(256);
+    std::string body = "harvest-recipe\n" + recipe.selector + "\n" + recipe.mediaType + "\n" +
+        crypto::toHex(recipe.bodyHash);
+    while (body.size() < 50) body += "\n.";
+
+    res = submit(poe_v1::ContentType::RECIPE, title, body, knowledgeCitations, authorKey, false);
+    if (!res.ok) return res;
+    std::string linkErr;
+    if (!linkSubmitToRecipe(res.submitId, recipe.recipeId(), &linkErr)) {
+        res.ok = false;
+        res.error = linkErr.empty() ? "recipe_link_failed" : linkErr;
+        return res;
+    }
+
+    if (autoFinalize) {
+        std::string replayErr;
+        replayRecipe(recipe.recipeId(), authorKey, &replayErr);
+        PoeV1Config cfg = getConfig();
+        std::vector<crypto::PublicKey> validatorSet = getDeterministicValidators();
+        auto authorPk = crypto::derivePublicKey(authorKey);
+        if (validatorSet.empty() && cfg.validatorMode != "stake" && cfg.allowSelfBootstrapValidator) {
+            validatorSet.push_back(authorPk);
+            setStaticValidators(validatorSet);
+            validatorSet = getDeterministicValidators();
+        }
+        if (!validatorSet.empty()) {
+            uint32_t selectedCount = effectiveSelectedValidatorCount(cfg, validatorSet.size());
+            std::vector<crypto::PublicKey> selected = poe_v1::selectValidators(
+                chainSeed(), res.submitId, validatorSet, selectedCount);
+            if (std::find(selected.begin(), selected.end(), authorPk) != selected.end()) {
+                poe_v1::ValidationVoteV1 v;
+                v.version = 1;
+                v.submitId = res.submitId;
+                v.prevBlockHash = chainSeed();
+                v.flags = 0;
+                v.scores = {100, 100, 100};
+                poe_v1::signValidationVoteV1(v, authorKey);
+                addVote(v);
+            }
+        }
+        auto fin = finalize(res.submitId);
+        if (fin) {
+            res.finalized = true;
+            auto entry = getEntry(res.submitId);
+            if (entry) res.acceptanceReward = calculateAcceptanceReward(*entry);
+        }
+    }
+    return res;
+}
+
+bool PoeV1Engine::addAbsenceReport(const poe_v1::AbsenceReportV1& report, std::string* reason) {
+    if (report.version != 1) {
+        if (reason) *reason = "unsupported_version";
+        return false;
+    }
+    if (report.windowEnd < report.windowStart) {
+        if (reason) *reason = "bad_absence_window";
+        return false;
+    }
+    if (!report.verifySignature(reason)) return false;
+    if (!getRecipe(report.recipeId)) {
+        if (reason) *reason = "unknown_recipe";
+        return false;
+    }
+    std::string key = "poe:v1:absence:" + hex32(report.recipeId) + ":" + crypto::toHex(report.reporterPubKey);
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    if (impl_->db.exists(key)) {
+        if (reason) *reason = "duplicate_absence";
+        return false;
+    }
+    impl_->db.put(key, report.serialize());
+    return true;
+}
+
+bool PoeV1Engine::reportAbsence(
+    const crypto::Hash256& recipeId,
+    uint64_t windowStart,
+    uint64_t windowEnd,
+    const crypto::PrivateKey& reporterKey,
+    std::string* reason
+) {
+    auto recipe = getRecipe(recipeId);
+    if (!recipe) {
+        if (reason) *reason = "unknown_recipe";
+        return false;
+    }
+    AbsenceSearchFn search;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mtx);
+        search = impl_->absenceSearch;
+    }
+    if (!search) {
+        if (reason) *reason = "no_absence_search";
+        return false;
+    }
+    auto found = search(*recipe, windowStart, windowEnd);
+    poe_v1::AbsenceReportV1 report;
+    report.version = 1;
+    report.recipeId = recipeId;
+    report.windowStart = windowStart;
+    report.windowEnd = windowEnd;
+    report.contradictionFound = found.empty() ? 0 : 1;
+    report.contradictingHashes = found;
+    poe_v1::signAbsenceReportV1(report, reporterKey);
+    return addAbsenceReport(report, reason);
+}
+
+std::optional<poe_v1::AbsenceQuorumV1> PoeV1Engine::tryAbsenceQuorum(const crypto::Hash256& recipeId) {
+    PoeV1Config cfg = getConfig();
+    uint32_t need = std::max<uint32_t>(1, cfg.absenceQuorumN);
+    std::string prefix = "poe:v1:absence:" + hex32(recipeId) + ":";
+    std::vector<std::string> keys;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mtx);
+        keys = impl_->db.keys(prefix);
+    }
+    std::sort(keys.begin(), keys.end());
+    std::vector<poe_v1::AbsenceReportV1> emptyReports;
+    for (const auto& k : keys) {
+        std::vector<uint8_t> data;
+        {
+            std::lock_guard<std::mutex> lock(impl_->mtx);
+            data = impl_->db.get(k);
+        }
+        auto r = poe_v1::AbsenceReportV1::deserialize(data);
+        if (!r) continue;
+        if (r->contradictionFound != 0 || !r->contradictingHashes.empty()) continue;
+        emptyReports.push_back(*r);
+    }
+    if (emptyReports.size() < need) return std::nullopt;
+
+    poe_v1::AbsenceQuorumV1 q;
+    q.recipeId = recipeId;
+    q.outcome = poe_v1::AbsenceOutcome::NOT_SEEN;
+    q.reports = std::move(emptyReports);
+    {
+        std::lock_guard<std::mutex> lock(impl_->mtx);
+        impl_->db.put("poe:v1:absence_quorum:" + hex32(recipeId), q.serialize());
+    }
+    return q;
+}
+
+bool PoeV1Engine::addWitness(const poe_v1::WitnessV1& witness, std::string* reason) {
+    if (witness.version != 1) {
+        if (reason) *reason = "unsupported_version";
+        return false;
+    }
+    if (!witness.verifySignature(reason)) return false;
+    auto entry = getEntry(witness.submitId);
+    if (!entry) {
+        if (reason) *reason = "unknown_submit";
+        return false;
+    }
+    if (!isFinalized(witness.submitId)) {
+        if (reason) *reason = "not_finalized";
+        return false;
+    }
+    if (isRetracted(witness.submitId)) {
+        if (reason) *reason = "retracted";
+        return false;
+    }
+    const uint64_t now = nowUnix();
+    std::string sidHex = hex32(witness.submitId);
+    std::string reporterHex = crypto::toHex(witness.reporterPubKey);
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    impl_->db.put("poe:v1:witness:" + sidHex + ":" + reporterHex, witness.serialize());
+    if (entry->authorPubKey != witness.reporterPubKey) {
+        impl_->db.put("poe:v1:last_witness:" + sidHex, u64le(now));
+        impl_->db.put("poe:v1:independent_witness:" + sidHex, std::vector<uint8_t>{1});
+        auto st = impl_->db.get("poe:v1:know_status:" + sidHex);
+        if (st.size() == 1 && st[0] == static_cast<uint8_t>(poe_v1::KnowStatus::SLEEPING)) {
+            impl_->db.put("poe:v1:know_status:" + sidHex, std::vector<uint8_t>{static_cast<uint8_t>(poe_v1::KnowStatus::ACTIVE)});
+        }
+    }
+    return true;
+}
+
+poe_v1::KnowStatus PoeV1Engine::knowStatus(const crypto::Hash256& submitId) const {
+    if (isRetracted(submitId)) return poe_v1::KnowStatus::RETRACTED;
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    auto st = impl_->db.get("poe:v1:know_status:" + hex32(submitId));
+    if (st.size() != 1) return poe_v1::KnowStatus::PENDING;
+    return static_cast<poe_v1::KnowStatus>(st[0]);
+}
+
+poe_v1::KnowStatus PoeV1Engine::refreshKnowStatus(const crypto::Hash256& submitId) {
+    if (isRetracted(submitId)) return poe_v1::KnowStatus::RETRACTED;
+    if (!isFinalized(submitId)) return poe_v1::KnowStatus::PENDING;
+    PoeV1Config cfg = getConfig();
+    const uint64_t now = nowUnix();
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    const std::string sidHex = hex32(submitId);
+    auto st = impl_->db.get("poe:v1:know_status:" + sidHex);
+    poe_v1::KnowStatus cur = st.size() == 1 ? static_cast<poe_v1::KnowStatus>(st[0]) : poe_v1::KnowStatus::ACTIVE;
+    if (cur == poe_v1::KnowStatus::RETRACTED) return poe_v1::KnowStatus::RETRACTED;
+    uint64_t last = readU64LE(impl_->db.get("poe:v1:last_witness:" + sidHex), 0);
+    uint64_t window = cfg.witnessWindowSeconds;
+    if (window > 0 && (last == 0 || now > last) && (now - last) > window) {
+        cur = poe_v1::KnowStatus::SLEEPING;
+        impl_->db.put("poe:v1:know_status:" + sidHex, std::vector<uint8_t>{static_cast<uint8_t>(cur)});
+        return cur;
+    }
+    if (cur != poe_v1::KnowStatus::SLEEPING) {
+        impl_->db.put("poe:v1:know_status:" + sidHex, std::vector<uint8_t>{static_cast<uint8_t>(poe_v1::KnowStatus::ACTIVE)});
+        cur = poe_v1::KnowStatus::ACTIVE;
+    }
+    return cur;
+}
+
+bool PoeV1Engine::addRetract(const poe_v1::RetractV1& retract, std::string* reason) {
+    if (retract.version != 1) {
+        if (reason) *reason = "unsupported_version";
+        return false;
+    }
+    if (!retract.verifySignature(reason)) return false;
+    auto entry = getEntry(retract.submitId);
+    if (!entry) {
+        if (reason) *reason = "unknown_submit";
+        return false;
+    }
+    if (entry->authorPubKey != retract.authorPubKey) {
+        if (reason) *reason = "retract_not_author";
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    const std::string sidHex = hex32(retract.submitId);
+    impl_->db.put("poe:v1:retract:" + sidHex, retract.serialize());
+    impl_->db.put("poe:v1:unreclaimable:" + sidHex, std::vector<uint8_t>{1});
+    impl_->db.put("poe:v1:know_status:" + sidHex, std::vector<uint8_t>{static_cast<uint8_t>(poe_v1::KnowStatus::RETRACTED)});
+    return true;
+}
+
+bool PoeV1Engine::isRetracted(const crypto::Hash256& submitId) const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    return impl_->db.exists("poe:v1:retract:" + hex32(submitId));
+}
+
+bool PoeV1Engine::isRewardUnreclaimable(const crypto::Hash256& submitId) const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    return impl_->db.exists("poe:v1:unreclaimable:" + hex32(submitId));
+}
+
+std::optional<poe_v1::RetractV1> PoeV1Engine::getRetract(const crypto::Hash256& submitId) const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    auto data = impl_->db.get("poe:v1:retract:" + hex32(submitId));
+    if (data.empty()) return std::nullopt;
+    return poe_v1::RetractV1::deserialize(data);
+}
+
+bool PoeV1Engine::shouldMintAcceptanceReward(const crypto::Hash256& submitId) const {
+    if (!isFinalized(submitId)) return false;
+    if (isRetracted(submitId) || isRewardUnreclaimable(submitId)) return false;
+    auto entry = getEntry(submitId);
+    if (!entry) return false;
+    if (!poe_v1::consensusPayloadClean(entry->title, entry->body)) return false;
+    if (entry->contentType == poe_v1::ContentType::RECIPE) {
+        auto rid = getRecipeIdForSubmit(submitId);
+        if (!rid || !hasMatchingReplay(*rid)) return false;
+    }
+    return true;
+}
+
+bool PoeV1Engine::publishSeniorityToken(const crypto::Hash256& submitId, const crypto::PrivateKey& authorKey, std::string* reason) {
+    auto entry = getEntry(submitId);
+    if (!entry) {
+        if (reason) *reason = "unknown_submit";
+        return false;
+    }
+    if (entry->authorPubKey != crypto::derivePublicKey(authorKey)) {
+        if (reason) *reason = "seniority_not_author";
+        return false;
+    }
+    if (!isFinalized(submitId)) {
+        if (reason) *reason = "not_finalized";
+        return false;
+    }
+    poe_v1::SeniorityTokenV1 token;
+    token.submitId = submitId;
+    if (!poe_v1::bindSeniorityToken(token, authorKey)) {
+        if (reason) *reason = "seniority_bind_failed";
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    impl_->db.put("poe:v1:seniority:" + hex32(submitId), token.serialize());
+    return true;
+}
+
+std::optional<poe_v1::SeniorityTokenV1> PoeV1Engine::getSeniorityToken(const crypto::Hash256& submitId) const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    auto data = impl_->db.get("poe:v1:seniority:" + hex32(submitId));
+    if (data.empty()) return std::nullopt;
+    return poe_v1::SeniorityTokenV1::deserialize(data);
+}
+
+std::vector<poe_v1::SeniorityTokenV1> PoeV1Engine::listSeniorityTokens() const {
+    std::vector<std::string> keys;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mtx);
+        keys = impl_->db.keys("poe:v1:seniority:");
+    }
+    std::sort(keys.begin(), keys.end());
+    std::vector<poe_v1::SeniorityTokenV1> out;
+    for (const auto& k : keys) {
+        std::vector<uint8_t> data;
+        {
+            std::lock_guard<std::mutex> lock(impl_->mtx);
+            data = impl_->db.get(k);
+        }
+        auto t = poe_v1::SeniorityTokenV1::deserialize(data);
+        if (t) out.push_back(*t);
+    }
+    return out;
+}
+
+std::optional<poe_v1::SeniorityProofV1> PoeV1Engine::proveSeniority(
+    const crypto::PrivateKey& authorKey,
+    uint32_t n,
+    std::string* reason
+) const {
+    auto tokens = listSeniorityTokens();
+    std::vector<std::array<uint8_t, poe_v1::kSeniorityEd25519Bytes>> ring;
+    std::vector<crypto::Hash256> owned;
+    ring.reserve(tokens.size());
+    for (const auto& t : tokens) {
+        ring.push_back(t.point);
+        std::array<uint8_t, poe_v1::kSeniorityEd25519Bytes> pt{};
+        if (!poe_v1::deriveSeniorityPoint(authorKey, t.submitId, &pt)) continue;
+        if (pt == t.point) owned.push_back(t.submitId);
+    }
+    return poe_v1::proveAnonymousSeniority(authorKey, owned, ring, n, reason);
+}
+
+bool PoeV1Engine::verifySeniorityProof(const poe_v1::SeniorityProofV1& proof, std::string* reason) const {
+    auto tokens = listSeniorityTokens();
+    std::vector<std::array<uint8_t, poe_v1::kSeniorityEd25519Bytes>> published;
+    published.reserve(tokens.size());
+    for (const auto& t : tokens) published.push_back(t.point);
+    return poe_v1::verifyAnonymousSeniority(proof, published, reason);
+}
+
+std::vector<crypto::Hash256> PoeV1Engine::citationDagFinalizeOrder(const std::vector<crypto::Hash256>& submitIds) const {
+    std::vector<crypto::Hash256> ids = submitIds;
+    std::vector<std::vector<crypto::Hash256>> cited;
+    std::vector<crypto::Hash256> contentIds;
+    cited.reserve(ids.size());
+    contentIds.reserve(ids.size());
+    for (const auto& sid : ids) {
+        auto e = getEntry(sid);
+        if (!e) return {};
+        cited.push_back(e->citations);
+        contentIds.push_back(e->contentId());
+    }
+    return poe_v1::citationDagOrder(ids, cited, contentIds);
+}
+
+bool PoeV1Engine::importScar(const poe_v1::ScarV1& scar, std::string* reason) {
+    if (!poe_v1::scarAcceptable(scar, reason)) return false;
+    auto id = scar.scarId();
+    auto ser = scar.serialize();
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    impl_->db.put("poe:v1:scar:" + hex32(id), ser);
+    return true;
+}
+
+std::optional<poe_v1::ScarV1> PoeV1Engine::getScar(const crypto::Hash256& scarId) const {
+    std::lock_guard<std::mutex> lock(impl_->mtx);
+    auto data = impl_->db.get("poe:v1:scar:" + hex32(scarId));
+    if (data.empty()) return std::nullopt;
+    return poe_v1::ScarV1::deserialize(data);
+}
+
+std::optional<poe_v1::HarvestRecipeV1> PoeV1Engine::lymphExport(
+    const poe_v1::LymphDraftV1& draft,
+    const std::vector<uint8_t>& replayBytes,
+    std::string* reason
+) {
+    auto exported = poe_v1::lymphExportIfMatch(draft, replayBytes, reason);
+    if (!exported) return std::nullopt;
+    poe_v1::HarvestRecipeV1 rec = *exported;
+    std::string importErr;
+    if (!importRecipe(rec, &importErr)) {
+        if (importErr != "duplicate_recipe") {
+            if (reason) *reason = importErr.empty() ? "lymph_import_failed" : importErr;
+            return std::nullopt;
+        }
+    }
+    return rec;
 }
 
 }

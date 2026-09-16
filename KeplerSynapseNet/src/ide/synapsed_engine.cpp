@@ -1555,6 +1555,14 @@ void SynapsedEngine::p2pListenerLoop() const {
                 ingestPoeVoteHex(trim(msg.substr(9)));
                 const char ack[] = "POE_ACK\n";
                 send(cfd, ack, sizeof(ack) - 1, 0);
+            } else if (msg.find("POE_RECIPE_REPLAY ") == 0) {
+                ingestPoeRecipeReplayHex(trim(msg.substr(18)));
+                const char ack[] = "POE_ACK\n";
+                send(cfd, ack, sizeof(ack) - 1, 0);
+            } else if (msg.find("POE_RECIPE ") == 0) {
+                ingestPoeRecipeHex(trim(msg.substr(11)));
+                const char ack[] = "POE_ACK\n";
+                send(cfd, ack, sizeof(ack) - 1, 0);
             } else if (msg.find("RELAY_TX") == 0) {
                 size_t sp = msg.find(' ');
                 if (sp != std::string::npos) {
@@ -2400,6 +2408,7 @@ uint64_t SynapsedEngine::maybeCreditPoeStealth(const crypto::Hash256& submitId) 
     {
         std::lock_guard<std::mutex> lock(poeMtx_);
         if (!poeReady_.load() || !poeV1_ || !poeV1_->isFinalized(submitId)) return 0;
+        if (!poeV1_->shouldMintAcceptanceReward(submitId)) return 0;
         auto e = poeV1_->getEntry(submitId);
         if (!e) return 0;
         if (e->authorPubKey != poePk_) return 0;

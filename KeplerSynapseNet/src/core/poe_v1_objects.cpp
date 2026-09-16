@@ -303,7 +303,9 @@ crypto::Hash256 ValidationVoteV1::payloadHash() const {
 }
 
 static constexpr uint8_t POE_VOTE_TRAILER_V1_QUANTUM_SIG = 0x01;
+static constexpr uint8_t POE_VOTE_TRAILER_V1_NOTE = 0x02;
 static constexpr uint32_t POE_VOTE_MAX_QUANTUM_SIGNATURE_SIZE = 65536;
+static constexpr uint32_t POE_VOTE_MAX_NOTE_SIZE = 256;
 
 bool ValidationVoteV1::verifySignature(std::string* reason) const {
     crypto::Hash256 h = payloadHash();
@@ -325,6 +327,11 @@ std::vector<uint8_t> ValidationVoteV1::serialize() const {
         out.push_back(POE_VOTE_TRAILER_V1_QUANTUM_SIG);
         writeU32LE(out, static_cast<uint32_t>(quantumSignature.size()));
         out.insert(out.end(), quantumSignature.begin(), quantumSignature.end());
+    }
+    if (!note.empty()) {
+        out.push_back(POE_VOTE_TRAILER_V1_NOTE);
+        writeU32LE(out, static_cast<uint32_t>(note.size()));
+        out.insert(out.end(), note.begin(), note.end());
     }
     return out;
 }
@@ -357,14 +364,25 @@ std::optional<ValidationVoteV1> ValidationVoteV1::deserialize(const std::vector<
     std::memcpy(v.signature.data(), p, v.signature.size());
     p += v.signature.size();
 
-    if (end - p >= 1 && *p == POE_VOTE_TRAILER_V1_QUANTUM_SIG) {
-        ++p;
-        uint32_t qsLen = readU32LE(p, end, ok);
-        if (!ok) return std::nullopt;
-        if (qsLen > POE_VOTE_MAX_QUANTUM_SIGNATURE_SIZE) return std::nullopt;
-        if (p + qsLen > end) return std::nullopt;
-        v.quantumSignature.assign(p, p + qsLen);
-        p += qsLen;
+    while (p < end) {
+        uint8_t kind = *p++;
+        if (kind == POE_VOTE_TRAILER_V1_QUANTUM_SIG) {
+            uint32_t qsLen = readU32LE(p, end, ok);
+            if (!ok) return std::nullopt;
+            if (qsLen > POE_VOTE_MAX_QUANTUM_SIGNATURE_SIZE) return std::nullopt;
+            if (p + qsLen > end) return std::nullopt;
+            v.quantumSignature.assign(p, p + qsLen);
+            p += qsLen;
+        } else if (kind == POE_VOTE_TRAILER_V1_NOTE) {
+            uint32_t nLen = readU32LE(p, end, ok);
+            if (!ok) return std::nullopt;
+            if (nLen > POE_VOTE_MAX_NOTE_SIZE) return std::nullopt;
+            if (p + nLen > end) return std::nullopt;
+            v.note.assign(reinterpret_cast<const char*>(p), nLen);
+            p += nLen;
+        } else {
+            return std::nullopt;
+        }
     }
 
     if (p != end) return std::nullopt;

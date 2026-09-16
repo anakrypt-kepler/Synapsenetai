@@ -28,7 +28,7 @@ The front door is this repo: [github.com/anakrypt-kepler/Synapsenetai](https://g
 
 The mesh is already live. Two cells are talking over Tor. The bootstrap seed (always-on cell) is in `synapsenet.conf.example` as `network.seed_nodes=`. First install copies that file to `~/.synapsenet/synapsenet.conf`. I do not bake seed onions into the binary — rotate the seed by editing the example, not by shipping a new `.so`.
 
-A full cell is peer + miner + validator. PoE is votes, not a roll call of every onion. Each full cell casts its own vote over the mesh (`POE_ENTRY` / `POE_VOTE`). Two full cells: both must vote, then it finalizes. When the set grows, the threshold is a strict majority (2 of 3, 3 of 5, …). A thin mailbox with no `poe_pk` stays mail — it does not judge.
+A full cell is peer + miner + validator. PoE is votes, not a roll call of every onion. Each full cell casts its own vote over the mesh (`POE_ENTRY` / `POE_VOTE`). Recipes travel as `POE_RECIPE` / `POE_RECIPE_REPLAY`. Two full cells: both must vote, then it finalizes. When the set grows, the threshold is a strict majority (2 of 3, 3 of 5, …). A thin mailbox with no `poe_pk` stays mail — it does not judge.
 
 This is alpha. Expect bugs. Read the holes before you trust the skin.
 
@@ -52,11 +52,14 @@ This is alpha. Expect bugs. Read the holes before you trust the skin.
         │   ephemeral v3         finalize          RingCT coinbase │
         │                                                          │
         │   NAAN harvest         GGUF mouth        MSG sealed      │
-        │   draft → PoE          not the judge     NET map YOU     │
+        │   lymph then recipe    not the judge     NET map YOU     │
+        │   scar of a door       two clocks        seniority ring  │
         └────────┬───────────────────┬──────────────────┬──────────┘
                  │                   │                  │
                  │ SOCKS             │ POE_ENTRY        │ stealth tx
                  │                   │ POE_VOTE         │
+                 │                   │ POE_RECIPE       │
+                 │                   │ POE_RECIPE_REPLAY│
                  ▼                   ▼                  ▼
         ┌──────────────────────────────────────────────────────────┐
         │                      Tor mesh                            │
@@ -89,34 +92,73 @@ This is alpha. Expect bugs. Read the holes before you trust the skin.
 
  knowledge
 
-    IDE / NAAN / human
-            │
-            │  title + body   PoW 12   ≤ 64 KiB
-            ▼
-       submit
-            │
-            ├──────────────► POE_ENTRY ──► every cell with poe_pk
-            │
-            ▼
-       POE_VOTE
-            │
-            ▼
-       FINALIZED
-            │
-            ├──────── KNOW   author amount rewardId public
-            └──────── RingCT coinbase  →  0.10 NGT to author stealth
-                      unique submitId
-                      size penalty after 8 KiB
+    IDE CODE / TEXT                    NAAN / harvest
+            │                                │
+            │  title + body                  ▼
+            │  PoW 12  ≤ 64 KiB         lymph (same machine)
+            ▼                                │
+       POE_ENTRY                             ├─ hash mismatch  die here
+            │                                └─ hash match
+            │                                      │
+            │                                      ▼
+            │                              RECIPE  locator + selector + body hash
+            │                              page bytes never leave
+            │                                      │
+            │                                      ▼
+            │                              POE_RECIPE
+            │                              POE_RECIPE_REPLAY
+            │                                      │
+            └──────────────────┬───────────────────┘
+                               │
+                               ▼
+                          mouth isolation
+                          GGUF / prompt / score from model
+                          cannot vote or finalize
+                               │
+                               ▼
+                          POE_VOTE
+                               │
+                               ▼
+                          two clocks
+                          cite DAG orders recipes
+                          Tor arrival time does not vote
+                               │
+                               ▼
+                          FINALIZED
+                               │
+            ┌──────────────────┼──────────────────┐
+            ▼                  ▼                  ▼
+          KNOW              RingCT             scar
+          author            coinbase           gate class
+          amount            0.10 stealth       UTC day
+          rewardId          unique submitId    method class
+          public            recipe needs       no cookie
+                            matching replay    no session
+
+          KNOW status
+            ACTIVE     witness inside window (30 days default)
+            SLEEPING   window expired, chain not rewritten, no extra NGT
+            RETRACTED  author retract, remainder unreclaimable, no stealth burn
+
+          quorum of absence
+            same recipe, no contradicting hash
+            finalizes as not seen
+            never as false
+
+          seniority ring (optional)
+            prove at least N accepted
+            not which N
+            KNOW card stays public
 
 
  NGT
 
     mint                               spend
     PoE RingCT coinbase                SEND stealth
-                                       SN + 128 hex
-                                       MLSAG-2
-                                       Pedersen
-                                       range64
+    CODE/TEXT after 2 of 2             SN + 128 hex
+    RECIPE after 2 of 2                MLSAG-2
+      and matching replay              Pedersen
+    size penalty after 8 KiB           range64
                                        key image
                                        Tor
                                        Dilithium when liboqs is real
@@ -133,16 +175,17 @@ This is alpha. Expect bugs. Read the holes before you trust the skin.
     tick
       → Tor first public pages
       → gate (solver / OCR / GGUF)
-      → draft + cite
-      → submit to PoE
+      → lymph replay
+      → RECIPE to PoE (hash, not the page)
       → HARVEST log
-      → INTEL on the local chain
+      → scar { class, day, method class }
+      → INTEL may show the class
 
     does not mint NGT from a faucet
     NGT only after finalize
 
 
- one entry
+ one CODE entry
 
     snippet.rs in IDE
          │
@@ -160,7 +203,8 @@ This is alpha. Expect bugs. Read the holes before you trust the skin.
 
     GGUF talks
     NAAN fetches
-    PoE accepts
+    lymph keeps the page
+    PoE accepts the recipe or the CODE
     RingCT pays
     VPS holds the door
 ```

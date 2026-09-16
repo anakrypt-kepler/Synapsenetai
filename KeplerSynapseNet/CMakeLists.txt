@@ -317,6 +317,7 @@ set(CORE_SOURCES
     src/core/ledger.cpp
     src/core/poe_v1.cpp
     src/core/poe_v1_engine.cpp
+    src/core/poe_v1_layers.cpp
     src/core/poe_v1_objects.cpp
     src/core/ringct.cpp
     src/core/state_manager.cpp

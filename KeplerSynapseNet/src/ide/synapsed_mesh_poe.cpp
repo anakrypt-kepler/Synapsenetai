@@ -1,8 +1,10 @@
 // Mesh PoE: desktop cell submits, gossips, and votes over the onion protocol
-// (POE_ENTRY / POE_VOTE). Thin mesh-peers without poe_pk stay mailboxes.
+// (POE_ENTRY / POE_VOTE / POE_RECIPE / POE_RECIPE_REPLAY).
+// Thin mesh-peers without poe_pk stay mailboxes.
 
 #include "ide/synapsed_engine.h"
 #include "core/poe_v1_objects.h"
+#include "core/poe_v1_layers.h"
 #include "crypto/keys.h"
 #include "crypto/crypto.h"
 #include "privacy/private_transfer.h"
@@ -247,6 +249,62 @@ void SynapsedEngine::ingestPoeVoteHex(const std::string& hexRaw) const {
     if (finalized) {
         const uint64_t paid = maybeCreditPoeStealth(sid);
         markKnowledgeFinalized(crypto::toHex(sid), paid);
+    }
+}
+
+void SynapsedEngine::ingestPoeRecipeHex(const std::string& hexRaw) const {
+    const std::string hex = trimCopy(hexRaw);
+    auto bytes = crypto::fromHex(hex);
+    if (bytes.empty()) return;
+    auto recipe = core::poe_v1::HarvestRecipeV1::deserialize(bytes);
+    if (!recipe) return;
+    if (!poeReady_.load() || !poeV1_) return;
+    std::string reason;
+    bool added = false;
+    {
+        std::lock_guard<std::mutex> lock(poeMtx_);
+        if (!poeV1_) return;
+        added = poeV1_->importRecipe(*recipe, &reason);
+        if (!added && reason != "duplicate_recipe") return;
+    }
+    if (added) gossipPoeLine("POE_RECIPE " + hex + "\n");
+}
+
+void SynapsedEngine::ingestPoeRecipeReplayHex(const std::string& hexRaw) const {
+    const std::string hex = trimCopy(hexRaw);
+    auto bytes = crypto::fromHex(hex);
+    if (bytes.empty()) return;
+    auto replay = core::poe_v1::RecipeReplayV1::deserialize(bytes);
+    if (!replay) return;
+    if (!poeReady_.load() || !poeV1_) return;
+    std::string reason;
+    bool stored = false;
+    {
+        std::lock_guard<std::mutex> lock(poeMtx_);
+        if (!poeV1_) return;
+        stored = poeV1_->addRecipeReplay(*replay, &reason);
+    }
+    if (!stored) return;
+    if (replay->match != 0) gossipPoeLine("POE_RECIPE_REPLAY " + hex + "\n");
+
+    crypto::Hash256 submitId{};
+    bool finalized = false;
+    {
+        std::lock_guard<std::mutex> lock(poeMtx_);
+        if (!poeV1_) return;
+        for (const auto& sid : poeV1_->listEntryIds()) {
+            auto rid = poeV1_->getRecipeIdForSubmit(sid);
+            if (!rid || *rid != replay->recipeId) continue;
+            if (poeV1_->finalize(sid)) {
+                submitId = sid;
+                finalized = true;
+            }
+            break;
+        }
+    }
+    if (finalized) {
+        const uint64_t paid = maybeCreditPoeStealth(submitId);
+        markKnowledgeFinalized(crypto::toHex(submitId), paid);
     }
 }
 

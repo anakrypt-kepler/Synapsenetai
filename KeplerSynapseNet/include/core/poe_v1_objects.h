@@ -1,5 +1,9 @@
 #pragma once
 
+// PoE v1 objects. Additive layers (recipe, mouth isolation, absence, half-life,
+// retract, seniority, two clocks, scar, lymph) live in poe_v1_layers.h.
+// Legacy CODE/TEXT entries keep this wire format.
+
 #include "core/poe_v1.h"
 #include "crypto/crypto.h"
 #include "quantum/quantum_security.h"
@@ -16,8 +20,12 @@ enum class ContentType : uint8_t {
     QA = 1,
     CODE = 2,
     LINKLIST = 3,
-    OTHER = 4
+    OTHER = 4,
+    RECIPE = 5
 };
+
+constexpr uint32_t kVoteFlagReject = 0x1u;
+constexpr uint32_t kVoteFlagInference = 0x2u;
 
 struct LimitsV1 {
     uint32_t maxTitleBytes = 256;
@@ -67,6 +75,8 @@ struct ValidationVoteV1 {
     std::array<uint16_t, 3> scores{0, 0, 0};
     crypto::Signature signature{};
     std::vector<uint8_t> quantumSignature;
+    // Optional. Empty on the live mesh. Inference text here is rejected.
+    std::string note;
 
     std::vector<uint8_t> payloadBytes() const;
     crypto::Hash256 payloadHash() const;

@@ -6,10 +6,23 @@
 // NGT atoms: base 0.10 until acceptanceSizePenaltyBytes, then -0.01 per
 // extra chunk. Length is not a bonus. Clamped to min/max.
 // allowSelfBootstrapValidator lets a lone devnet node vote on its own work.
+//
+// Nine additive layers (legacy CODE/TEXT keep the live mesh path):
+// 1 Harvest Recipe — mineable unit is locator+selector+bodyHash; essays are not mint inputs
+// 2 Mouth Isolation — CONSENSUS_KERNEL ∩ INFERENCE_KERNEL = empty
+// 3 Quorum of Absence — "not seen", never "false"
+// 4 Half-life — KNOW sleeps without independent re-witness; chain is not rewritten
+// 5 Retraction — author retract marks reward unreclaimable (no stealth burn)
+// 6 Anonymous seniority — ed25519 ring proof of "at least N" without which-N
+// 7 Two clocks — citation DAG, not Tor arrival time
+// 8 Scar of a door — class+UTC day+method; no cookies/sessions
+// 9 Lymph — local replay match before recipe gossip (hash, never page bytes)
 
 #include "core/poe_v1_objects.h"
+#include "core/poe_v1_layers.h"
 #include "crypto/crypto.h"
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -41,6 +54,9 @@ struct PoeV1Config {
     uint32_t noveltyMaxHamming = 8;
     uint32_t maxCitations = 10;
     uint32_t minSubmitIntervalSeconds = 60;
+    // Half-life: independently re-witnessed knowledge stays ACTIVE this long.
+    uint64_t witnessWindowSeconds = 2592000ULL;
+    uint32_t absenceQuorumN = 2;
 };
 
 struct PoeSubmitResult {
@@ -127,6 +143,68 @@ public:
     std::vector<uint64_t> listEpochIds(size_t limit = 0) const;
     std::optional<PoeEpochResult> getEpoch(uint64_t epochId) const;
     bool importEpoch(const PoeEpochResult& epoch);
+
+    // Layer clock. Tests inject unix seconds;  unset uses wall clock only for
+    // witness windows, never as a finalize-order input.
+    void setNowUnix(uint64_t unixSeconds);
+    void clearNowUnix();
+    uint64_t nowUnix() const;
+
+    using RecipeFetchFn = std::function<std::optional<std::vector<uint8_t>>(const poe_v1::HarvestRecipeV1&)>;
+    using AbsenceSearchFn = std::function<std::vector<crypto::Hash256>(
+        const poe_v1::HarvestRecipeV1&, uint64_t windowStart, uint64_t windowEnd)>;
+    void setRecipeFetcher(RecipeFetchFn fn);
+    void setAbsenceSearch(AbsenceSearchFn fn);
+
+    PoeSubmitResult submitRecipe(
+        const poe_v1::HarvestRecipeV1& recipe,
+        const std::vector<crypto::Hash256>& knowledgeCitations,
+        const crypto::PrivateKey& authorKey,
+        bool autoFinalize
+    );
+    bool importRecipe(const poe_v1::HarvestRecipeV1& recipe, std::string* reason = nullptr);
+    std::optional<poe_v1::HarvestRecipeV1> getRecipe(const crypto::Hash256& recipeId) const;
+    std::optional<crypto::Hash256> getRecipeIdForSubmit(const crypto::Hash256& submitId) const;
+    bool linkSubmitToRecipe(const crypto::Hash256& submitId, const crypto::Hash256& recipeId, std::string* reason = nullptr);
+
+    bool addRecipeReplay(const poe_v1::RecipeReplayV1& replay, std::string* reason = nullptr);
+    bool hasMatchingReplay(const crypto::Hash256& recipeId) const;
+    bool replayRecipe(const crypto::Hash256& recipeId, const crypto::PrivateKey& reporterKey, std::string* reason = nullptr);
+
+    bool addAbsenceReport(const poe_v1::AbsenceReportV1& report, std::string* reason = nullptr);
+    bool reportAbsence(
+        const crypto::Hash256& recipeId,
+        uint64_t windowStart,
+        uint64_t windowEnd,
+        const crypto::PrivateKey& reporterKey,
+        std::string* reason = nullptr);
+    std::optional<poe_v1::AbsenceQuorumV1> tryAbsenceQuorum(const crypto::Hash256& recipeId);
+
+    bool addWitness(const poe_v1::WitnessV1& witness, std::string* reason = nullptr);
+    poe_v1::KnowStatus knowStatus(const crypto::Hash256& submitId) const;
+    poe_v1::KnowStatus refreshKnowStatus(const crypto::Hash256& submitId);
+
+    bool addRetract(const poe_v1::RetractV1& retract, std::string* reason = nullptr);
+    bool isRetracted(const crypto::Hash256& submitId) const;
+    bool isRewardUnreclaimable(const crypto::Hash256& submitId) const;
+    bool shouldMintAcceptanceReward(const crypto::Hash256& submitId) const;
+    std::optional<poe_v1::RetractV1> getRetract(const crypto::Hash256& submitId) const;
+
+    bool publishSeniorityToken(const crypto::Hash256& submitId, const crypto::PrivateKey& authorKey, std::string* reason = nullptr);
+    std::optional<poe_v1::SeniorityTokenV1> getSeniorityToken(const crypto::Hash256& submitId) const;
+    std::vector<poe_v1::SeniorityTokenV1> listSeniorityTokens() const;
+    std::optional<poe_v1::SeniorityProofV1> proveSeniority(const crypto::PrivateKey& authorKey, uint32_t n, std::string* reason = nullptr) const;
+    bool verifySeniorityProof(const poe_v1::SeniorityProofV1& proof, std::string* reason = nullptr) const;
+
+    std::vector<crypto::Hash256> citationDagFinalizeOrder(const std::vector<crypto::Hash256>& submitIds) const;
+
+    bool importScar(const poe_v1::ScarV1& scar, std::string* reason = nullptr);
+    std::optional<poe_v1::ScarV1> getScar(const crypto::Hash256& scarId) const;
+
+    std::optional<poe_v1::HarvestRecipeV1> lymphExport(
+        const poe_v1::LymphDraftV1& draft,
+        const std::vector<uint8_t>& replayBytes,
+        std::string* reason = nullptr);
 
 private:
     struct Impl;

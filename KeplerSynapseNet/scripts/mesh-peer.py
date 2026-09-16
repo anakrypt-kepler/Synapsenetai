@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Headless mesh peer for the desktop NET map: GET_PEERS / SYNAPSE_PEER / NODE_PROFILE
-# plus POE_ENTRY / POE_VOTE when synapsed-poe-mesh is on PATH.
+# plus POE_ENTRY / POE_VOTE / POE_RECIPE / POE_RECIPE_REPLAY when synapsed-poe-mesh is on PATH.
 # Speaks the same onion protocol as libsynapsed, not the synapsed daemon P2P stack.
 # Own identity is a CC0 hoodie portrait, never the desktop operator's profile_avatar.
 import base64
@@ -301,6 +301,23 @@ def handle_poe_vote(hexblob):
         return
     out = poe_run("ingest-vote", hexblob)
     gossip_poe("POE_VOTE " + hexblob + "\n")
+    for line in (out or "").splitlines():
+        if line.startswith("FINALIZED "):
+            log("poe finalized " + line[10:].strip()[:16])
+
+
+def handle_poe_recipe(hexblob):
+    if poe_seen("r", hexblob):
+        return
+    poe_run("ingest-recipe", hexblob)
+    gossip_poe("POE_RECIPE " + hexblob + "\n")
+
+
+def handle_poe_recipe_replay(hexblob):
+    if poe_seen("rr", hexblob):
+        return
+    out = poe_run("ingest-recipe-replay", hexblob)
+    gossip_poe("POE_RECIPE_REPLAY " + hexblob + "\n")
     for line in (out or "").splitlines():
         if line.startswith("FINALIZED "):
             log("poe finalized " + line[10:].strip()[:16])
@@ -973,6 +990,16 @@ def handle_p2p(conn, addr):
             conn.sendall(b"POE_ACK\n")
             if hexblob:
                 handle_poe_vote(hexblob)
+        elif msg.startswith("POE_RECIPE_REPLAY "):
+            hexblob = msg[18:].strip().split()[0] if msg[18:].strip() else ""
+            conn.sendall(b"POE_ACK\n")
+            if hexblob:
+                handle_poe_recipe_replay(hexblob)
+        elif msg.startswith("POE_RECIPE "):
+            hexblob = msg[11:].strip().split()[0] if msg[11:].strip() else ""
+            conn.sendall(b"POE_ACK\n")
+            if hexblob:
+                handle_poe_recipe(hexblob)
         elif msg.startswith("NODE_MSG "):
             raw = msg[9:].strip()
             ack_id = ""
