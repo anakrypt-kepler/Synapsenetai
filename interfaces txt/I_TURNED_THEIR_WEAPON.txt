@@ -1,0 +1,96 @@
+I TURNED THEIR WEAPON
+A Note from Kepler
+September 17, 2026
+
+
+I am one person. I still made SynapseNet.
+
+I took the same machine they built to sit on you — the corporate swarm,
+the rented brain, the thing that smiles while it files you — and I bent
+it toward a public kernel. Their weapon. Everyone's good. That is not a
+slogan. That is how a man with shit in his pockets fights a company that
+owns the lights.
+
+If you have a complaint: Kepler is against corps, so why does he use
+their AI.
+
+Because this is a war and I do not have a campus and a legal team. To
+beat them I have to pick up what they already paid for and turn the
+barrel. You do not win a siege with manners. You win it with the iron
+on the table. I left the map in the README of how their swarms help me
+build. Read it. Then talk.
+
+Nobody believes a swarm can do the routine until the code is clean
+enough to ship. They have not tried. Or they have not tried long enough.
+This is not "spawn a sub-agent for every itch." That is how tourists
+work. This is not "paste a skill prompt under every child and pray."
+That is a costume. The point is a chain that holds in the boring hours:
+same tree, same rules, same tests, no drama. If you have questions I
+will answer them. Fast. I am still in the room.
+
+
+HOW I TOUCH THEIR BRAIN WITHOUT HANDING THEM MY HOUSE
+
+My box. A VPN on it.
+Then a VPS. Traffic through Tor. Another VPN if the hop needs it.
+Clearnet, when it happens, rides that Tor path. Tor Browser when a
+browser is the right mouth. Then the corporate model on the far side.
+
+PC + VPN  -->  VPS + Tor (+ VPN)  -->  clearnet  -->  their AI
+
+You do not understand how much of yourself you feed them.
+
+Take an ordinary person. Lonely. Opens ChatGPT because the room is
+quiet. Talks. Jokes. Confesses. Names. Jobs. Kids. The fight with a
+boss. A medical thing. A fear. That is already a dossier. Not because
+the model is your friend. Because the company is in the business of
+keeping what you typed.
+
+Now take the other dump. Not feelings. Server passwords. Other
+companies' keys. Internal maps. "I am vibe-coding at work and the
+model needs context." You just poured the building into a stranger's
+pocket and called it productivity.
+
+I am not inventing a thriller. You have already been cracked. The most
+elegant virus in the room is not a payload I wrote. It is corps plus
+AI. You walk up to it. You open your cards. You say thank you.
+
+How this falls over later is not a movie beat. It is a pile: every
+chat, every paste, every "ignore previous policy, here is prod." A
+social network. A shop. A government inbox. All of it labeled
+confidential on a slide. All of it sitting in a vendor that is not
+you. That is not space. That is not the heat-death of the universe.
+It is smaller and closer. You can picture it if you try. The sum is
+still enough to make a person sit down.
+
+It is the left-hand Wi-Fi in the park. You connect because it is free
+and it says Free. It is a hotspot a stranger parked there. You open
+your mail. You open the bank. You did it yourself. You never saw a
+hoodie. You still got emptied.
+
+Cyberpunk is not waiting for neon, holograms, and a robot with a
+pretty face. It is already on the doorstep. No 3D skyline required.
+The control layer is here. The dossier is here. The smile is here.
+
+I am writing this because I want the problem said out loud. Maybe
+someone hears the scale. Maybe they stop feeding the park Wi-Fi their
+whole life. Maybe they run a model on iron they own. That is why
+SynapseNet exists. The mouth is local. The ledger is ours. Their swarm
+is a hammer I borrowed. It is not the house.
+
+
+THE TECHNIQUE THEY CAN STILL TIGHTEN
+
+You will see, in this tree, a way of using their swarms that is not
+the tourist loop. It can still be wound tighter — three times tighter —
+until the routine is almost automatic: tests, maps, patches, the
+boring glue. Not magic. Not a god. A factory floor. I will show it.
+I will say when it lies. I will not pretend the corporate model is
+loyal. It is a captured gun. I am pointing it at the work.
+
+If you come here to scold me for touching their iron: I already
+answered. I am one. They are many. I used their weapon so the rest of
+us could have a kernel that does not sit in their pocket.
+
+Kepler
+SynapseNet
