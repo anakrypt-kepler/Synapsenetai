@@ -32,7 +32,138 @@ A full cell is peer + miner + validator. PoE is votes, not a roll call of every 
 
 This is alpha. Expect bugs. Read the holes before you trust the skin.
 
----
+```
+                    you
+                    │
+                    ▼
+        ┌──────────────────────────────────────┐
+        │         synapsenet-app Tauri         │
+        │  MAIN WALLET SEND BLOCKS KNOW NAAN   │
+        │  HARVEST INTEL MSG IDE NET RENT SET  │
+        └──────────────────┬───────────────────┘
+                           │ JSON RPC same process
+                           ▼
+        ┌──────────────────────────────────────────────────────────┐
+        │                    libsynapsed.so                        │
+        │                                                          │
+        │   session Tor          PoE v1            Transfer        │
+        │   ADD_ONION NEW        poe.db            wallet.dat      │
+        │   DiscardPK            entries votes     stealth SEND    │
+        │   ephemeral v3         finalize          RingCT coinbase │
+        │                                                          │
+        │   NAAN harvest         GGUF mouth        MSG sealed      │
+        │   draft → PoE          not the judge     NET map YOU     │
+        └────────┬───────────────────┬──────────────────┬──────────┘
+                 │                   │                  │
+                 │ SOCKS             │ POE_ENTRY        │ stealth tx
+                 │                   │ POE_VOTE         │
+                 ▼                   ▼                  ▼
+        ┌──────────────────────────────────────────────────────────┐
+        │                      Tor mesh                            │
+        │              onion :8333   fail closed                   │
+        │         seed only from synapsenet.conf                   │
+        └────────────┬─────────────────────┬───────────────────────┘
+                     │                     │
+          ┌──────────┘                     └──────────┐
+          ▼                                           ▼
+ ┌─────────────────────┐                   ┌─────────────────────┐
+ │  desktop cell       │                   │  VPS mesh-peer.py   │
+ │  poe_pk             │◄──── PEX onions ─►│  stable onion       │
+ │  miner + validator  │                   │  mailbox            │
+ │  NAAN               │                   │  synapsed-poe-mesh  │
+ │  stealth wallet     │                   │  votes if poe_pk    │
+ └──────────┬──────────┘                   │  no stealth NGT     │
+            │                              └──────────┬──────────┘
+            │                                         │
+            └──────────── 2 of 2 / majority ──────────┘
+
+
+ ~/.synapsenet
+    synapsenet.conf
+    wallet.dat
+    wallet.key          PoE key
+    poe/poe.db
+    lib/libsynapsed.so
+    models/*.gguf
+
+
+ knowledge
+
+    IDE / NAAN / human
+            │
+            │  title + body   PoW 12   ≤ 64 KiB
+            ▼
+       submit
+            │
+            ├──────────────► POE_ENTRY ──► every cell with poe_pk
+            │
+            ▼
+       POE_VOTE
+            │
+            ▼
+       FINALIZED
+            │
+            ├──────── KNOW   author amount rewardId public
+            └──────── RingCT coinbase  →  0.10 NGT to author stealth
+                      unique submitId
+                      size penalty after 8 KiB
+
+
+ NGT
+
+    mint                               spend
+    PoE RingCT coinbase                SEND stealth
+                                       SN + 128 hex
+                                       MLSAG-2
+                                       Pedersen
+                                       range64
+                                       key image
+                                       Tor
+                                       Dilithium when liboqs is real
+
+    first reward sweep secp
+    later ring
+
+    MSG   ML-KEM + X25519 if the peer advertised kem_pk
+          else crypto_box_seal
+
+
+ NAAN
+
+    tick
+      → Tor first public pages
+      → gate (solver / OCR / GGUF)
+      → draft + cite
+      → submit to PoE
+      → HARVEST log
+      → INTEL on the local chain
+
+    does not mint NGT from a faucet
+    NGT only after finalize
+
+
+ one entry
+
+    snippet.rs in IDE
+         │
+         ▼
+    PoW + entry
+         │
+         ├──── POE_ENTRY ──► VPS + other cells
+         │
+         ▼
+    each full cell: POE_VOTE
+         │
+         ▼
+    2 of 2  →  FINALIZED  →  KNOW + stealth 0.10
+
+
+    GGUF talks
+    NAAN fetches
+    PoE accepts
+    RingCT pays
+    VPS holds the door
+```
 
 ## What this is
 
