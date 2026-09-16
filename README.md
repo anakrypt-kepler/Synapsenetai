@@ -1,9 +1,5 @@
 <p align="center">
-  <img src="header.gif" width="420" alt="SynapseNet" />
-</p>
-
-<p align="center">
-  <img src="pictures/kepler.png" width="220" alt="Kepler" />
+  <img src="pictures/kepler.jpg" width="480" alt="Kepler, SynapseNet" />
 </p>
 
 <h1 align="center">SynapseNet</h1>
@@ -19,6 +15,10 @@
 </p>
 
 ---
+
+<p align="center">
+  <img src="header.gif" width="420" alt="SynapseNet" />
+</p>
 
 I built this. One person. C++, crypto, Tor, a local model. Not a company. Not a committee.
 
