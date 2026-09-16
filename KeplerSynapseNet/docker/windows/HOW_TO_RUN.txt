@@ -20,7 +20,7 @@ Equivalent by hand:
   docker run -d --name synapsenet-tor --network synapsenet-net --entrypoint /usr/bin/tor keplersynapsenet:local --SocksPort 0.0.0.0:9050 --ControlPort 127.0.0.1:9051 --DataDirectory /tmp/tor-data --Log "notice stdout"
   docker run -d --name synapsenet-node --network synapsenet-net -p 8332:8332 -p 8333:8333 -e SYNAPSENET_PRIVACY=true -e SYNAPSENET_TOR_REQUIRED=true -e SYNAPSENET_TOR_HOST=synapsenet-tor -e SYNAPSENET_ALLOW_CLEARNET_FALLBACK=false keplersynapsenet:local
 
-If Docker Desktop has Compose:
+If Docker Desktop has Compose, from KeplerSynapseNet/:
 
   docker compose -f docker-compose.yml -f docker-compose.windows.yml up --build
 

@@ -19,7 +19,7 @@
 ---
 
 <p align="center">
-  <img src="header.gif" width="420" alt="SynapseNet" />
+  <img src="pictures/header.gif" width="420" alt="SynapseNet" />
 </p>
 
 I built this. One person. C++, crypto, Tor, a local model. Not a company. Not a committee.
@@ -457,9 +457,10 @@ Five steps. Do them in order.
 
 This is a **Linux** image. Docker Desktop on Windows still runs Linux through WSL2. It is not a native `.exe`. Compose starts the **node daemon**, not the Tauri GUI.
 
-From the repo root:
+From `KeplerSynapseNet/`:
 
 ```bash
+cd KeplerSynapseNet
 docker compose up --build
 ```
 
@@ -475,6 +476,7 @@ docker build -t keplersynapsenet:local .
 **Lab overlay — not private:**
 
 ```bash
+cd KeplerSynapseNet
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
@@ -489,6 +491,7 @@ Self-bootstrap, novelty bands off, clearnet NAAN. Do not call that confidential.
 Or:
 
 ```bash
+cd KeplerSynapseNet
 docker compose -f docker-compose.yml -f docker-compose.windows.yml up --build
 ```
 

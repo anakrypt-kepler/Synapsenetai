@@ -1,7 +1,9 @@
+# Linux node + Tor sidecar. Run from this directory:
+#   docker compose up --build
 services:
   tor:
     build:
-      context: ./KeplerSynapseNet
+      context: .
       dockerfile: Dockerfile
     image: keplersynapsenet:local
     user: "debian-tor"
@@ -27,7 +29,7 @@ services:
 
   synapsenet:
     build:
-      context: ./KeplerSynapseNet
+      context: .
       dockerfile: Dockerfile
     image: keplersynapsenet:local
     entrypoint: ["/usr/local/bin/synapsenet-start.sh"]
@@ -36,7 +38,7 @@ services:
       - "8332:8332"
       - "8333:8333"
     volumes:
-      - ./KeplerSynapseNet/docker/synapsenet-start.sh:/usr/local/bin/synapsenet-start.sh:ro
+      - ./docker/synapsenet-start.sh:/usr/local/bin/synapsenet-start.sh:ro
       - synapsenet_data:/data
     environment:
       TERM: xterm-256color

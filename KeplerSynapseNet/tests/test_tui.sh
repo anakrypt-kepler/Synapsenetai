@@ -1,14 +1,15 @@
 #!/bin/bash
+# Smoke the TUI binary. Run from anywhere.
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "Testing SynapseNet TUI..."
 echo "Terminal: $TERM"
 echo "Columns: $(tput cols)"
 echo "Lines: $(tput lines)"
 
-# Set proper terminal environment
 export TERM=xterm-256color
 
-# Test if terminal is interactive
 if [ -t 0 ] && [ -t 1 ]; then
     echo "Terminal is interactive"
 else
@@ -16,4 +17,4 @@ else
 fi
 
 echo "Starting SynapseNet..."
-timeout 10s ./KeplerSynapseNet/build/synapsed || echo "Program exited or timed out"
+timeout 10s "$ROOT/build/synapsed" || echo "Program exited or timed out"

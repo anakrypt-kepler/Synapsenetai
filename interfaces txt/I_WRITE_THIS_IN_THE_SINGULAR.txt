@@ -427,6 +427,7 @@ Default compose is Tor + privacy. The old file shipped with clearnet
 fallback, Tor optional, NAAN on the clearnet. That was a lie next to a
 Tor-default product. Lab/clearnet is now an explicit overlay:
 
+  cd KeplerSynapseNet
   docker compose up --build
   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
