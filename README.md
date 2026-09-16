@@ -2,6 +2,8 @@
   <img src="pictures/kepler.jpg" width="480" alt="Kepler, SynapseNet" />
 </p>
 
+<p align="center"><small>Fuck the corps.</small></p>
+
 <h1 align="center">SynapseNet</h1>
 
 <p align="center">
