@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 8" width="16" height="8" shape-rendering="crispEdges">
+  <!-- SWAP ME: BLOCKS brick unit, 16x8. Blocks.svelte stacks copies; height maps to last_block (capped). -->
+  <g fill="#e6e6ea">
+    <rect x="0" y="0" width="16" height="7"/>
+  </g>
+  <g fill="#0a0a0a">
+    <rect x="0" y="7" width="16" height="1"/>
+    <rect x="7" y="0" width="1" height="4"/>
+    <rect x="3" y="4" width="1" height="3"/>
+    <rect x="11" y="4" width="1" height="3"/>
+  </g>
+</svg>

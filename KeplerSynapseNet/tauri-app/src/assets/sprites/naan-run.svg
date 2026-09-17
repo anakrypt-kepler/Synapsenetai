@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" shape-rendering="crispEdges">
+  <!-- SWAP ME: NAAN agent mid-stride (IDE "running" pose), 16x16. Slight forward lean + split legs.
+       The stage still translates it across the floor in CSS. Keep viewBox 0 0 16 16. -->
+  <g fill="#e6e6ea">
+    <rect x="7" y="1" width="4" height="1"/>
+    <rect x="6" y="2" width="6" height="4"/>
+    <rect x="4" y="6" width="8" height="3"/>
+    <rect x="4" y="9" width="6" height="1"/>
+    <rect x="4" y="10" width="2" height="2"/>
+    <rect x="3" y="12" width="2" height="1"/>
+    <rect x="9" y="10" width="2" height="2"/>
+    <rect x="10" y="12" width="2" height="1"/>
+  </g>
+  <g fill="#00e5ff">
+    <rect x="7" y="4" width="1" height="1"/>
+    <rect x="10" y="4" width="1" height="1"/>
+  </g>
+</svg>

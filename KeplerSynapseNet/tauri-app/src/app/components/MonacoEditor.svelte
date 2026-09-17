@@ -158,12 +158,11 @@
     flex-direction: column;
     height: 100%;
     border: 1px solid var(--border);
-    border-radius: var(--radius, 14px);
+    border-radius: 0;
     overflow: hidden;
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif);
+    font-family: var(--font-mono);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    image-rendering: auto;
   }
 
   .file-tabs {
