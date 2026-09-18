@@ -44,7 +44,11 @@
         "south": "/station/agents/approved_alien/rot_south.png",
         "north": "/station/agents/approved_alien/rot_north.png",
         "east": "/station/agents/approved_alien/rot_east.png",
-        "west": "/station/agents/approved_alien/rot_west.png"
+        "west": "/station/agents/approved_alien/rot_west.png",
+        "north-east": "/station/agents/approved_alien/rot_north-east.png",
+        "north-west": "/station/agents/approved_alien/rot_north-west.png",
+        "south-east": "/station/agents/approved_alien/rot_south-east.png",
+        "south-west": "/station/agents/approved_alien/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -100,6 +104,46 @@
           "/station/agents/approved_alien/walk_west_6.png",
           "/station/agents/approved_alien/walk_west_7.png",
           "/station/agents/approved_alien/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_alien/walk_north-east_1.png",
+          "/station/agents/approved_alien/walk_north-east_2.png",
+          "/station/agents/approved_alien/walk_north-east_3.png",
+          "/station/agents/approved_alien/walk_north-east_4.png",
+          "/station/agents/approved_alien/walk_north-east_5.png",
+          "/station/agents/approved_alien/walk_north-east_6.png",
+          "/station/agents/approved_alien/walk_north-east_7.png",
+          "/station/agents/approved_alien/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_alien/walk_north-west_1.png",
+          "/station/agents/approved_alien/walk_north-west_2.png",
+          "/station/agents/approved_alien/walk_north-west_3.png",
+          "/station/agents/approved_alien/walk_north-west_4.png",
+          "/station/agents/approved_alien/walk_north-west_5.png",
+          "/station/agents/approved_alien/walk_north-west_6.png",
+          "/station/agents/approved_alien/walk_north-west_7.png",
+          "/station/agents/approved_alien/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_alien/walk_south-east_1.png",
+          "/station/agents/approved_alien/walk_south-east_2.png",
+          "/station/agents/approved_alien/walk_south-east_3.png",
+          "/station/agents/approved_alien/walk_south-east_4.png",
+          "/station/agents/approved_alien/walk_south-east_5.png",
+          "/station/agents/approved_alien/walk_south-east_6.png",
+          "/station/agents/approved_alien/walk_south-east_7.png",
+          "/station/agents/approved_alien/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_alien/walk_south-west_1.png",
+          "/station/agents/approved_alien/walk_south-west_2.png",
+          "/station/agents/approved_alien/walk_south-west_3.png",
+          "/station/agents/approved_alien/walk_south-west_4.png",
+          "/station/agents/approved_alien/walk_south-west_5.png",
+          "/station/agents/approved_alien/walk_south-west_6.png",
+          "/station/agents/approved_alien/walk_south-west_7.png",
+          "/station/agents/approved_alien/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -155,7 +199,11 @@
         "south": "/station/agents/approved_android/rot_south.png",
         "north": "/station/agents/approved_android/rot_north.png",
         "east": "/station/agents/approved_android/rot_east.png",
-        "west": "/station/agents/approved_android/rot_west.png"
+        "west": "/station/agents/approved_android/rot_west.png",
+        "north-east": "/station/agents/approved_android/rot_north-east.png",
+        "north-west": "/station/agents/approved_android/rot_north-west.png",
+        "south-east": "/station/agents/approved_android/rot_south-east.png",
+        "south-west": "/station/agents/approved_android/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -211,6 +259,46 @@
           "/station/agents/approved_android/walk_west_6.png",
           "/station/agents/approved_android/walk_west_7.png",
           "/station/agents/approved_android/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_android/walk_north-east_1.png",
+          "/station/agents/approved_android/walk_north-east_2.png",
+          "/station/agents/approved_android/walk_north-east_3.png",
+          "/station/agents/approved_android/walk_north-east_4.png",
+          "/station/agents/approved_android/walk_north-east_5.png",
+          "/station/agents/approved_android/walk_north-east_6.png",
+          "/station/agents/approved_android/walk_north-east_7.png",
+          "/station/agents/approved_android/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_android/walk_north-west_1.png",
+          "/station/agents/approved_android/walk_north-west_2.png",
+          "/station/agents/approved_android/walk_north-west_3.png",
+          "/station/agents/approved_android/walk_north-west_4.png",
+          "/station/agents/approved_android/walk_north-west_5.png",
+          "/station/agents/approved_android/walk_north-west_6.png",
+          "/station/agents/approved_android/walk_north-west_7.png",
+          "/station/agents/approved_android/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_android/walk_south-east_1.png",
+          "/station/agents/approved_android/walk_south-east_2.png",
+          "/station/agents/approved_android/walk_south-east_3.png",
+          "/station/agents/approved_android/walk_south-east_4.png",
+          "/station/agents/approved_android/walk_south-east_5.png",
+          "/station/agents/approved_android/walk_south-east_6.png",
+          "/station/agents/approved_android/walk_south-east_7.png",
+          "/station/agents/approved_android/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_android/walk_south-west_1.png",
+          "/station/agents/approved_android/walk_south-west_2.png",
+          "/station/agents/approved_android/walk_south-west_3.png",
+          "/station/agents/approved_android/walk_south-west_4.png",
+          "/station/agents/approved_android/walk_south-west_5.png",
+          "/station/agents/approved_android/walk_south-west_6.png",
+          "/station/agents/approved_android/walk_south-west_7.png",
+          "/station/agents/approved_android/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -266,7 +354,11 @@
         "south": "/station/agents/approved_astronaut/rot_south.png",
         "north": "/station/agents/approved_astronaut/rot_north.png",
         "east": "/station/agents/approved_astronaut/rot_east.png",
-        "west": "/station/agents/approved_astronaut/rot_west.png"
+        "west": "/station/agents/approved_astronaut/rot_west.png",
+        "north-east": "/station/agents/approved_astronaut/rot_north-east.png",
+        "north-west": "/station/agents/approved_astronaut/rot_north-west.png",
+        "south-east": "/station/agents/approved_astronaut/rot_south-east.png",
+        "south-west": "/station/agents/approved_astronaut/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -322,6 +414,46 @@
           "/station/agents/approved_astronaut/walk_west_6.png",
           "/station/agents/approved_astronaut/walk_west_7.png",
           "/station/agents/approved_astronaut/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_astronaut/walk_north-east_1.png",
+          "/station/agents/approved_astronaut/walk_north-east_2.png",
+          "/station/agents/approved_astronaut/walk_north-east_3.png",
+          "/station/agents/approved_astronaut/walk_north-east_4.png",
+          "/station/agents/approved_astronaut/walk_north-east_5.png",
+          "/station/agents/approved_astronaut/walk_north-east_6.png",
+          "/station/agents/approved_astronaut/walk_north-east_7.png",
+          "/station/agents/approved_astronaut/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_astronaut/walk_north-west_1.png",
+          "/station/agents/approved_astronaut/walk_north-west_2.png",
+          "/station/agents/approved_astronaut/walk_north-west_3.png",
+          "/station/agents/approved_astronaut/walk_north-west_4.png",
+          "/station/agents/approved_astronaut/walk_north-west_5.png",
+          "/station/agents/approved_astronaut/walk_north-west_6.png",
+          "/station/agents/approved_astronaut/walk_north-west_7.png",
+          "/station/agents/approved_astronaut/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_astronaut/walk_south-east_1.png",
+          "/station/agents/approved_astronaut/walk_south-east_2.png",
+          "/station/agents/approved_astronaut/walk_south-east_3.png",
+          "/station/agents/approved_astronaut/walk_south-east_4.png",
+          "/station/agents/approved_astronaut/walk_south-east_5.png",
+          "/station/agents/approved_astronaut/walk_south-east_6.png",
+          "/station/agents/approved_astronaut/walk_south-east_7.png",
+          "/station/agents/approved_astronaut/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_astronaut/walk_south-west_1.png",
+          "/station/agents/approved_astronaut/walk_south-west_2.png",
+          "/station/agents/approved_astronaut/walk_south-west_3.png",
+          "/station/agents/approved_astronaut/walk_south-west_4.png",
+          "/station/agents/approved_astronaut/walk_south-west_5.png",
+          "/station/agents/approved_astronaut/walk_south-west_6.png",
+          "/station/agents/approved_astronaut/walk_south-west_7.png",
+          "/station/agents/approved_astronaut/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -377,7 +509,11 @@
         "south": "/station/agents/approved_bear/rot_south.png",
         "north": "/station/agents/approved_bear/rot_north.png",
         "east": "/station/agents/approved_bear/rot_east.png",
-        "west": "/station/agents/approved_bear/rot_west.png"
+        "west": "/station/agents/approved_bear/rot_west.png",
+        "north-east": "/station/agents/approved_bear/rot_north-east.png",
+        "north-west": "/station/agents/approved_bear/rot_north-west.png",
+        "south-east": "/station/agents/approved_bear/rot_south-east.png",
+        "south-west": "/station/agents/approved_bear/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -433,6 +569,46 @@
           "/station/agents/approved_bear/walk_west_6.png",
           "/station/agents/approved_bear/walk_west_7.png",
           "/station/agents/approved_bear/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_bear/walk_north-east_1.png",
+          "/station/agents/approved_bear/walk_north-east_2.png",
+          "/station/agents/approved_bear/walk_north-east_3.png",
+          "/station/agents/approved_bear/walk_north-east_4.png",
+          "/station/agents/approved_bear/walk_north-east_5.png",
+          "/station/agents/approved_bear/walk_north-east_6.png",
+          "/station/agents/approved_bear/walk_north-east_7.png",
+          "/station/agents/approved_bear/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_bear/walk_north-west_1.png",
+          "/station/agents/approved_bear/walk_north-west_2.png",
+          "/station/agents/approved_bear/walk_north-west_3.png",
+          "/station/agents/approved_bear/walk_north-west_4.png",
+          "/station/agents/approved_bear/walk_north-west_5.png",
+          "/station/agents/approved_bear/walk_north-west_6.png",
+          "/station/agents/approved_bear/walk_north-west_7.png",
+          "/station/agents/approved_bear/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_bear/walk_south-east_1.png",
+          "/station/agents/approved_bear/walk_south-east_2.png",
+          "/station/agents/approved_bear/walk_south-east_3.png",
+          "/station/agents/approved_bear/walk_south-east_4.png",
+          "/station/agents/approved_bear/walk_south-east_5.png",
+          "/station/agents/approved_bear/walk_south-east_6.png",
+          "/station/agents/approved_bear/walk_south-east_7.png",
+          "/station/agents/approved_bear/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_bear/walk_south-west_1.png",
+          "/station/agents/approved_bear/walk_south-west_2.png",
+          "/station/agents/approved_bear/walk_south-west_3.png",
+          "/station/agents/approved_bear/walk_south-west_4.png",
+          "/station/agents/approved_bear/walk_south-west_5.png",
+          "/station/agents/approved_bear/walk_south-west_6.png",
+          "/station/agents/approved_bear/walk_south-west_7.png",
+          "/station/agents/approved_bear/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -488,7 +664,11 @@
         "south": "/station/agents/approved_blank_amber/rot_south.png",
         "north": "/station/agents/approved_blank_amber/rot_north.png",
         "east": "/station/agents/approved_blank_amber/rot_east.png",
-        "west": "/station/agents/approved_blank_amber/rot_west.png"
+        "west": "/station/agents/approved_blank_amber/rot_west.png",
+        "north-east": "/station/agents/approved_blank_amber/rot_north-east.png",
+        "north-west": "/station/agents/approved_blank_amber/rot_north-west.png",
+        "south-east": "/station/agents/approved_blank_amber/rot_south-east.png",
+        "south-west": "/station/agents/approved_blank_amber/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -544,6 +724,46 @@
           "/station/agents/approved_blank_amber/walk_west_6.png",
           "/station/agents/approved_blank_amber/walk_west_7.png",
           "/station/agents/approved_blank_amber/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_blank_amber/walk_north-east_1.png",
+          "/station/agents/approved_blank_amber/walk_north-east_2.png",
+          "/station/agents/approved_blank_amber/walk_north-east_3.png",
+          "/station/agents/approved_blank_amber/walk_north-east_4.png",
+          "/station/agents/approved_blank_amber/walk_north-east_5.png",
+          "/station/agents/approved_blank_amber/walk_north-east_6.png",
+          "/station/agents/approved_blank_amber/walk_north-east_7.png",
+          "/station/agents/approved_blank_amber/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_blank_amber/walk_north-west_1.png",
+          "/station/agents/approved_blank_amber/walk_north-west_2.png",
+          "/station/agents/approved_blank_amber/walk_north-west_3.png",
+          "/station/agents/approved_blank_amber/walk_north-west_4.png",
+          "/station/agents/approved_blank_amber/walk_north-west_5.png",
+          "/station/agents/approved_blank_amber/walk_north-west_6.png",
+          "/station/agents/approved_blank_amber/walk_north-west_7.png",
+          "/station/agents/approved_blank_amber/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_blank_amber/walk_south-east_1.png",
+          "/station/agents/approved_blank_amber/walk_south-east_2.png",
+          "/station/agents/approved_blank_amber/walk_south-east_3.png",
+          "/station/agents/approved_blank_amber/walk_south-east_4.png",
+          "/station/agents/approved_blank_amber/walk_south-east_5.png",
+          "/station/agents/approved_blank_amber/walk_south-east_6.png",
+          "/station/agents/approved_blank_amber/walk_south-east_7.png",
+          "/station/agents/approved_blank_amber/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_blank_amber/walk_south-west_1.png",
+          "/station/agents/approved_blank_amber/walk_south-west_2.png",
+          "/station/agents/approved_blank_amber/walk_south-west_3.png",
+          "/station/agents/approved_blank_amber/walk_south-west_4.png",
+          "/station/agents/approved_blank_amber/walk_south-west_5.png",
+          "/station/agents/approved_blank_amber/walk_south-west_6.png",
+          "/station/agents/approved_blank_amber/walk_south-west_7.png",
+          "/station/agents/approved_blank_amber/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -599,7 +819,11 @@
         "south": "/station/agents/approved_blank_blue/rot_south.png",
         "north": "/station/agents/approved_blank_blue/rot_north.png",
         "east": "/station/agents/approved_blank_blue/rot_east.png",
-        "west": "/station/agents/approved_blank_blue/rot_west.png"
+        "west": "/station/agents/approved_blank_blue/rot_west.png",
+        "north-east": "/station/agents/approved_blank_blue/rot_north-east.png",
+        "north-west": "/station/agents/approved_blank_blue/rot_north-west.png",
+        "south-east": "/station/agents/approved_blank_blue/rot_south-east.png",
+        "south-west": "/station/agents/approved_blank_blue/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -655,6 +879,46 @@
           "/station/agents/approved_blank_blue/walk_west_6.png",
           "/station/agents/approved_blank_blue/walk_west_7.png",
           "/station/agents/approved_blank_blue/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_blank_blue/walk_north-east_1.png",
+          "/station/agents/approved_blank_blue/walk_north-east_2.png",
+          "/station/agents/approved_blank_blue/walk_north-east_3.png",
+          "/station/agents/approved_blank_blue/walk_north-east_4.png",
+          "/station/agents/approved_blank_blue/walk_north-east_5.png",
+          "/station/agents/approved_blank_blue/walk_north-east_6.png",
+          "/station/agents/approved_blank_blue/walk_north-east_7.png",
+          "/station/agents/approved_blank_blue/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_blank_blue/walk_north-west_1.png",
+          "/station/agents/approved_blank_blue/walk_north-west_2.png",
+          "/station/agents/approved_blank_blue/walk_north-west_3.png",
+          "/station/agents/approved_blank_blue/walk_north-west_4.png",
+          "/station/agents/approved_blank_blue/walk_north-west_5.png",
+          "/station/agents/approved_blank_blue/walk_north-west_6.png",
+          "/station/agents/approved_blank_blue/walk_north-west_7.png",
+          "/station/agents/approved_blank_blue/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_blank_blue/walk_south-east_1.png",
+          "/station/agents/approved_blank_blue/walk_south-east_2.png",
+          "/station/agents/approved_blank_blue/walk_south-east_3.png",
+          "/station/agents/approved_blank_blue/walk_south-east_4.png",
+          "/station/agents/approved_blank_blue/walk_south-east_5.png",
+          "/station/agents/approved_blank_blue/walk_south-east_6.png",
+          "/station/agents/approved_blank_blue/walk_south-east_7.png",
+          "/station/agents/approved_blank_blue/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_blank_blue/walk_south-west_1.png",
+          "/station/agents/approved_blank_blue/walk_south-west_2.png",
+          "/station/agents/approved_blank_blue/walk_south-west_3.png",
+          "/station/agents/approved_blank_blue/walk_south-west_4.png",
+          "/station/agents/approved_blank_blue/walk_south-west_5.png",
+          "/station/agents/approved_blank_blue/walk_south-west_6.png",
+          "/station/agents/approved_blank_blue/walk_south-west_7.png",
+          "/station/agents/approved_blank_blue/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -710,7 +974,11 @@
         "south": "/station/agents/approved_blank_green/rot_south.png",
         "north": "/station/agents/approved_blank_green/rot_north.png",
         "east": "/station/agents/approved_blank_green/rot_east.png",
-        "west": "/station/agents/approved_blank_green/rot_west.png"
+        "west": "/station/agents/approved_blank_green/rot_west.png",
+        "north-east": "/station/agents/approved_blank_green/rot_north-east.png",
+        "north-west": "/station/agents/approved_blank_green/rot_north-west.png",
+        "south-east": "/station/agents/approved_blank_green/rot_south-east.png",
+        "south-west": "/station/agents/approved_blank_green/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -766,6 +1034,46 @@
           "/station/agents/approved_blank_green/walk_west_6.png",
           "/station/agents/approved_blank_green/walk_west_7.png",
           "/station/agents/approved_blank_green/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_blank_green/walk_north-east_1.png",
+          "/station/agents/approved_blank_green/walk_north-east_2.png",
+          "/station/agents/approved_blank_green/walk_north-east_3.png",
+          "/station/agents/approved_blank_green/walk_north-east_4.png",
+          "/station/agents/approved_blank_green/walk_north-east_5.png",
+          "/station/agents/approved_blank_green/walk_north-east_6.png",
+          "/station/agents/approved_blank_green/walk_north-east_7.png",
+          "/station/agents/approved_blank_green/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_blank_green/walk_north-west_1.png",
+          "/station/agents/approved_blank_green/walk_north-west_2.png",
+          "/station/agents/approved_blank_green/walk_north-west_3.png",
+          "/station/agents/approved_blank_green/walk_north-west_4.png",
+          "/station/agents/approved_blank_green/walk_north-west_5.png",
+          "/station/agents/approved_blank_green/walk_north-west_6.png",
+          "/station/agents/approved_blank_green/walk_north-west_7.png",
+          "/station/agents/approved_blank_green/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_blank_green/walk_south-east_1.png",
+          "/station/agents/approved_blank_green/walk_south-east_2.png",
+          "/station/agents/approved_blank_green/walk_south-east_3.png",
+          "/station/agents/approved_blank_green/walk_south-east_4.png",
+          "/station/agents/approved_blank_green/walk_south-east_5.png",
+          "/station/agents/approved_blank_green/walk_south-east_6.png",
+          "/station/agents/approved_blank_green/walk_south-east_7.png",
+          "/station/agents/approved_blank_green/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_blank_green/walk_south-west_1.png",
+          "/station/agents/approved_blank_green/walk_south-west_2.png",
+          "/station/agents/approved_blank_green/walk_south-west_3.png",
+          "/station/agents/approved_blank_green/walk_south-west_4.png",
+          "/station/agents/approved_blank_green/walk_south-west_5.png",
+          "/station/agents/approved_blank_green/walk_south-west_6.png",
+          "/station/agents/approved_blank_green/walk_south-west_7.png",
+          "/station/agents/approved_blank_green/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -821,7 +1129,11 @@
         "south": "/station/agents/approved_blank_red/rot_south.png",
         "north": "/station/agents/approved_blank_red/rot_north.png",
         "east": "/station/agents/approved_blank_red/rot_east.png",
-        "west": "/station/agents/approved_blank_red/rot_west.png"
+        "west": "/station/agents/approved_blank_red/rot_west.png",
+        "north-east": "/station/agents/approved_blank_red/rot_north-east.png",
+        "north-west": "/station/agents/approved_blank_red/rot_north-west.png",
+        "south-east": "/station/agents/approved_blank_red/rot_south-east.png",
+        "south-west": "/station/agents/approved_blank_red/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -877,6 +1189,46 @@
           "/station/agents/approved_blank_red/walk_west_6.png",
           "/station/agents/approved_blank_red/walk_west_7.png",
           "/station/agents/approved_blank_red/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_blank_red/walk_north-east_1.png",
+          "/station/agents/approved_blank_red/walk_north-east_2.png",
+          "/station/agents/approved_blank_red/walk_north-east_3.png",
+          "/station/agents/approved_blank_red/walk_north-east_4.png",
+          "/station/agents/approved_blank_red/walk_north-east_5.png",
+          "/station/agents/approved_blank_red/walk_north-east_6.png",
+          "/station/agents/approved_blank_red/walk_north-east_7.png",
+          "/station/agents/approved_blank_red/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_blank_red/walk_north-west_1.png",
+          "/station/agents/approved_blank_red/walk_north-west_2.png",
+          "/station/agents/approved_blank_red/walk_north-west_3.png",
+          "/station/agents/approved_blank_red/walk_north-west_4.png",
+          "/station/agents/approved_blank_red/walk_north-west_5.png",
+          "/station/agents/approved_blank_red/walk_north-west_6.png",
+          "/station/agents/approved_blank_red/walk_north-west_7.png",
+          "/station/agents/approved_blank_red/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_blank_red/walk_south-east_1.png",
+          "/station/agents/approved_blank_red/walk_south-east_2.png",
+          "/station/agents/approved_blank_red/walk_south-east_3.png",
+          "/station/agents/approved_blank_red/walk_south-east_4.png",
+          "/station/agents/approved_blank_red/walk_south-east_5.png",
+          "/station/agents/approved_blank_red/walk_south-east_6.png",
+          "/station/agents/approved_blank_red/walk_south-east_7.png",
+          "/station/agents/approved_blank_red/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_blank_red/walk_south-west_1.png",
+          "/station/agents/approved_blank_red/walk_south-west_2.png",
+          "/station/agents/approved_blank_red/walk_south-west_3.png",
+          "/station/agents/approved_blank_red/walk_south-west_4.png",
+          "/station/agents/approved_blank_red/walk_south-west_5.png",
+          "/station/agents/approved_blank_red/walk_south-west_6.png",
+          "/station/agents/approved_blank_red/walk_south-west_7.png",
+          "/station/agents/approved_blank_red/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -932,7 +1284,11 @@
         "south": "/station/agents/approved_capybara/rot_south.png",
         "north": "/station/agents/approved_capybara/rot_north.png",
         "east": "/station/agents/approved_capybara/rot_east.png",
-        "west": "/station/agents/approved_capybara/rot_west.png"
+        "west": "/station/agents/approved_capybara/rot_west.png",
+        "north-east": "/station/agents/approved_capybara/rot_north-east.png",
+        "north-west": "/station/agents/approved_capybara/rot_north-west.png",
+        "south-east": "/station/agents/approved_capybara/rot_south-east.png",
+        "south-west": "/station/agents/approved_capybara/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -988,6 +1344,46 @@
           "/station/agents/approved_capybara/walk_west_6.png",
           "/station/agents/approved_capybara/walk_west_7.png",
           "/station/agents/approved_capybara/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_capybara/walk_north-east_1.png",
+          "/station/agents/approved_capybara/walk_north-east_2.png",
+          "/station/agents/approved_capybara/walk_north-east_3.png",
+          "/station/agents/approved_capybara/walk_north-east_4.png",
+          "/station/agents/approved_capybara/walk_north-east_5.png",
+          "/station/agents/approved_capybara/walk_north-east_6.png",
+          "/station/agents/approved_capybara/walk_north-east_7.png",
+          "/station/agents/approved_capybara/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_capybara/walk_north-west_1.png",
+          "/station/agents/approved_capybara/walk_north-west_2.png",
+          "/station/agents/approved_capybara/walk_north-west_3.png",
+          "/station/agents/approved_capybara/walk_north-west_4.png",
+          "/station/agents/approved_capybara/walk_north-west_5.png",
+          "/station/agents/approved_capybara/walk_north-west_6.png",
+          "/station/agents/approved_capybara/walk_north-west_7.png",
+          "/station/agents/approved_capybara/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_capybara/walk_south-east_1.png",
+          "/station/agents/approved_capybara/walk_south-east_2.png",
+          "/station/agents/approved_capybara/walk_south-east_3.png",
+          "/station/agents/approved_capybara/walk_south-east_4.png",
+          "/station/agents/approved_capybara/walk_south-east_5.png",
+          "/station/agents/approved_capybara/walk_south-east_6.png",
+          "/station/agents/approved_capybara/walk_south-east_7.png",
+          "/station/agents/approved_capybara/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_capybara/walk_south-west_1.png",
+          "/station/agents/approved_capybara/walk_south-west_2.png",
+          "/station/agents/approved_capybara/walk_south-west_3.png",
+          "/station/agents/approved_capybara/walk_south-west_4.png",
+          "/station/agents/approved_capybara/walk_south-west_5.png",
+          "/station/agents/approved_capybara/walk_south-west_6.png",
+          "/station/agents/approved_capybara/walk_south-west_7.png",
+          "/station/agents/approved_capybara/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -1043,7 +1439,11 @@
         "south": "/station/agents/approved_caseyjones/rot_south.png",
         "north": "/station/agents/approved_caseyjones/rot_north.png",
         "east": "/station/agents/approved_caseyjones/rot_east.png",
-        "west": "/station/agents/approved_caseyjones/rot_west.png"
+        "west": "/station/agents/approved_caseyjones/rot_west.png",
+        "north-east": "/station/agents/approved_caseyjones/rot_north-east.png",
+        "north-west": "/station/agents/approved_caseyjones/rot_north-west.png",
+        "south-east": "/station/agents/approved_caseyjones/rot_south-east.png",
+        "south-west": "/station/agents/approved_caseyjones/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -1099,6 +1499,46 @@
           "/station/agents/approved_caseyjones/walk_west_6.png",
           "/station/agents/approved_caseyjones/walk_west_7.png",
           "/station/agents/approved_caseyjones/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_caseyjones/walk_north-east_1.png",
+          "/station/agents/approved_caseyjones/walk_north-east_2.png",
+          "/station/agents/approved_caseyjones/walk_north-east_3.png",
+          "/station/agents/approved_caseyjones/walk_north-east_4.png",
+          "/station/agents/approved_caseyjones/walk_north-east_5.png",
+          "/station/agents/approved_caseyjones/walk_north-east_6.png",
+          "/station/agents/approved_caseyjones/walk_north-east_7.png",
+          "/station/agents/approved_caseyjones/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_caseyjones/walk_north-west_1.png",
+          "/station/agents/approved_caseyjones/walk_north-west_2.png",
+          "/station/agents/approved_caseyjones/walk_north-west_3.png",
+          "/station/agents/approved_caseyjones/walk_north-west_4.png",
+          "/station/agents/approved_caseyjones/walk_north-west_5.png",
+          "/station/agents/approved_caseyjones/walk_north-west_6.png",
+          "/station/agents/approved_caseyjones/walk_north-west_7.png",
+          "/station/agents/approved_caseyjones/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_caseyjones/walk_south-east_1.png",
+          "/station/agents/approved_caseyjones/walk_south-east_2.png",
+          "/station/agents/approved_caseyjones/walk_south-east_3.png",
+          "/station/agents/approved_caseyjones/walk_south-east_4.png",
+          "/station/agents/approved_caseyjones/walk_south-east_5.png",
+          "/station/agents/approved_caseyjones/walk_south-east_6.png",
+          "/station/agents/approved_caseyjones/walk_south-east_7.png",
+          "/station/agents/approved_caseyjones/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_caseyjones/walk_south-west_1.png",
+          "/station/agents/approved_caseyjones/walk_south-west_2.png",
+          "/station/agents/approved_caseyjones/walk_south-west_3.png",
+          "/station/agents/approved_caseyjones/walk_south-west_4.png",
+          "/station/agents/approved_caseyjones/walk_south-west_5.png",
+          "/station/agents/approved_caseyjones/walk_south-west_6.png",
+          "/station/agents/approved_caseyjones/walk_south-west_7.png",
+          "/station/agents/approved_caseyjones/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -1154,7 +1594,11 @@
         "south": "/station/agents/approved_crewmate/rot_south.png",
         "north": "/station/agents/approved_crewmate/rot_north.png",
         "east": "/station/agents/approved_crewmate/rot_east.png",
-        "west": "/station/agents/approved_crewmate/rot_west.png"
+        "west": "/station/agents/approved_crewmate/rot_west.png",
+        "north-east": "/station/agents/approved_crewmate/rot_north-east.png",
+        "north-west": "/station/agents/approved_crewmate/rot_north-west.png",
+        "south-east": "/station/agents/approved_crewmate/rot_south-east.png",
+        "south-west": "/station/agents/approved_crewmate/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -1210,6 +1654,46 @@
           "/station/agents/approved_crewmate/walk_west_6.png",
           "/station/agents/approved_crewmate/walk_west_7.png",
           "/station/agents/approved_crewmate/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_crewmate/walk_north-east_1.png",
+          "/station/agents/approved_crewmate/walk_north-east_2.png",
+          "/station/agents/approved_crewmate/walk_north-east_3.png",
+          "/station/agents/approved_crewmate/walk_north-east_4.png",
+          "/station/agents/approved_crewmate/walk_north-east_5.png",
+          "/station/agents/approved_crewmate/walk_north-east_6.png",
+          "/station/agents/approved_crewmate/walk_north-east_7.png",
+          "/station/agents/approved_crewmate/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_crewmate/walk_north-west_1.png",
+          "/station/agents/approved_crewmate/walk_north-west_2.png",
+          "/station/agents/approved_crewmate/walk_north-west_3.png",
+          "/station/agents/approved_crewmate/walk_north-west_4.png",
+          "/station/agents/approved_crewmate/walk_north-west_5.png",
+          "/station/agents/approved_crewmate/walk_north-west_6.png",
+          "/station/agents/approved_crewmate/walk_north-west_7.png",
+          "/station/agents/approved_crewmate/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_crewmate/walk_south-east_1.png",
+          "/station/agents/approved_crewmate/walk_south-east_2.png",
+          "/station/agents/approved_crewmate/walk_south-east_3.png",
+          "/station/agents/approved_crewmate/walk_south-east_4.png",
+          "/station/agents/approved_crewmate/walk_south-east_5.png",
+          "/station/agents/approved_crewmate/walk_south-east_6.png",
+          "/station/agents/approved_crewmate/walk_south-east_7.png",
+          "/station/agents/approved_crewmate/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_crewmate/walk_south-west_1.png",
+          "/station/agents/approved_crewmate/walk_south-west_2.png",
+          "/station/agents/approved_crewmate/walk_south-west_3.png",
+          "/station/agents/approved_crewmate/walk_south-west_4.png",
+          "/station/agents/approved_crewmate/walk_south-west_5.png",
+          "/station/agents/approved_crewmate/walk_south-west_6.png",
+          "/station/agents/approved_crewmate/walk_south-west_7.png",
+          "/station/agents/approved_crewmate/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -1265,7 +1749,11 @@
         "south": "/station/agents/approved_crthead/rot_south.png",
         "north": "/station/agents/approved_crthead/rot_north.png",
         "east": "/station/agents/approved_crthead/rot_east.png",
-        "west": "/station/agents/approved_crthead/rot_west.png"
+        "west": "/station/agents/approved_crthead/rot_west.png",
+        "north-east": "/station/agents/approved_crthead/rot_north-east.png",
+        "north-west": "/station/agents/approved_crthead/rot_north-west.png",
+        "south-east": "/station/agents/approved_crthead/rot_south-east.png",
+        "south-west": "/station/agents/approved_crthead/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -1321,6 +1809,46 @@
           "/station/agents/approved_crthead/walk_west_6.png",
           "/station/agents/approved_crthead/walk_west_7.png",
           "/station/agents/approved_crthead/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_crthead/walk_north-east_1.png",
+          "/station/agents/approved_crthead/walk_north-east_2.png",
+          "/station/agents/approved_crthead/walk_north-east_3.png",
+          "/station/agents/approved_crthead/walk_north-east_4.png",
+          "/station/agents/approved_crthead/walk_north-east_5.png",
+          "/station/agents/approved_crthead/walk_north-east_6.png",
+          "/station/agents/approved_crthead/walk_north-east_7.png",
+          "/station/agents/approved_crthead/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_crthead/walk_north-west_1.png",
+          "/station/agents/approved_crthead/walk_north-west_2.png",
+          "/station/agents/approved_crthead/walk_north-west_3.png",
+          "/station/agents/approved_crthead/walk_north-west_4.png",
+          "/station/agents/approved_crthead/walk_north-west_5.png",
+          "/station/agents/approved_crthead/walk_north-west_6.png",
+          "/station/agents/approved_crthead/walk_north-west_7.png",
+          "/station/agents/approved_crthead/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_crthead/walk_south-east_1.png",
+          "/station/agents/approved_crthead/walk_south-east_2.png",
+          "/station/agents/approved_crthead/walk_south-east_3.png",
+          "/station/agents/approved_crthead/walk_south-east_4.png",
+          "/station/agents/approved_crthead/walk_south-east_5.png",
+          "/station/agents/approved_crthead/walk_south-east_6.png",
+          "/station/agents/approved_crthead/walk_south-east_7.png",
+          "/station/agents/approved_crthead/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_crthead/walk_south-west_1.png",
+          "/station/agents/approved_crthead/walk_south-west_2.png",
+          "/station/agents/approved_crthead/walk_south-west_3.png",
+          "/station/agents/approved_crthead/walk_south-west_4.png",
+          "/station/agents/approved_crthead/walk_south-west_5.png",
+          "/station/agents/approved_crthead/walk_south-west_6.png",
+          "/station/agents/approved_crthead/walk_south-west_7.png",
+          "/station/agents/approved_crthead/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -1376,7 +1904,11 @@
         "south": "/station/agents/approved_dario/rot_south.png",
         "north": "/station/agents/approved_dario/rot_north.png",
         "east": "/station/agents/approved_dario/rot_east.png",
-        "west": "/station/agents/approved_dario/rot_west.png"
+        "west": "/station/agents/approved_dario/rot_west.png",
+        "north-east": "/station/agents/approved_dario/rot_north-east.png",
+        "north-west": "/station/agents/approved_dario/rot_north-west.png",
+        "south-east": "/station/agents/approved_dario/rot_south-east.png",
+        "south-west": "/station/agents/approved_dario/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -1432,6 +1964,46 @@
           "/station/agents/approved_dario/walk_west_6.png",
           "/station/agents/approved_dario/walk_west_7.png",
           "/station/agents/approved_dario/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_dario/walk_north-east_1.png",
+          "/station/agents/approved_dario/walk_north-east_2.png",
+          "/station/agents/approved_dario/walk_north-east_3.png",
+          "/station/agents/approved_dario/walk_north-east_4.png",
+          "/station/agents/approved_dario/walk_north-east_5.png",
+          "/station/agents/approved_dario/walk_north-east_6.png",
+          "/station/agents/approved_dario/walk_north-east_7.png",
+          "/station/agents/approved_dario/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_dario/walk_north-west_1.png",
+          "/station/agents/approved_dario/walk_north-west_2.png",
+          "/station/agents/approved_dario/walk_north-west_3.png",
+          "/station/agents/approved_dario/walk_north-west_4.png",
+          "/station/agents/approved_dario/walk_north-west_5.png",
+          "/station/agents/approved_dario/walk_north-west_6.png",
+          "/station/agents/approved_dario/walk_north-west_7.png",
+          "/station/agents/approved_dario/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_dario/walk_south-east_1.png",
+          "/station/agents/approved_dario/walk_south-east_2.png",
+          "/station/agents/approved_dario/walk_south-east_3.png",
+          "/station/agents/approved_dario/walk_south-east_4.png",
+          "/station/agents/approved_dario/walk_south-east_5.png",
+          "/station/agents/approved_dario/walk_south-east_6.png",
+          "/station/agents/approved_dario/walk_south-east_7.png",
+          "/station/agents/approved_dario/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_dario/walk_south-west_1.png",
+          "/station/agents/approved_dario/walk_south-west_2.png",
+          "/station/agents/approved_dario/walk_south-west_3.png",
+          "/station/agents/approved_dario/walk_south-west_4.png",
+          "/station/agents/approved_dario/walk_south-west_5.png",
+          "/station/agents/approved_dario/walk_south-west_6.png",
+          "/station/agents/approved_dario/walk_south-west_7.png",
+          "/station/agents/approved_dario/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -1487,7 +2059,11 @@
         "south": "/station/agents/approved_endoskeleton/rot_south.png",
         "north": "/station/agents/approved_endoskeleton/rot_north.png",
         "east": "/station/agents/approved_endoskeleton/rot_east.png",
-        "west": "/station/agents/approved_endoskeleton/rot_west.png"
+        "west": "/station/agents/approved_endoskeleton/rot_west.png",
+        "north-east": "/station/agents/approved_endoskeleton/rot_north-east.png",
+        "north-west": "/station/agents/approved_endoskeleton/rot_north-west.png",
+        "south-east": "/station/agents/approved_endoskeleton/rot_south-east.png",
+        "south-west": "/station/agents/approved_endoskeleton/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -1543,6 +2119,46 @@
           "/station/agents/approved_endoskeleton/walk_west_6.png",
           "/station/agents/approved_endoskeleton/walk_west_7.png",
           "/station/agents/approved_endoskeleton/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_endoskeleton/walk_north-east_1.png",
+          "/station/agents/approved_endoskeleton/walk_north-east_2.png",
+          "/station/agents/approved_endoskeleton/walk_north-east_3.png",
+          "/station/agents/approved_endoskeleton/walk_north-east_4.png",
+          "/station/agents/approved_endoskeleton/walk_north-east_5.png",
+          "/station/agents/approved_endoskeleton/walk_north-east_6.png",
+          "/station/agents/approved_endoskeleton/walk_north-east_7.png",
+          "/station/agents/approved_endoskeleton/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_endoskeleton/walk_north-west_1.png",
+          "/station/agents/approved_endoskeleton/walk_north-west_2.png",
+          "/station/agents/approved_endoskeleton/walk_north-west_3.png",
+          "/station/agents/approved_endoskeleton/walk_north-west_4.png",
+          "/station/agents/approved_endoskeleton/walk_north-west_5.png",
+          "/station/agents/approved_endoskeleton/walk_north-west_6.png",
+          "/station/agents/approved_endoskeleton/walk_north-west_7.png",
+          "/station/agents/approved_endoskeleton/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_endoskeleton/walk_south-east_1.png",
+          "/station/agents/approved_endoskeleton/walk_south-east_2.png",
+          "/station/agents/approved_endoskeleton/walk_south-east_3.png",
+          "/station/agents/approved_endoskeleton/walk_south-east_4.png",
+          "/station/agents/approved_endoskeleton/walk_south-east_5.png",
+          "/station/agents/approved_endoskeleton/walk_south-east_6.png",
+          "/station/agents/approved_endoskeleton/walk_south-east_7.png",
+          "/station/agents/approved_endoskeleton/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_endoskeleton/walk_south-west_1.png",
+          "/station/agents/approved_endoskeleton/walk_south-west_2.png",
+          "/station/agents/approved_endoskeleton/walk_south-west_3.png",
+          "/station/agents/approved_endoskeleton/walk_south-west_4.png",
+          "/station/agents/approved_endoskeleton/walk_south-west_5.png",
+          "/station/agents/approved_endoskeleton/walk_south-west_6.png",
+          "/station/agents/approved_endoskeleton/walk_south-west_7.png",
+          "/station/agents/approved_endoskeleton/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -1598,7 +2214,11 @@
         "south": "/station/agents/approved_finn/rot_south.png",
         "north": "/station/agents/approved_finn/rot_north.png",
         "east": "/station/agents/approved_finn/rot_east.png",
-        "west": "/station/agents/approved_finn/rot_west.png"
+        "west": "/station/agents/approved_finn/rot_west.png",
+        "north-east": "/station/agents/approved_finn/rot_north-east.png",
+        "north-west": "/station/agents/approved_finn/rot_north-west.png",
+        "south-east": "/station/agents/approved_finn/rot_south-east.png",
+        "south-west": "/station/agents/approved_finn/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -1654,6 +2274,46 @@
           "/station/agents/approved_finn/walk_west_6.png",
           "/station/agents/approved_finn/walk_west_7.png",
           "/station/agents/approved_finn/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_finn/walk_north-east_1.png",
+          "/station/agents/approved_finn/walk_north-east_2.png",
+          "/station/agents/approved_finn/walk_north-east_3.png",
+          "/station/agents/approved_finn/walk_north-east_4.png",
+          "/station/agents/approved_finn/walk_north-east_5.png",
+          "/station/agents/approved_finn/walk_north-east_6.png",
+          "/station/agents/approved_finn/walk_north-east_7.png",
+          "/station/agents/approved_finn/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_finn/walk_north-west_1.png",
+          "/station/agents/approved_finn/walk_north-west_2.png",
+          "/station/agents/approved_finn/walk_north-west_3.png",
+          "/station/agents/approved_finn/walk_north-west_4.png",
+          "/station/agents/approved_finn/walk_north-west_5.png",
+          "/station/agents/approved_finn/walk_north-west_6.png",
+          "/station/agents/approved_finn/walk_north-west_7.png",
+          "/station/agents/approved_finn/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_finn/walk_south-east_1.png",
+          "/station/agents/approved_finn/walk_south-east_2.png",
+          "/station/agents/approved_finn/walk_south-east_3.png",
+          "/station/agents/approved_finn/walk_south-east_4.png",
+          "/station/agents/approved_finn/walk_south-east_5.png",
+          "/station/agents/approved_finn/walk_south-east_6.png",
+          "/station/agents/approved_finn/walk_south-east_7.png",
+          "/station/agents/approved_finn/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_finn/walk_south-west_1.png",
+          "/station/agents/approved_finn/walk_south-west_2.png",
+          "/station/agents/approved_finn/walk_south-west_3.png",
+          "/station/agents/approved_finn/walk_south-west_4.png",
+          "/station/agents/approved_finn/walk_south-west_5.png",
+          "/station/agents/approved_finn/walk_south-west_6.png",
+          "/station/agents/approved_finn/walk_south-west_7.png",
+          "/station/agents/approved_finn/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -1709,7 +2369,11 @@
         "south": "/station/agents/approved_freddyfazbear/rot_south.png",
         "north": "/station/agents/approved_freddyfazbear/rot_north.png",
         "east": "/station/agents/approved_freddyfazbear/rot_east.png",
-        "west": "/station/agents/approved_freddyfazbear/rot_west.png"
+        "west": "/station/agents/approved_freddyfazbear/rot_west.png",
+        "north-east": "/station/agents/approved_freddyfazbear/rot_north-east.png",
+        "north-west": "/station/agents/approved_freddyfazbear/rot_north-west.png",
+        "south-east": "/station/agents/approved_freddyfazbear/rot_south-east.png",
+        "south-west": "/station/agents/approved_freddyfazbear/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -1765,6 +2429,46 @@
           "/station/agents/approved_freddyfazbear/walk_west_6.png",
           "/station/agents/approved_freddyfazbear/walk_west_7.png",
           "/station/agents/approved_freddyfazbear/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_freddyfazbear/walk_north-east_1.png",
+          "/station/agents/approved_freddyfazbear/walk_north-east_2.png",
+          "/station/agents/approved_freddyfazbear/walk_north-east_3.png",
+          "/station/agents/approved_freddyfazbear/walk_north-east_4.png",
+          "/station/agents/approved_freddyfazbear/walk_north-east_5.png",
+          "/station/agents/approved_freddyfazbear/walk_north-east_6.png",
+          "/station/agents/approved_freddyfazbear/walk_north-east_7.png",
+          "/station/agents/approved_freddyfazbear/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_freddyfazbear/walk_north-west_1.png",
+          "/station/agents/approved_freddyfazbear/walk_north-west_2.png",
+          "/station/agents/approved_freddyfazbear/walk_north-west_3.png",
+          "/station/agents/approved_freddyfazbear/walk_north-west_4.png",
+          "/station/agents/approved_freddyfazbear/walk_north-west_5.png",
+          "/station/agents/approved_freddyfazbear/walk_north-west_6.png",
+          "/station/agents/approved_freddyfazbear/walk_north-west_7.png",
+          "/station/agents/approved_freddyfazbear/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_freddyfazbear/walk_south-east_1.png",
+          "/station/agents/approved_freddyfazbear/walk_south-east_2.png",
+          "/station/agents/approved_freddyfazbear/walk_south-east_3.png",
+          "/station/agents/approved_freddyfazbear/walk_south-east_4.png",
+          "/station/agents/approved_freddyfazbear/walk_south-east_5.png",
+          "/station/agents/approved_freddyfazbear/walk_south-east_6.png",
+          "/station/agents/approved_freddyfazbear/walk_south-east_7.png",
+          "/station/agents/approved_freddyfazbear/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_freddyfazbear/walk_south-west_1.png",
+          "/station/agents/approved_freddyfazbear/walk_south-west_2.png",
+          "/station/agents/approved_freddyfazbear/walk_south-west_3.png",
+          "/station/agents/approved_freddyfazbear/walk_south-west_4.png",
+          "/station/agents/approved_freddyfazbear/walk_south-west_5.png",
+          "/station/agents/approved_freddyfazbear/walk_south-west_6.png",
+          "/station/agents/approved_freddyfazbear/walk_south-west_7.png",
+          "/station/agents/approved_freddyfazbear/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -1820,7 +2524,11 @@
         "south": "/station/agents/approved_ghostface/rot_south.png",
         "north": "/station/agents/approved_ghostface/rot_north.png",
         "east": "/station/agents/approved_ghostface/rot_east.png",
-        "west": "/station/agents/approved_ghostface/rot_west.png"
+        "west": "/station/agents/approved_ghostface/rot_west.png",
+        "north-east": "/station/agents/approved_ghostface/rot_north-east.png",
+        "north-west": "/station/agents/approved_ghostface/rot_north-west.png",
+        "south-east": "/station/agents/approved_ghostface/rot_south-east.png",
+        "south-west": "/station/agents/approved_ghostface/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -1876,6 +2584,46 @@
           "/station/agents/approved_ghostface/walk_west_6.png",
           "/station/agents/approved_ghostface/walk_west_7.png",
           "/station/agents/approved_ghostface/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_ghostface/walk_north-east_1.png",
+          "/station/agents/approved_ghostface/walk_north-east_2.png",
+          "/station/agents/approved_ghostface/walk_north-east_3.png",
+          "/station/agents/approved_ghostface/walk_north-east_4.png",
+          "/station/agents/approved_ghostface/walk_north-east_5.png",
+          "/station/agents/approved_ghostface/walk_north-east_6.png",
+          "/station/agents/approved_ghostface/walk_north-east_7.png",
+          "/station/agents/approved_ghostface/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_ghostface/walk_north-west_1.png",
+          "/station/agents/approved_ghostface/walk_north-west_2.png",
+          "/station/agents/approved_ghostface/walk_north-west_3.png",
+          "/station/agents/approved_ghostface/walk_north-west_4.png",
+          "/station/agents/approved_ghostface/walk_north-west_5.png",
+          "/station/agents/approved_ghostface/walk_north-west_6.png",
+          "/station/agents/approved_ghostface/walk_north-west_7.png",
+          "/station/agents/approved_ghostface/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_ghostface/walk_south-east_1.png",
+          "/station/agents/approved_ghostface/walk_south-east_2.png",
+          "/station/agents/approved_ghostface/walk_south-east_3.png",
+          "/station/agents/approved_ghostface/walk_south-east_4.png",
+          "/station/agents/approved_ghostface/walk_south-east_5.png",
+          "/station/agents/approved_ghostface/walk_south-east_6.png",
+          "/station/agents/approved_ghostface/walk_south-east_7.png",
+          "/station/agents/approved_ghostface/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_ghostface/walk_south-west_1.png",
+          "/station/agents/approved_ghostface/walk_south-west_2.png",
+          "/station/agents/approved_ghostface/walk_south-west_3.png",
+          "/station/agents/approved_ghostface/walk_south-west_4.png",
+          "/station/agents/approved_ghostface/walk_south-west_5.png",
+          "/station/agents/approved_ghostface/walk_south-west_6.png",
+          "/station/agents/approved_ghostface/walk_south-west_7.png",
+          "/station/agents/approved_ghostface/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -1931,7 +2679,11 @@
         "south": "/station/agents/approved_grimreaper/rot_south.png",
         "north": "/station/agents/approved_grimreaper/rot_north.png",
         "east": "/station/agents/approved_grimreaper/rot_east.png",
-        "west": "/station/agents/approved_grimreaper/rot_west.png"
+        "west": "/station/agents/approved_grimreaper/rot_west.png",
+        "north-east": "/station/agents/approved_grimreaper/rot_north-east.png",
+        "north-west": "/station/agents/approved_grimreaper/rot_north-west.png",
+        "south-east": "/station/agents/approved_grimreaper/rot_south-east.png",
+        "south-west": "/station/agents/approved_grimreaper/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -1987,6 +2739,46 @@
           "/station/agents/approved_grimreaper/walk_west_6.png",
           "/station/agents/approved_grimreaper/walk_west_7.png",
           "/station/agents/approved_grimreaper/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_grimreaper/walk_north-east_1.png",
+          "/station/agents/approved_grimreaper/walk_north-east_2.png",
+          "/station/agents/approved_grimreaper/walk_north-east_3.png",
+          "/station/agents/approved_grimreaper/walk_north-east_4.png",
+          "/station/agents/approved_grimreaper/walk_north-east_5.png",
+          "/station/agents/approved_grimreaper/walk_north-east_6.png",
+          "/station/agents/approved_grimreaper/walk_north-east_7.png",
+          "/station/agents/approved_grimreaper/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_grimreaper/walk_north-west_1.png",
+          "/station/agents/approved_grimreaper/walk_north-west_2.png",
+          "/station/agents/approved_grimreaper/walk_north-west_3.png",
+          "/station/agents/approved_grimreaper/walk_north-west_4.png",
+          "/station/agents/approved_grimreaper/walk_north-west_5.png",
+          "/station/agents/approved_grimreaper/walk_north-west_6.png",
+          "/station/agents/approved_grimreaper/walk_north-west_7.png",
+          "/station/agents/approved_grimreaper/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_grimreaper/walk_south-east_1.png",
+          "/station/agents/approved_grimreaper/walk_south-east_2.png",
+          "/station/agents/approved_grimreaper/walk_south-east_3.png",
+          "/station/agents/approved_grimreaper/walk_south-east_4.png",
+          "/station/agents/approved_grimreaper/walk_south-east_5.png",
+          "/station/agents/approved_grimreaper/walk_south-east_6.png",
+          "/station/agents/approved_grimreaper/walk_south-east_7.png",
+          "/station/agents/approved_grimreaper/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_grimreaper/walk_south-west_1.png",
+          "/station/agents/approved_grimreaper/walk_south-west_2.png",
+          "/station/agents/approved_grimreaper/walk_south-west_3.png",
+          "/station/agents/approved_grimreaper/walk_south-west_4.png",
+          "/station/agents/approved_grimreaper/walk_south-west_5.png",
+          "/station/agents/approved_grimreaper/walk_south-west_6.png",
+          "/station/agents/approved_grimreaper/walk_south-west_7.png",
+          "/station/agents/approved_grimreaper/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -2042,7 +2834,11 @@
         "south": "/station/agents/approved_heisenberg/rot_south.png",
         "north": "/station/agents/approved_heisenberg/rot_north.png",
         "east": "/station/agents/approved_heisenberg/rot_east.png",
-        "west": "/station/agents/approved_heisenberg/rot_west.png"
+        "west": "/station/agents/approved_heisenberg/rot_west.png",
+        "north-east": "/station/agents/approved_heisenberg/rot_north-east.png",
+        "north-west": "/station/agents/approved_heisenberg/rot_north-west.png",
+        "south-east": "/station/agents/approved_heisenberg/rot_south-east.png",
+        "south-west": "/station/agents/approved_heisenberg/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -2098,11 +2894,46 @@
           "/station/agents/approved_heisenberg/walk_west_5.png",
           "/station/agents/approved_heisenberg/walk_west_6.png",
           "/station/agents/approved_heisenberg/walk_west_7.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_heisenberg/walk_north-east_1.png",
+          "/station/agents/approved_heisenberg/walk_north-east_2.png",
+          "/station/agents/approved_heisenberg/walk_north-east_3.png",
+          "/station/agents/approved_heisenberg/walk_north-east_4.png",
+          "/station/agents/approved_heisenberg/walk_north-east_5.png",
+          "/station/agents/approved_heisenberg/walk_north-east_6.png",
+          "/station/agents/approved_heisenberg/walk_north-east_7.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_heisenberg/walk_north-west_1.png",
+          "/station/agents/approved_heisenberg/walk_north-west_2.png",
+          "/station/agents/approved_heisenberg/walk_north-west_3.png",
+          "/station/agents/approved_heisenberg/walk_north-west_4.png",
+          "/station/agents/approved_heisenberg/walk_north-west_5.png",
+          "/station/agents/approved_heisenberg/walk_north-west_6.png",
+          "/station/agents/approved_heisenberg/walk_north-west_7.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_heisenberg/walk_south-east_1.png",
+          "/station/agents/approved_heisenberg/walk_south-east_2.png",
+          "/station/agents/approved_heisenberg/walk_south-east_3.png",
+          "/station/agents/approved_heisenberg/walk_south-east_4.png",
+          "/station/agents/approved_heisenberg/walk_south-east_5.png",
+          "/station/agents/approved_heisenberg/walk_south-east_6.png",
+          "/station/agents/approved_heisenberg/walk_south-east_7.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_heisenberg/walk_south-west_1.png",
+          "/station/agents/approved_heisenberg/walk_south-west_2.png",
+          "/station/agents/approved_heisenberg/walk_south-west_3.png",
+          "/station/agents/approved_heisenberg/walk_south-west_4.png",
+          "/station/agents/approved_heisenberg/walk_south-west_5.png",
+          "/station/agents/approved_heisenberg/walk_south-west_6.png",
+          "/station/agents/approved_heisenberg/walk_south-west_7.png"
         ]
       },
       "typeDir": {
         "north": [
-          "/station/agents/approved_heisenberg/type_north_0.png",
           "/station/agents/approved_heisenberg/type_north_1.png",
           "/station/agents/approved_heisenberg/type_north_2.png",
           "/station/agents/approved_heisenberg/type_north_3.png"
@@ -2153,7 +2984,11 @@
         "south": "/station/agents/approved_masterchief/rot_south.png",
         "north": "/station/agents/approved_masterchief/rot_north.png",
         "east": "/station/agents/approved_masterchief/rot_east.png",
-        "west": "/station/agents/approved_masterchief/rot_west.png"
+        "west": "/station/agents/approved_masterchief/rot_west.png",
+        "north-east": "/station/agents/approved_masterchief/rot_north-east.png",
+        "north-west": "/station/agents/approved_masterchief/rot_north-west.png",
+        "south-east": "/station/agents/approved_masterchief/rot_south-east.png",
+        "south-west": "/station/agents/approved_masterchief/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -2209,6 +3044,46 @@
           "/station/agents/approved_masterchief/walk_west_6.png",
           "/station/agents/approved_masterchief/walk_west_7.png",
           "/station/agents/approved_masterchief/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_masterchief/walk_north-east_1.png",
+          "/station/agents/approved_masterchief/walk_north-east_2.png",
+          "/station/agents/approved_masterchief/walk_north-east_3.png",
+          "/station/agents/approved_masterchief/walk_north-east_4.png",
+          "/station/agents/approved_masterchief/walk_north-east_5.png",
+          "/station/agents/approved_masterchief/walk_north-east_6.png",
+          "/station/agents/approved_masterchief/walk_north-east_7.png",
+          "/station/agents/approved_masterchief/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_masterchief/walk_north-west_1.png",
+          "/station/agents/approved_masterchief/walk_north-west_2.png",
+          "/station/agents/approved_masterchief/walk_north-west_3.png",
+          "/station/agents/approved_masterchief/walk_north-west_4.png",
+          "/station/agents/approved_masterchief/walk_north-west_5.png",
+          "/station/agents/approved_masterchief/walk_north-west_6.png",
+          "/station/agents/approved_masterchief/walk_north-west_7.png",
+          "/station/agents/approved_masterchief/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_masterchief/walk_south-east_1.png",
+          "/station/agents/approved_masterchief/walk_south-east_2.png",
+          "/station/agents/approved_masterchief/walk_south-east_3.png",
+          "/station/agents/approved_masterchief/walk_south-east_4.png",
+          "/station/agents/approved_masterchief/walk_south-east_5.png",
+          "/station/agents/approved_masterchief/walk_south-east_6.png",
+          "/station/agents/approved_masterchief/walk_south-east_7.png",
+          "/station/agents/approved_masterchief/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_masterchief/walk_south-west_1.png",
+          "/station/agents/approved_masterchief/walk_south-west_2.png",
+          "/station/agents/approved_masterchief/walk_south-west_3.png",
+          "/station/agents/approved_masterchief/walk_south-west_4.png",
+          "/station/agents/approved_masterchief/walk_south-west_5.png",
+          "/station/agents/approved_masterchief/walk_south-west_6.png",
+          "/station/agents/approved_masterchief/walk_south-west_7.png",
+          "/station/agents/approved_masterchief/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -2264,7 +3139,11 @@
         "south": "/station/agents/approved_morpheus/rot_south.png",
         "north": "/station/agents/approved_morpheus/rot_north.png",
         "east": "/station/agents/approved_morpheus/rot_east.png",
-        "west": "/station/agents/approved_morpheus/rot_west.png"
+        "west": "/station/agents/approved_morpheus/rot_west.png",
+        "north-east": "/station/agents/approved_morpheus/rot_north-east.png",
+        "north-west": "/station/agents/approved_morpheus/rot_north-west.png",
+        "south-east": "/station/agents/approved_morpheus/rot_south-east.png",
+        "south-west": "/station/agents/approved_morpheus/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -2320,6 +3199,46 @@
           "/station/agents/approved_morpheus/walk_west_6.png",
           "/station/agents/approved_morpheus/walk_west_7.png",
           "/station/agents/approved_morpheus/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_morpheus/walk_north-east_1.png",
+          "/station/agents/approved_morpheus/walk_north-east_2.png",
+          "/station/agents/approved_morpheus/walk_north-east_3.png",
+          "/station/agents/approved_morpheus/walk_north-east_4.png",
+          "/station/agents/approved_morpheus/walk_north-east_5.png",
+          "/station/agents/approved_morpheus/walk_north-east_6.png",
+          "/station/agents/approved_morpheus/walk_north-east_7.png",
+          "/station/agents/approved_morpheus/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_morpheus/walk_north-west_1.png",
+          "/station/agents/approved_morpheus/walk_north-west_2.png",
+          "/station/agents/approved_morpheus/walk_north-west_3.png",
+          "/station/agents/approved_morpheus/walk_north-west_4.png",
+          "/station/agents/approved_morpheus/walk_north-west_5.png",
+          "/station/agents/approved_morpheus/walk_north-west_6.png",
+          "/station/agents/approved_morpheus/walk_north-west_7.png",
+          "/station/agents/approved_morpheus/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_morpheus/walk_south-east_1.png",
+          "/station/agents/approved_morpheus/walk_south-east_2.png",
+          "/station/agents/approved_morpheus/walk_south-east_3.png",
+          "/station/agents/approved_morpheus/walk_south-east_4.png",
+          "/station/agents/approved_morpheus/walk_south-east_5.png",
+          "/station/agents/approved_morpheus/walk_south-east_6.png",
+          "/station/agents/approved_morpheus/walk_south-east_7.png",
+          "/station/agents/approved_morpheus/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_morpheus/walk_south-west_1.png",
+          "/station/agents/approved_morpheus/walk_south-west_2.png",
+          "/station/agents/approved_morpheus/walk_south-west_3.png",
+          "/station/agents/approved_morpheus/walk_south-west_4.png",
+          "/station/agents/approved_morpheus/walk_south-west_5.png",
+          "/station/agents/approved_morpheus/walk_south-west_6.png",
+          "/station/agents/approved_morpheus/walk_south-west_7.png",
+          "/station/agents/approved_morpheus/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -2375,7 +3294,11 @@
         "south": "/station/agents/approved_ninjaturtle/rot_south.png",
         "north": "/station/agents/approved_ninjaturtle/rot_north.png",
         "east": "/station/agents/approved_ninjaturtle/rot_east.png",
-        "west": "/station/agents/approved_ninjaturtle/rot_west.png"
+        "west": "/station/agents/approved_ninjaturtle/rot_west.png",
+        "north-east": "/station/agents/approved_ninjaturtle/rot_north-east.png",
+        "north-west": "/station/agents/approved_ninjaturtle/rot_north-west.png",
+        "south-east": "/station/agents/approved_ninjaturtle/rot_south-east.png",
+        "south-west": "/station/agents/approved_ninjaturtle/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -2431,6 +3354,46 @@
           "/station/agents/approved_ninjaturtle/walk_west_6.png",
           "/station/agents/approved_ninjaturtle/walk_west_7.png",
           "/station/agents/approved_ninjaturtle/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_ninjaturtle/walk_north-east_1.png",
+          "/station/agents/approved_ninjaturtle/walk_north-east_2.png",
+          "/station/agents/approved_ninjaturtle/walk_north-east_3.png",
+          "/station/agents/approved_ninjaturtle/walk_north-east_4.png",
+          "/station/agents/approved_ninjaturtle/walk_north-east_5.png",
+          "/station/agents/approved_ninjaturtle/walk_north-east_6.png",
+          "/station/agents/approved_ninjaturtle/walk_north-east_7.png",
+          "/station/agents/approved_ninjaturtle/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_ninjaturtle/walk_north-west_1.png",
+          "/station/agents/approved_ninjaturtle/walk_north-west_2.png",
+          "/station/agents/approved_ninjaturtle/walk_north-west_3.png",
+          "/station/agents/approved_ninjaturtle/walk_north-west_4.png",
+          "/station/agents/approved_ninjaturtle/walk_north-west_5.png",
+          "/station/agents/approved_ninjaturtle/walk_north-west_6.png",
+          "/station/agents/approved_ninjaturtle/walk_north-west_7.png",
+          "/station/agents/approved_ninjaturtle/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_ninjaturtle/walk_south-east_1.png",
+          "/station/agents/approved_ninjaturtle/walk_south-east_2.png",
+          "/station/agents/approved_ninjaturtle/walk_south-east_3.png",
+          "/station/agents/approved_ninjaturtle/walk_south-east_4.png",
+          "/station/agents/approved_ninjaturtle/walk_south-east_5.png",
+          "/station/agents/approved_ninjaturtle/walk_south-east_6.png",
+          "/station/agents/approved_ninjaturtle/walk_south-east_7.png",
+          "/station/agents/approved_ninjaturtle/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_ninjaturtle/walk_south-west_1.png",
+          "/station/agents/approved_ninjaturtle/walk_south-west_2.png",
+          "/station/agents/approved_ninjaturtle/walk_south-west_3.png",
+          "/station/agents/approved_ninjaturtle/walk_south-west_4.png",
+          "/station/agents/approved_ninjaturtle/walk_south-west_5.png",
+          "/station/agents/approved_ninjaturtle/walk_south-west_6.png",
+          "/station/agents/approved_ninjaturtle/walk_south-west_7.png",
+          "/station/agents/approved_ninjaturtle/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -2486,7 +3449,11 @@
         "south": "/station/agents/approved_pepe/rot_south.png",
         "north": "/station/agents/approved_pepe/rot_north.png",
         "east": "/station/agents/approved_pepe/rot_east.png",
-        "west": "/station/agents/approved_pepe/rot_west.png"
+        "west": "/station/agents/approved_pepe/rot_west.png",
+        "north-east": "/station/agents/approved_pepe/rot_north-east.png",
+        "north-west": "/station/agents/approved_pepe/rot_north-west.png",
+        "south-east": "/station/agents/approved_pepe/rot_south-east.png",
+        "south-west": "/station/agents/approved_pepe/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -2542,6 +3509,46 @@
           "/station/agents/approved_pepe/walk_west_6.png",
           "/station/agents/approved_pepe/walk_west_7.png",
           "/station/agents/approved_pepe/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_pepe/walk_north-east_1.png",
+          "/station/agents/approved_pepe/walk_north-east_2.png",
+          "/station/agents/approved_pepe/walk_north-east_3.png",
+          "/station/agents/approved_pepe/walk_north-east_4.png",
+          "/station/agents/approved_pepe/walk_north-east_5.png",
+          "/station/agents/approved_pepe/walk_north-east_6.png",
+          "/station/agents/approved_pepe/walk_north-east_7.png",
+          "/station/agents/approved_pepe/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_pepe/walk_north-west_1.png",
+          "/station/agents/approved_pepe/walk_north-west_2.png",
+          "/station/agents/approved_pepe/walk_north-west_3.png",
+          "/station/agents/approved_pepe/walk_north-west_4.png",
+          "/station/agents/approved_pepe/walk_north-west_5.png",
+          "/station/agents/approved_pepe/walk_north-west_6.png",
+          "/station/agents/approved_pepe/walk_north-west_7.png",
+          "/station/agents/approved_pepe/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_pepe/walk_south-east_1.png",
+          "/station/agents/approved_pepe/walk_south-east_2.png",
+          "/station/agents/approved_pepe/walk_south-east_3.png",
+          "/station/agents/approved_pepe/walk_south-east_4.png",
+          "/station/agents/approved_pepe/walk_south-east_5.png",
+          "/station/agents/approved_pepe/walk_south-east_6.png",
+          "/station/agents/approved_pepe/walk_south-east_7.png",
+          "/station/agents/approved_pepe/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_pepe/walk_south-west_1.png",
+          "/station/agents/approved_pepe/walk_south-west_2.png",
+          "/station/agents/approved_pepe/walk_south-west_3.png",
+          "/station/agents/approved_pepe/walk_south-west_4.png",
+          "/station/agents/approved_pepe/walk_south-west_5.png",
+          "/station/agents/approved_pepe/walk_south-west_6.png",
+          "/station/agents/approved_pepe/walk_south-west_7.png",
+          "/station/agents/approved_pepe/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -2597,7 +3604,11 @@
         "south": "/station/agents/approved_plaguedoctor/rot_south.png",
         "north": "/station/agents/approved_plaguedoctor/rot_north.png",
         "east": "/station/agents/approved_plaguedoctor/rot_east.png",
-        "west": "/station/agents/approved_plaguedoctor/rot_west.png"
+        "west": "/station/agents/approved_plaguedoctor/rot_west.png",
+        "north-east": "/station/agents/approved_plaguedoctor/rot_north-east.png",
+        "north-west": "/station/agents/approved_plaguedoctor/rot_north-west.png",
+        "south-east": "/station/agents/approved_plaguedoctor/rot_south-east.png",
+        "south-west": "/station/agents/approved_plaguedoctor/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -2653,6 +3664,46 @@
           "/station/agents/approved_plaguedoctor/walk_west_6.png",
           "/station/agents/approved_plaguedoctor/walk_west_7.png",
           "/station/agents/approved_plaguedoctor/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_plaguedoctor/walk_north-east_1.png",
+          "/station/agents/approved_plaguedoctor/walk_north-east_2.png",
+          "/station/agents/approved_plaguedoctor/walk_north-east_3.png",
+          "/station/agents/approved_plaguedoctor/walk_north-east_4.png",
+          "/station/agents/approved_plaguedoctor/walk_north-east_5.png",
+          "/station/agents/approved_plaguedoctor/walk_north-east_6.png",
+          "/station/agents/approved_plaguedoctor/walk_north-east_7.png",
+          "/station/agents/approved_plaguedoctor/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_plaguedoctor/walk_north-west_1.png",
+          "/station/agents/approved_plaguedoctor/walk_north-west_2.png",
+          "/station/agents/approved_plaguedoctor/walk_north-west_3.png",
+          "/station/agents/approved_plaguedoctor/walk_north-west_4.png",
+          "/station/agents/approved_plaguedoctor/walk_north-west_5.png",
+          "/station/agents/approved_plaguedoctor/walk_north-west_6.png",
+          "/station/agents/approved_plaguedoctor/walk_north-west_7.png",
+          "/station/agents/approved_plaguedoctor/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_plaguedoctor/walk_south-east_1.png",
+          "/station/agents/approved_plaguedoctor/walk_south-east_2.png",
+          "/station/agents/approved_plaguedoctor/walk_south-east_3.png",
+          "/station/agents/approved_plaguedoctor/walk_south-east_4.png",
+          "/station/agents/approved_plaguedoctor/walk_south-east_5.png",
+          "/station/agents/approved_plaguedoctor/walk_south-east_6.png",
+          "/station/agents/approved_plaguedoctor/walk_south-east_7.png",
+          "/station/agents/approved_plaguedoctor/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_plaguedoctor/walk_south-west_1.png",
+          "/station/agents/approved_plaguedoctor/walk_south-west_2.png",
+          "/station/agents/approved_plaguedoctor/walk_south-west_3.png",
+          "/station/agents/approved_plaguedoctor/walk_south-west_4.png",
+          "/station/agents/approved_plaguedoctor/walk_south-west_5.png",
+          "/station/agents/approved_plaguedoctor/walk_south-west_6.png",
+          "/station/agents/approved_plaguedoctor/walk_south-west_7.png",
+          "/station/agents/approved_plaguedoctor/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -2708,7 +3759,11 @@
         "south": "/station/agents/approved_ricksanchez/rot_south.png",
         "north": "/station/agents/approved_ricksanchez/rot_north.png",
         "east": "/station/agents/approved_ricksanchez/rot_east.png",
-        "west": "/station/agents/approved_ricksanchez/rot_west.png"
+        "west": "/station/agents/approved_ricksanchez/rot_west.png",
+        "north-east": "/station/agents/approved_ricksanchez/rot_north-east.png",
+        "north-west": "/station/agents/approved_ricksanchez/rot_north-west.png",
+        "south-east": "/station/agents/approved_ricksanchez/rot_south-east.png",
+        "south-west": "/station/agents/approved_ricksanchez/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -2764,11 +3819,46 @@
           "/station/agents/approved_ricksanchez/walk_west_5.png",
           "/station/agents/approved_ricksanchez/walk_west_6.png",
           "/station/agents/approved_ricksanchez/walk_west_7.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_ricksanchez/walk_north-east_1.png",
+          "/station/agents/approved_ricksanchez/walk_north-east_2.png",
+          "/station/agents/approved_ricksanchez/walk_north-east_3.png",
+          "/station/agents/approved_ricksanchez/walk_north-east_4.png",
+          "/station/agents/approved_ricksanchez/walk_north-east_5.png",
+          "/station/agents/approved_ricksanchez/walk_north-east_6.png",
+          "/station/agents/approved_ricksanchez/walk_north-east_7.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_ricksanchez/walk_north-west_1.png",
+          "/station/agents/approved_ricksanchez/walk_north-west_2.png",
+          "/station/agents/approved_ricksanchez/walk_north-west_3.png",
+          "/station/agents/approved_ricksanchez/walk_north-west_4.png",
+          "/station/agents/approved_ricksanchez/walk_north-west_5.png",
+          "/station/agents/approved_ricksanchez/walk_north-west_6.png",
+          "/station/agents/approved_ricksanchez/walk_north-west_7.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_ricksanchez/walk_south-east_1.png",
+          "/station/agents/approved_ricksanchez/walk_south-east_2.png",
+          "/station/agents/approved_ricksanchez/walk_south-east_3.png",
+          "/station/agents/approved_ricksanchez/walk_south-east_4.png",
+          "/station/agents/approved_ricksanchez/walk_south-east_5.png",
+          "/station/agents/approved_ricksanchez/walk_south-east_6.png",
+          "/station/agents/approved_ricksanchez/walk_south-east_7.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_ricksanchez/walk_south-west_1.png",
+          "/station/agents/approved_ricksanchez/walk_south-west_2.png",
+          "/station/agents/approved_ricksanchez/walk_south-west_3.png",
+          "/station/agents/approved_ricksanchez/walk_south-west_4.png",
+          "/station/agents/approved_ricksanchez/walk_south-west_5.png",
+          "/station/agents/approved_ricksanchez/walk_south-west_6.png",
+          "/station/agents/approved_ricksanchez/walk_south-west_7.png"
         ]
       },
       "typeDir": {
         "north": [
-          "/station/agents/approved_ricksanchez/type_north_0.png",
           "/station/agents/approved_ricksanchez/type_north_1.png",
           "/station/agents/approved_ricksanchez/type_north_2.png",
           "/station/agents/approved_ricksanchez/type_north_3.png"
@@ -2819,7 +3909,11 @@
         "south": "/station/agents/approved_robocop/rot_south.png",
         "north": "/station/agents/approved_robocop/rot_north.png",
         "east": "/station/agents/approved_robocop/rot_east.png",
-        "west": "/station/agents/approved_robocop/rot_west.png"
+        "west": "/station/agents/approved_robocop/rot_west.png",
+        "north-east": "/station/agents/approved_robocop/rot_north-east.png",
+        "north-west": "/station/agents/approved_robocop/rot_north-west.png",
+        "south-east": "/station/agents/approved_robocop/rot_south-east.png",
+        "south-west": "/station/agents/approved_robocop/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -2875,6 +3969,46 @@
           "/station/agents/approved_robocop/walk_west_6.png",
           "/station/agents/approved_robocop/walk_west_7.png",
           "/station/agents/approved_robocop/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_robocop/walk_north-east_1.png",
+          "/station/agents/approved_robocop/walk_north-east_2.png",
+          "/station/agents/approved_robocop/walk_north-east_3.png",
+          "/station/agents/approved_robocop/walk_north-east_4.png",
+          "/station/agents/approved_robocop/walk_north-east_5.png",
+          "/station/agents/approved_robocop/walk_north-east_6.png",
+          "/station/agents/approved_robocop/walk_north-east_7.png",
+          "/station/agents/approved_robocop/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_robocop/walk_north-west_1.png",
+          "/station/agents/approved_robocop/walk_north-west_2.png",
+          "/station/agents/approved_robocop/walk_north-west_3.png",
+          "/station/agents/approved_robocop/walk_north-west_4.png",
+          "/station/agents/approved_robocop/walk_north-west_5.png",
+          "/station/agents/approved_robocop/walk_north-west_6.png",
+          "/station/agents/approved_robocop/walk_north-west_7.png",
+          "/station/agents/approved_robocop/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_robocop/walk_south-east_1.png",
+          "/station/agents/approved_robocop/walk_south-east_2.png",
+          "/station/agents/approved_robocop/walk_south-east_3.png",
+          "/station/agents/approved_robocop/walk_south-east_4.png",
+          "/station/agents/approved_robocop/walk_south-east_5.png",
+          "/station/agents/approved_robocop/walk_south-east_6.png",
+          "/station/agents/approved_robocop/walk_south-east_7.png",
+          "/station/agents/approved_robocop/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_robocop/walk_south-west_1.png",
+          "/station/agents/approved_robocop/walk_south-west_2.png",
+          "/station/agents/approved_robocop/walk_south-west_3.png",
+          "/station/agents/approved_robocop/walk_south-west_4.png",
+          "/station/agents/approved_robocop/walk_south-west_5.png",
+          "/station/agents/approved_robocop/walk_south-west_6.png",
+          "/station/agents/approved_robocop/walk_south-west_7.png",
+          "/station/agents/approved_robocop/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -2930,7 +4064,11 @@
         "south": "/station/agents/approved_robot/rot_south.png",
         "north": "/station/agents/approved_robot/rot_north.png",
         "east": "/station/agents/approved_robot/rot_east.png",
-        "west": "/station/agents/approved_robot/rot_west.png"
+        "west": "/station/agents/approved_robot/rot_west.png",
+        "north-east": "/station/agents/approved_robot/rot_north-east.png",
+        "north-west": "/station/agents/approved_robot/rot_north-west.png",
+        "south-east": "/station/agents/approved_robot/rot_south-east.png",
+        "south-west": "/station/agents/approved_robot/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -2986,6 +4124,46 @@
           "/station/agents/approved_robot/walk_west_6.png",
           "/station/agents/approved_robot/walk_west_7.png",
           "/station/agents/approved_robot/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_robot/walk_north-east_1.png",
+          "/station/agents/approved_robot/walk_north-east_2.png",
+          "/station/agents/approved_robot/walk_north-east_3.png",
+          "/station/agents/approved_robot/walk_north-east_4.png",
+          "/station/agents/approved_robot/walk_north-east_5.png",
+          "/station/agents/approved_robot/walk_north-east_6.png",
+          "/station/agents/approved_robot/walk_north-east_7.png",
+          "/station/agents/approved_robot/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_robot/walk_north-west_1.png",
+          "/station/agents/approved_robot/walk_north-west_2.png",
+          "/station/agents/approved_robot/walk_north-west_3.png",
+          "/station/agents/approved_robot/walk_north-west_4.png",
+          "/station/agents/approved_robot/walk_north-west_5.png",
+          "/station/agents/approved_robot/walk_north-west_6.png",
+          "/station/agents/approved_robot/walk_north-west_7.png",
+          "/station/agents/approved_robot/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_robot/walk_south-east_1.png",
+          "/station/agents/approved_robot/walk_south-east_2.png",
+          "/station/agents/approved_robot/walk_south-east_3.png",
+          "/station/agents/approved_robot/walk_south-east_4.png",
+          "/station/agents/approved_robot/walk_south-east_5.png",
+          "/station/agents/approved_robot/walk_south-east_6.png",
+          "/station/agents/approved_robot/walk_south-east_7.png",
+          "/station/agents/approved_robot/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_robot/walk_south-west_1.png",
+          "/station/agents/approved_robot/walk_south-west_2.png",
+          "/station/agents/approved_robot/walk_south-west_3.png",
+          "/station/agents/approved_robot/walk_south-west_4.png",
+          "/station/agents/approved_robot/walk_south-west_5.png",
+          "/station/agents/approved_robot/walk_south-west_6.png",
+          "/station/agents/approved_robot/walk_south-west_7.png",
+          "/station/agents/approved_robot/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -3041,7 +4219,11 @@
         "south": "/station/agents/approved_samaltman/rot_south.png",
         "north": "/station/agents/approved_samaltman/rot_north.png",
         "east": "/station/agents/approved_samaltman/rot_east.png",
-        "west": "/station/agents/approved_samaltman/rot_west.png"
+        "west": "/station/agents/approved_samaltman/rot_west.png",
+        "north-east": "/station/agents/approved_samaltman/rot_north-east.png",
+        "north-west": "/station/agents/approved_samaltman/rot_north-west.png",
+        "south-east": "/station/agents/approved_samaltman/rot_south-east.png",
+        "south-west": "/station/agents/approved_samaltman/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -3097,6 +4279,46 @@
           "/station/agents/approved_samaltman/walk_west_6.png",
           "/station/agents/approved_samaltman/walk_west_7.png",
           "/station/agents/approved_samaltman/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_samaltman/walk_north-east_1.png",
+          "/station/agents/approved_samaltman/walk_north-east_2.png",
+          "/station/agents/approved_samaltman/walk_north-east_3.png",
+          "/station/agents/approved_samaltman/walk_north-east_4.png",
+          "/station/agents/approved_samaltman/walk_north-east_5.png",
+          "/station/agents/approved_samaltman/walk_north-east_6.png",
+          "/station/agents/approved_samaltman/walk_north-east_7.png",
+          "/station/agents/approved_samaltman/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_samaltman/walk_north-west_1.png",
+          "/station/agents/approved_samaltman/walk_north-west_2.png",
+          "/station/agents/approved_samaltman/walk_north-west_3.png",
+          "/station/agents/approved_samaltman/walk_north-west_4.png",
+          "/station/agents/approved_samaltman/walk_north-west_5.png",
+          "/station/agents/approved_samaltman/walk_north-west_6.png",
+          "/station/agents/approved_samaltman/walk_north-west_7.png",
+          "/station/agents/approved_samaltman/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_samaltman/walk_south-east_1.png",
+          "/station/agents/approved_samaltman/walk_south-east_2.png",
+          "/station/agents/approved_samaltman/walk_south-east_3.png",
+          "/station/agents/approved_samaltman/walk_south-east_4.png",
+          "/station/agents/approved_samaltman/walk_south-east_5.png",
+          "/station/agents/approved_samaltman/walk_south-east_6.png",
+          "/station/agents/approved_samaltman/walk_south-east_7.png",
+          "/station/agents/approved_samaltman/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_samaltman/walk_south-west_1.png",
+          "/station/agents/approved_samaltman/walk_south-west_2.png",
+          "/station/agents/approved_samaltman/walk_south-west_3.png",
+          "/station/agents/approved_samaltman/walk_south-west_4.png",
+          "/station/agents/approved_samaltman/walk_south-west_5.png",
+          "/station/agents/approved_samaltman/walk_south-west_6.png",
+          "/station/agents/approved_samaltman/walk_south-west_7.png",
+          "/station/agents/approved_samaltman/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -3152,7 +4374,11 @@
         "south": "/station/agents/approved_secretagent/rot_south.png",
         "north": "/station/agents/approved_secretagent/rot_north.png",
         "east": "/station/agents/approved_secretagent/rot_east.png",
-        "west": "/station/agents/approved_secretagent/rot_west.png"
+        "west": "/station/agents/approved_secretagent/rot_west.png",
+        "north-east": "/station/agents/approved_secretagent/rot_north-east.png",
+        "north-west": "/station/agents/approved_secretagent/rot_north-west.png",
+        "south-east": "/station/agents/approved_secretagent/rot_south-east.png",
+        "south-west": "/station/agents/approved_secretagent/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -3208,6 +4434,46 @@
           "/station/agents/approved_secretagent/walk_west_6.png",
           "/station/agents/approved_secretagent/walk_west_7.png",
           "/station/agents/approved_secretagent/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_secretagent/walk_north-east_1.png",
+          "/station/agents/approved_secretagent/walk_north-east_2.png",
+          "/station/agents/approved_secretagent/walk_north-east_3.png",
+          "/station/agents/approved_secretagent/walk_north-east_4.png",
+          "/station/agents/approved_secretagent/walk_north-east_5.png",
+          "/station/agents/approved_secretagent/walk_north-east_6.png",
+          "/station/agents/approved_secretagent/walk_north-east_7.png",
+          "/station/agents/approved_secretagent/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_secretagent/walk_north-west_1.png",
+          "/station/agents/approved_secretagent/walk_north-west_2.png",
+          "/station/agents/approved_secretagent/walk_north-west_3.png",
+          "/station/agents/approved_secretagent/walk_north-west_4.png",
+          "/station/agents/approved_secretagent/walk_north-west_5.png",
+          "/station/agents/approved_secretagent/walk_north-west_6.png",
+          "/station/agents/approved_secretagent/walk_north-west_7.png",
+          "/station/agents/approved_secretagent/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_secretagent/walk_south-east_1.png",
+          "/station/agents/approved_secretagent/walk_south-east_2.png",
+          "/station/agents/approved_secretagent/walk_south-east_3.png",
+          "/station/agents/approved_secretagent/walk_south-east_4.png",
+          "/station/agents/approved_secretagent/walk_south-east_5.png",
+          "/station/agents/approved_secretagent/walk_south-east_6.png",
+          "/station/agents/approved_secretagent/walk_south-east_7.png",
+          "/station/agents/approved_secretagent/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_secretagent/walk_south-west_1.png",
+          "/station/agents/approved_secretagent/walk_south-west_2.png",
+          "/station/agents/approved_secretagent/walk_south-west_3.png",
+          "/station/agents/approved_secretagent/walk_south-west_4.png",
+          "/station/agents/approved_secretagent/walk_south-west_5.png",
+          "/station/agents/approved_secretagent/walk_south-west_6.png",
+          "/station/agents/approved_secretagent/walk_south-west_7.png",
+          "/station/agents/approved_secretagent/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -3263,7 +4529,11 @@
         "south": "/station/agents/approved_skeleton/rot_south.png",
         "north": "/station/agents/approved_skeleton/rot_north.png",
         "east": "/station/agents/approved_skeleton/rot_east.png",
-        "west": "/station/agents/approved_skeleton/rot_west.png"
+        "west": "/station/agents/approved_skeleton/rot_west.png",
+        "north-east": "/station/agents/approved_skeleton/rot_north-east.png",
+        "north-west": "/station/agents/approved_skeleton/rot_north-west.png",
+        "south-east": "/station/agents/approved_skeleton/rot_south-east.png",
+        "south-west": "/station/agents/approved_skeleton/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -3319,6 +4589,46 @@
           "/station/agents/approved_skeleton/walk_west_6.png",
           "/station/agents/approved_skeleton/walk_west_7.png",
           "/station/agents/approved_skeleton/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_skeleton/walk_north-east_1.png",
+          "/station/agents/approved_skeleton/walk_north-east_2.png",
+          "/station/agents/approved_skeleton/walk_north-east_3.png",
+          "/station/agents/approved_skeleton/walk_north-east_4.png",
+          "/station/agents/approved_skeleton/walk_north-east_5.png",
+          "/station/agents/approved_skeleton/walk_north-east_6.png",
+          "/station/agents/approved_skeleton/walk_north-east_7.png",
+          "/station/agents/approved_skeleton/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_skeleton/walk_north-west_1.png",
+          "/station/agents/approved_skeleton/walk_north-west_2.png",
+          "/station/agents/approved_skeleton/walk_north-west_3.png",
+          "/station/agents/approved_skeleton/walk_north-west_4.png",
+          "/station/agents/approved_skeleton/walk_north-west_5.png",
+          "/station/agents/approved_skeleton/walk_north-west_6.png",
+          "/station/agents/approved_skeleton/walk_north-west_7.png",
+          "/station/agents/approved_skeleton/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_skeleton/walk_south-east_1.png",
+          "/station/agents/approved_skeleton/walk_south-east_2.png",
+          "/station/agents/approved_skeleton/walk_south-east_3.png",
+          "/station/agents/approved_skeleton/walk_south-east_4.png",
+          "/station/agents/approved_skeleton/walk_south-east_5.png",
+          "/station/agents/approved_skeleton/walk_south-east_6.png",
+          "/station/agents/approved_skeleton/walk_south-east_7.png",
+          "/station/agents/approved_skeleton/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_skeleton/walk_south-west_1.png",
+          "/station/agents/approved_skeleton/walk_south-west_2.png",
+          "/station/agents/approved_skeleton/walk_south-west_3.png",
+          "/station/agents/approved_skeleton/walk_south-west_4.png",
+          "/station/agents/approved_skeleton/walk_south-west_5.png",
+          "/station/agents/approved_skeleton/walk_south-west_6.png",
+          "/station/agents/approved_skeleton/walk_south-west_7.png",
+          "/station/agents/approved_skeleton/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -3374,7 +4684,11 @@
         "south": "/station/agents/approved_station_minion/rot_south.png",
         "north": "/station/agents/approved_station_minion/rot_north.png",
         "east": "/station/agents/approved_station_minion/rot_east.png",
-        "west": "/station/agents/approved_station_minion/rot_west.png"
+        "west": "/station/agents/approved_station_minion/rot_west.png",
+        "north-east": "/station/agents/approved_station_minion/rot_north-east.png",
+        "north-west": "/station/agents/approved_station_minion/rot_north-west.png",
+        "south-east": "/station/agents/approved_station_minion/rot_south-east.png",
+        "south-west": "/station/agents/approved_station_minion/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -3430,6 +4744,46 @@
           "/station/agents/approved_station_minion/walk_west_6.png",
           "/station/agents/approved_station_minion/walk_west_7.png",
           "/station/agents/approved_station_minion/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_station_minion/walk_north-east_1.png",
+          "/station/agents/approved_station_minion/walk_north-east_2.png",
+          "/station/agents/approved_station_minion/walk_north-east_3.png",
+          "/station/agents/approved_station_minion/walk_north-east_4.png",
+          "/station/agents/approved_station_minion/walk_north-east_5.png",
+          "/station/agents/approved_station_minion/walk_north-east_6.png",
+          "/station/agents/approved_station_minion/walk_north-east_7.png",
+          "/station/agents/approved_station_minion/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_station_minion/walk_north-west_1.png",
+          "/station/agents/approved_station_minion/walk_north-west_2.png",
+          "/station/agents/approved_station_minion/walk_north-west_3.png",
+          "/station/agents/approved_station_minion/walk_north-west_4.png",
+          "/station/agents/approved_station_minion/walk_north-west_5.png",
+          "/station/agents/approved_station_minion/walk_north-west_6.png",
+          "/station/agents/approved_station_minion/walk_north-west_7.png",
+          "/station/agents/approved_station_minion/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_station_minion/walk_south-east_1.png",
+          "/station/agents/approved_station_minion/walk_south-east_2.png",
+          "/station/agents/approved_station_minion/walk_south-east_3.png",
+          "/station/agents/approved_station_minion/walk_south-east_4.png",
+          "/station/agents/approved_station_minion/walk_south-east_5.png",
+          "/station/agents/approved_station_minion/walk_south-east_6.png",
+          "/station/agents/approved_station_minion/walk_south-east_7.png",
+          "/station/agents/approved_station_minion/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_station_minion/walk_south-west_1.png",
+          "/station/agents/approved_station_minion/walk_south-west_2.png",
+          "/station/agents/approved_station_minion/walk_south-west_3.png",
+          "/station/agents/approved_station_minion/walk_south-west_4.png",
+          "/station/agents/approved_station_minion/walk_south-west_5.png",
+          "/station/agents/approved_station_minion/walk_south-west_6.png",
+          "/station/agents/approved_station_minion/walk_south-west_7.png",
+          "/station/agents/approved_station_minion/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -3438,6 +4792,24 @@
           "/station/agents/approved_station_minion/type_north_2.png",
           "/station/agents/approved_station_minion/type_north_3.png",
           "/station/agents/approved_station_minion/type_north_4.png"
+        ],
+        "east": [
+          "/station/agents/approved_station_minion/type_east_1.png",
+          "/station/agents/approved_station_minion/type_east_2.png",
+          "/station/agents/approved_station_minion/type_east_3.png",
+          "/station/agents/approved_station_minion/type_east_4.png"
+        ],
+        "south": [
+          "/station/agents/approved_station_minion/type_south_1.png",
+          "/station/agents/approved_station_minion/type_south_2.png",
+          "/station/agents/approved_station_minion/type_south_3.png",
+          "/station/agents/approved_station_minion/type_south_4.png"
+        ],
+        "west": [
+          "/station/agents/approved_station_minion/type_west_1.png",
+          "/station/agents/approved_station_minion/type_west_2.png",
+          "/station/agents/approved_station_minion/type_west_3.png",
+          "/station/agents/approved_station_minion/type_west_4.png"
         ]
       }
     },
@@ -3485,7 +4857,11 @@
         "south": "/station/agents/approved_ultron/rot_south.png",
         "north": "/station/agents/approved_ultron/rot_north.png",
         "east": "/station/agents/approved_ultron/rot_east.png",
-        "west": "/station/agents/approved_ultron/rot_west.png"
+        "west": "/station/agents/approved_ultron/rot_west.png",
+        "north-east": "/station/agents/approved_ultron/rot_north-east.png",
+        "north-west": "/station/agents/approved_ultron/rot_north-west.png",
+        "south-east": "/station/agents/approved_ultron/rot_south-east.png",
+        "south-west": "/station/agents/approved_ultron/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -3541,6 +4917,46 @@
           "/station/agents/approved_ultron/walk_west_6.png",
           "/station/agents/approved_ultron/walk_west_7.png",
           "/station/agents/approved_ultron/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_ultron/walk_north-east_1.png",
+          "/station/agents/approved_ultron/walk_north-east_2.png",
+          "/station/agents/approved_ultron/walk_north-east_3.png",
+          "/station/agents/approved_ultron/walk_north-east_4.png",
+          "/station/agents/approved_ultron/walk_north-east_5.png",
+          "/station/agents/approved_ultron/walk_north-east_6.png",
+          "/station/agents/approved_ultron/walk_north-east_7.png",
+          "/station/agents/approved_ultron/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_ultron/walk_north-west_1.png",
+          "/station/agents/approved_ultron/walk_north-west_2.png",
+          "/station/agents/approved_ultron/walk_north-west_3.png",
+          "/station/agents/approved_ultron/walk_north-west_4.png",
+          "/station/agents/approved_ultron/walk_north-west_5.png",
+          "/station/agents/approved_ultron/walk_north-west_6.png",
+          "/station/agents/approved_ultron/walk_north-west_7.png",
+          "/station/agents/approved_ultron/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_ultron/walk_south-east_1.png",
+          "/station/agents/approved_ultron/walk_south-east_2.png",
+          "/station/agents/approved_ultron/walk_south-east_3.png",
+          "/station/agents/approved_ultron/walk_south-east_4.png",
+          "/station/agents/approved_ultron/walk_south-east_5.png",
+          "/station/agents/approved_ultron/walk_south-east_6.png",
+          "/station/agents/approved_ultron/walk_south-east_7.png",
+          "/station/agents/approved_ultron/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_ultron/walk_south-west_1.png",
+          "/station/agents/approved_ultron/walk_south-west_2.png",
+          "/station/agents/approved_ultron/walk_south-west_3.png",
+          "/station/agents/approved_ultron/walk_south-west_4.png",
+          "/station/agents/approved_ultron/walk_south-west_5.png",
+          "/station/agents/approved_ultron/walk_south-west_6.png",
+          "/station/agents/approved_ultron/walk_south-west_7.png",
+          "/station/agents/approved_ultron/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -3596,7 +5012,11 @@
         "south": "/station/agents/approved_ultrondroid/rot_south.png",
         "north": "/station/agents/approved_ultrondroid/rot_north.png",
         "east": "/station/agents/approved_ultrondroid/rot_east.png",
-        "west": "/station/agents/approved_ultrondroid/rot_west.png"
+        "west": "/station/agents/approved_ultrondroid/rot_west.png",
+        "north-east": "/station/agents/approved_ultrondroid/rot_north-east.png",
+        "north-west": "/station/agents/approved_ultrondroid/rot_north-west.png",
+        "south-east": "/station/agents/approved_ultrondroid/rot_south-east.png",
+        "south-west": "/station/agents/approved_ultrondroid/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -3652,6 +5072,46 @@
           "/station/agents/approved_ultrondroid/walk_west_6.png",
           "/station/agents/approved_ultrondroid/walk_west_7.png",
           "/station/agents/approved_ultrondroid/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_ultrondroid/walk_north-east_1.png",
+          "/station/agents/approved_ultrondroid/walk_north-east_2.png",
+          "/station/agents/approved_ultrondroid/walk_north-east_3.png",
+          "/station/agents/approved_ultrondroid/walk_north-east_4.png",
+          "/station/agents/approved_ultrondroid/walk_north-east_5.png",
+          "/station/agents/approved_ultrondroid/walk_north-east_6.png",
+          "/station/agents/approved_ultrondroid/walk_north-east_7.png",
+          "/station/agents/approved_ultrondroid/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_ultrondroid/walk_north-west_1.png",
+          "/station/agents/approved_ultrondroid/walk_north-west_2.png",
+          "/station/agents/approved_ultrondroid/walk_north-west_3.png",
+          "/station/agents/approved_ultrondroid/walk_north-west_4.png",
+          "/station/agents/approved_ultrondroid/walk_north-west_5.png",
+          "/station/agents/approved_ultrondroid/walk_north-west_6.png",
+          "/station/agents/approved_ultrondroid/walk_north-west_7.png",
+          "/station/agents/approved_ultrondroid/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_ultrondroid/walk_south-east_1.png",
+          "/station/agents/approved_ultrondroid/walk_south-east_2.png",
+          "/station/agents/approved_ultrondroid/walk_south-east_3.png",
+          "/station/agents/approved_ultrondroid/walk_south-east_4.png",
+          "/station/agents/approved_ultrondroid/walk_south-east_5.png",
+          "/station/agents/approved_ultrondroid/walk_south-east_6.png",
+          "/station/agents/approved_ultrondroid/walk_south-east_7.png",
+          "/station/agents/approved_ultrondroid/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_ultrondroid/walk_south-west_1.png",
+          "/station/agents/approved_ultrondroid/walk_south-west_2.png",
+          "/station/agents/approved_ultrondroid/walk_south-west_3.png",
+          "/station/agents/approved_ultrondroid/walk_south-west_4.png",
+          "/station/agents/approved_ultrondroid/walk_south-west_5.png",
+          "/station/agents/approved_ultrondroid/walk_south-west_6.png",
+          "/station/agents/approved_ultrondroid/walk_south-west_7.png",
+          "/station/agents/approved_ultrondroid/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -3707,7 +5167,11 @@
         "south": "/station/agents/approved_vaultboy/rot_south.png",
         "north": "/station/agents/approved_vaultboy/rot_north.png",
         "east": "/station/agents/approved_vaultboy/rot_east.png",
-        "west": "/station/agents/approved_vaultboy/rot_west.png"
+        "west": "/station/agents/approved_vaultboy/rot_west.png",
+        "north-east": "/station/agents/approved_vaultboy/rot_north-east.png",
+        "north-west": "/station/agents/approved_vaultboy/rot_north-west.png",
+        "south-east": "/station/agents/approved_vaultboy/rot_south-east.png",
+        "south-west": "/station/agents/approved_vaultboy/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -3763,6 +5227,46 @@
           "/station/agents/approved_vaultboy/walk_west_6.png",
           "/station/agents/approved_vaultboy/walk_west_7.png",
           "/station/agents/approved_vaultboy/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_vaultboy/walk_north-east_1.png",
+          "/station/agents/approved_vaultboy/walk_north-east_2.png",
+          "/station/agents/approved_vaultboy/walk_north-east_3.png",
+          "/station/agents/approved_vaultboy/walk_north-east_4.png",
+          "/station/agents/approved_vaultboy/walk_north-east_5.png",
+          "/station/agents/approved_vaultboy/walk_north-east_6.png",
+          "/station/agents/approved_vaultboy/walk_north-east_7.png",
+          "/station/agents/approved_vaultboy/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_vaultboy/walk_north-west_1.png",
+          "/station/agents/approved_vaultboy/walk_north-west_2.png",
+          "/station/agents/approved_vaultboy/walk_north-west_3.png",
+          "/station/agents/approved_vaultboy/walk_north-west_4.png",
+          "/station/agents/approved_vaultboy/walk_north-west_5.png",
+          "/station/agents/approved_vaultboy/walk_north-west_6.png",
+          "/station/agents/approved_vaultboy/walk_north-west_7.png",
+          "/station/agents/approved_vaultboy/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_vaultboy/walk_south-east_1.png",
+          "/station/agents/approved_vaultboy/walk_south-east_2.png",
+          "/station/agents/approved_vaultboy/walk_south-east_3.png",
+          "/station/agents/approved_vaultboy/walk_south-east_4.png",
+          "/station/agents/approved_vaultboy/walk_south-east_5.png",
+          "/station/agents/approved_vaultboy/walk_south-east_6.png",
+          "/station/agents/approved_vaultboy/walk_south-east_7.png",
+          "/station/agents/approved_vaultboy/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_vaultboy/walk_south-west_1.png",
+          "/station/agents/approved_vaultboy/walk_south-west_2.png",
+          "/station/agents/approved_vaultboy/walk_south-west_3.png",
+          "/station/agents/approved_vaultboy/walk_south-west_4.png",
+          "/station/agents/approved_vaultboy/walk_south-west_5.png",
+          "/station/agents/approved_vaultboy/walk_south-west_6.png",
+          "/station/agents/approved_vaultboy/walk_south-west_7.png",
+          "/station/agents/approved_vaultboy/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -3818,7 +5322,11 @@
         "south": "/station/agents/approved_voidwizard/rot_south.png",
         "north": "/station/agents/approved_voidwizard/rot_north.png",
         "east": "/station/agents/approved_voidwizard/rot_east.png",
-        "west": "/station/agents/approved_voidwizard/rot_west.png"
+        "west": "/station/agents/approved_voidwizard/rot_west.png",
+        "north-east": "/station/agents/approved_voidwizard/rot_north-east.png",
+        "north-west": "/station/agents/approved_voidwizard/rot_north-west.png",
+        "south-east": "/station/agents/approved_voidwizard/rot_south-east.png",
+        "south-west": "/station/agents/approved_voidwizard/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -3874,6 +5382,46 @@
           "/station/agents/approved_voidwizard/walk_west_6.png",
           "/station/agents/approved_voidwizard/walk_west_7.png",
           "/station/agents/approved_voidwizard/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_voidwizard/walk_north-east_1.png",
+          "/station/agents/approved_voidwizard/walk_north-east_2.png",
+          "/station/agents/approved_voidwizard/walk_north-east_3.png",
+          "/station/agents/approved_voidwizard/walk_north-east_4.png",
+          "/station/agents/approved_voidwizard/walk_north-east_5.png",
+          "/station/agents/approved_voidwizard/walk_north-east_6.png",
+          "/station/agents/approved_voidwizard/walk_north-east_7.png",
+          "/station/agents/approved_voidwizard/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_voidwizard/walk_north-west_1.png",
+          "/station/agents/approved_voidwizard/walk_north-west_2.png",
+          "/station/agents/approved_voidwizard/walk_north-west_3.png",
+          "/station/agents/approved_voidwizard/walk_north-west_4.png",
+          "/station/agents/approved_voidwizard/walk_north-west_5.png",
+          "/station/agents/approved_voidwizard/walk_north-west_6.png",
+          "/station/agents/approved_voidwizard/walk_north-west_7.png",
+          "/station/agents/approved_voidwizard/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_voidwizard/walk_south-east_1.png",
+          "/station/agents/approved_voidwizard/walk_south-east_2.png",
+          "/station/agents/approved_voidwizard/walk_south-east_3.png",
+          "/station/agents/approved_voidwizard/walk_south-east_4.png",
+          "/station/agents/approved_voidwizard/walk_south-east_5.png",
+          "/station/agents/approved_voidwizard/walk_south-east_6.png",
+          "/station/agents/approved_voidwizard/walk_south-east_7.png",
+          "/station/agents/approved_voidwizard/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_voidwizard/walk_south-west_1.png",
+          "/station/agents/approved_voidwizard/walk_south-west_2.png",
+          "/station/agents/approved_voidwizard/walk_south-west_3.png",
+          "/station/agents/approved_voidwizard/walk_south-west_4.png",
+          "/station/agents/approved_voidwizard/walk_south-west_5.png",
+          "/station/agents/approved_voidwizard/walk_south-west_6.png",
+          "/station/agents/approved_voidwizard/walk_south-west_7.png",
+          "/station/agents/approved_voidwizard/walk_south-west_8.png"
         ]
       },
       "typeDir": {
@@ -3929,7 +5477,11 @@
         "south": "/station/agents/approved_xenomorph/rot_south.png",
         "north": "/station/agents/approved_xenomorph/rot_north.png",
         "east": "/station/agents/approved_xenomorph/rot_east.png",
-        "west": "/station/agents/approved_xenomorph/rot_west.png"
+        "west": "/station/agents/approved_xenomorph/rot_west.png",
+        "north-east": "/station/agents/approved_xenomorph/rot_north-east.png",
+        "north-west": "/station/agents/approved_xenomorph/rot_north-west.png",
+        "south-east": "/station/agents/approved_xenomorph/rot_south-east.png",
+        "south-west": "/station/agents/approved_xenomorph/rot_south-west.png"
       },
       "sitSrc": {
         "south": [
@@ -3985,6 +5537,46 @@
           "/station/agents/approved_xenomorph/walk_west_6.png",
           "/station/agents/approved_xenomorph/walk_west_7.png",
           "/station/agents/approved_xenomorph/walk_west_8.png"
+        ],
+        "north-east": [
+          "/station/agents/approved_xenomorph/walk_north-east_1.png",
+          "/station/agents/approved_xenomorph/walk_north-east_2.png",
+          "/station/agents/approved_xenomorph/walk_north-east_3.png",
+          "/station/agents/approved_xenomorph/walk_north-east_4.png",
+          "/station/agents/approved_xenomorph/walk_north-east_5.png",
+          "/station/agents/approved_xenomorph/walk_north-east_6.png",
+          "/station/agents/approved_xenomorph/walk_north-east_7.png",
+          "/station/agents/approved_xenomorph/walk_north-east_8.png"
+        ],
+        "north-west": [
+          "/station/agents/approved_xenomorph/walk_north-west_1.png",
+          "/station/agents/approved_xenomorph/walk_north-west_2.png",
+          "/station/agents/approved_xenomorph/walk_north-west_3.png",
+          "/station/agents/approved_xenomorph/walk_north-west_4.png",
+          "/station/agents/approved_xenomorph/walk_north-west_5.png",
+          "/station/agents/approved_xenomorph/walk_north-west_6.png",
+          "/station/agents/approved_xenomorph/walk_north-west_7.png",
+          "/station/agents/approved_xenomorph/walk_north-west_8.png"
+        ],
+        "south-east": [
+          "/station/agents/approved_xenomorph/walk_south-east_1.png",
+          "/station/agents/approved_xenomorph/walk_south-east_2.png",
+          "/station/agents/approved_xenomorph/walk_south-east_3.png",
+          "/station/agents/approved_xenomorph/walk_south-east_4.png",
+          "/station/agents/approved_xenomorph/walk_south-east_5.png",
+          "/station/agents/approved_xenomorph/walk_south-east_6.png",
+          "/station/agents/approved_xenomorph/walk_south-east_7.png",
+          "/station/agents/approved_xenomorph/walk_south-east_8.png"
+        ],
+        "south-west": [
+          "/station/agents/approved_xenomorph/walk_south-west_1.png",
+          "/station/agents/approved_xenomorph/walk_south-west_2.png",
+          "/station/agents/approved_xenomorph/walk_south-west_3.png",
+          "/station/agents/approved_xenomorph/walk_south-west_4.png",
+          "/station/agents/approved_xenomorph/walk_south-west_5.png",
+          "/station/agents/approved_xenomorph/walk_south-west_6.png",
+          "/station/agents/approved_xenomorph/walk_south-west_7.png",
+          "/station/agents/approved_xenomorph/walk_south-west_8.png"
         ]
       },
       "typeDir": {

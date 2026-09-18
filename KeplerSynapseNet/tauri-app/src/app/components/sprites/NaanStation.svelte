@@ -21,6 +21,7 @@
   import type { Facing, HarvestRoomId } from "../../../lib/stationSkins";
   import { paintVoid } from "../../../lib/spaceVoid";
   import propViews from "../../../lib/propViews.json";
+  import stationLayout from "../../../lib/stationLayout.json";
   import {
     naanRooms,
     naanCrew,
@@ -56,12 +57,16 @@
   const ZMIN = 0.7;
   const ZMAX = 3.4;
   const ZFIT = 1;
-  const CHAM = Math.max(4, Math.round(TILE * 0.35));
+  const CHAM = Math.max(5, Math.round(TILE * 0.5));
   const DIR_A: Record<Facing, number> = {
     east: 0,
+    "south-east": Math.PI / 4,
     south: Math.PI / 2,
+    "south-west": Math.PI * 3 / 4,
     west: Math.PI,
+    "north-west": -Math.PI * 3 / 4,
     north: -Math.PI / 2,
+    "north-east": -Math.PI / 4,
   };
 
   type RoomKind = HarvestRoomId | "hall";
@@ -80,50 +85,60 @@
   type PropView = { w: number; h: number; bx: number; by: number; bw: number; bh: number };
   const VIEWS = propViews as Record<string, PropView>;
 
-  const BASE: Record<HarvestRoomId, Room> = {
-    bed: { id: "bed", kind: "bed", owner: "primary", name: "BED", sn: "IDLE", x1: 0, y1: 4, x2: 7, y2: 11 },
-    tor: { id: "tor", kind: "tor", owner: "primary", name: "TOR", sn: "FETCH", x1: 10, y1: 0, x2: 16, y2: 5 },
-    lymph: { id: "lymph", kind: "lymph", owner: "primary", name: "LYMPH", sn: "GATE", x1: 10, y1: 7, x2: 16, y2: 11 },
-    recipe: { id: "recipe", kind: "recipe", owner: "primary", name: "RECIPE", sn: "DRAFT", x1: 18, y1: 0, x2: 25, y2: 5 },
-    poe: { id: "poe", kind: "poe", owner: "primary", name: "POE", sn: "VOTE", x1: 18, y1: 7, x2: 25, y2: 11 },
+  // Data-driven room layout from stationLayout.json
+  type LayoutLight = { tx: number; ty: number; r: number; rgb: string; a: number };
+  type LayoutRoom = {
+    x1: number; y1: number; x2: number; y2: number;
+    seat: { tx: number; ty: number; face: string; work: boolean };
+    blocks: number[][];
+    props: Array<{ file: string; tx: number; ty: number; role: string }>;
+    lights?: LayoutLight[];
   };
+  // Warm/cold pools thrown on the deck by lamps, screens and vats. Painted in
+  // world pixels so they follow a room when a crew wing shifts it sideways.
+  type DeckLight = LayoutLight & { owner: string };
+  const LAYOUT_ROOMS = stationLayout.rooms as Record<string, LayoutRoom>;
+  const LAYOUT_CORRIDORS = stationLayout.corridors as Array<{ x1: number; y1: number; x2: number; y2: number; label: string | null }>;
+
+  function layoutRoom(kind: HarvestRoomId): LayoutRoom {
+    return LAYOUT_ROOMS[kind] || LAYOUT_ROOMS.bed;
+  }
+
+  const BASE: Record<HarvestRoomId, Room> = {} as Record<HarvestRoomId, Room>;
+  const BASE_SEATS: Record<HarvestRoomId, Seat> = {} as Record<HarvestRoomId, Seat>;
+  const ROOM_BLOCKS: Record<HarvestRoomId, Array<[number, number, number, number]>> = {} as Record<HarvestRoomId, Array<[number, number, number, number]>>;
+
+  for (const kind of ["bed", "tor", "lymph", "recipe", "poe"] as HarvestRoomId[]) {
+    const lr = layoutRoom(kind);
+    const spec = stationCatalog.rooms[kind];
+    BASE[kind] = {
+      id: kind, kind, owner: "primary",
+      name: spec.title, sn: spec.sn,
+      x1: lr.x1, y1: lr.y1, x2: lr.x2, y2: lr.y2,
+    };
+    BASE_SEATS[kind] = {
+      tx: lr.seat.tx, ty: lr.seat.ty,
+      face: lr.seat.face as Facing,
+      work: lr.seat.work,
+    };
+    ROOM_BLOCKS[kind] = lr.blocks.map((b) => b as unknown as [number, number, number, number]);
+  }
 
   const PRIMARY_HALL: Room = {
-    id: "hall",
-    kind: "hall",
-    owner: "primary",
-    name: "HALL",
-    sn: "",
-    x1: 8,
-    y1: 6,
-    x2: 9,
-    y2: 8,
+    id: "hall", kind: "hall", owner: "primary", name: "HALL", sn: "",
+    x1: stationLayout.hall.x1, y1: stationLayout.hall.y1,
+    x2: stationLayout.hall.x2, y2: stationLayout.hall.y2,
   };
 
-  const PRIMARY_HALLS: Hall[] = [
-    { x1: 8, y1: 6, x2: 16, y2: 6 },
-    { x1: 13, y1: 5, x2: 13, y2: 7 },
-    { x1: 16, y1: 2, x2: 17, y2: 3 },
-    { x1: 16, y1: 8, x2: 17, y2: 9 },
-    { x1: 8, y1: 5, x2: 10, y2: 5 },
-  ];
+  const PRIMARY_HALLS: Hall[] = LAYOUT_CORRIDORS.map((c) => ({
+    x1: c.x1, y1: c.y1, x2: c.x2, y2: c.y2,
+  }));
 
   type Seat = { tx: number; ty: number; face: Facing; work: boolean };
-  const BASE_SEATS: Record<HarvestRoomId, Seat> = {
-    bed: { tx: 2, ty: 10, face: "south", work: false },
-    tor: { tx: 13, ty: 2, face: "north", work: true },
-    lymph: { tx: 13, ty: 9, face: "north", work: true },
-    recipe: { tx: 20, ty: 2, face: "north", work: true },
-    poe: { tx: 21, ty: 10, face: "north", work: true },
-  };
-  const PRIMARY_HALL_SEAT: Seat = { tx: 8, ty: 7, face: "south", work: false };
-
-  const ROOM_BLOCKS: Record<HarvestRoomId, Array<[number, number, number, number]>> = {
-    bed: [[1, 8, 2, 2], [5, 10, 2, 1], [0, 5, 1, 1]],
-    tor: [[12, 1, 2, 1], [15, 0, 2, 2], [10, 4, 1, 1]],
-    lymph: [[12, 8, 1, 1], [15, 7, 1, 2], [10, 10, 2, 1]],
-    recipe: [[19, 1, 3, 1], [23, 1, 2, 1], [24, 4, 1, 1]],
-    poe: [[20, 8, 4, 2], [18, 8, 2, 1], [24, 10, 2, 1], [18, 10, 1, 1]],
+  const PRIMARY_HALL_SEAT: Seat = {
+    tx: stationLayout.hallSeat.tx, ty: stationLayout.hallSeat.ty,
+    face: stationLayout.hallSeat.face as Facing,
+    work: stationLayout.hallSeat.work,
   };
 
   type Overlay = {
@@ -143,39 +158,19 @@
 
   function baseOverlays(kind: HarvestRoomId, owner: string, roomId: string): Overlay[] {
     const out: Overlay[] = [];
+    const spec = stationCatalog.rooms[kind];
+    const lr = layoutRoom(kind);
     const put = (file: string | null | undefined, tx: number, ty: number, prop: Overlay["prop"]) => {
       const src = propSrc(file);
       if (src && file) out.push({ room: roomId, kind, owner, src, file, tx, ty, prop });
     };
-    const spec = stationCatalog.rooms[kind];
-    if (kind === "bed") {
-      put(spec.prop, 1, 8, "prop");
-      put("desklamp.png", 4, 8, "dress");
-      put("crate.png", 5, 10, "dress");
-      put("plant.png", 0, 5, "dress");
-    } else if (kind === "tor") {
-      put(spec.prop, 12, 1, "prop");
-      put(spec.terminal, 13, 1, "terminal");
-      put(spec.chair, 13, 2, "chair");
-      put("comms_uplink.png", 15, 0, "dress");
-      put("plant.png", 10, 4, "dress");
-    } else if (kind === "lymph") {
-      put(spec.prop, 12, 8, "prop");
-      put(spec.terminal, 15, 7, "terminal");
-      put(spec.chair, 13, 9, "chair");
-      put("research_samplecart.png", 10, 10, "dress");
-    } else if (kind === "recipe") {
-      put(spec.prop, 19, 1, "prop");
-      put(spec.terminal, 20, 1, "terminal");
-      put(spec.chair, 20, 2, "chair");
-      put("bookshelf.png", 23, 1, "dress");
-      put("plant.png", 24, 4, "dress");
-    } else if (kind === "poe") {
-      put(spec.prop, 20, 8, "prop");
-      put(spec.terminal, 18, 8, "terminal");
-      put(spec.chair, 21, 10, "chair");
-      put("crate.png", 24, 10, "dress");
-      put("plant.png", 18, 10, "dress");
+    for (const p of lr.props) {
+      let file: string | null = p.file;
+      if (file === "$prop") file = spec.prop;
+      else if (file === "$terminal") file = spec.terminal;
+      else if (file === "$chair") file = spec.chair || null;
+      const role = (p.role === "terminal" || p.role === "chair" || p.role === "prop") ? p.role : "dress" as Overlay["prop"];
+      put(file, p.tx, p.ty, role);
     }
     return out;
   }
@@ -248,6 +243,7 @@
     walk: Record<string, Set<string>>;
     enabled: Record<string, HarvestRoomId[]>;
     walkHalls: Record<string, Hall[]>;
+    lights: DeckLight[];
   };
 
   function markWalk(set: Set<string>, x1: number, y1: number, x2: number, y2: number) {
@@ -273,6 +269,20 @@
     }
   }
 
+  function roomLights(kind: HarvestRoomId, owner: string, dest: Room): DeckLight[] {
+    const src = BASE[kind];
+    const dx = dest.x1 - src.x1;
+    const dy = dest.y1 - src.y1;
+    const out: DeckLight[] = [];
+    for (const l of layoutRoom(kind).lights || []) {
+      const tx = l.tx + dx;
+      const ty = l.ty + dy;
+      if (tx < dest.x1 || tx > dest.x2 || ty < dest.y1 || ty > dest.y2) continue;
+      out.push({ ...l, tx, ty, owner });
+    }
+    return out;
+  }
+
   function buildDeck(enabledPrimary: HarvestRoomId[], crew: NaanCrewMember[]): Deck {
     const rooms: Room[] = [PRIMARY_HALL];
     const halls: Hall[] = PRIMARY_HALLS.map((h) => ({ ...h }));
@@ -287,12 +297,14 @@
       primary: enabledPrimary.length ? [...enabledPrimary] : ["bed"],
     };
     const walk: Record<string, Set<string>> = { primary: new Set() };
+    const lights: DeckLight[] = [];
 
     for (const id of enabled.primary) {
       const r = { ...BASE[id] };
       rooms.push(r);
       seats.primary[id] = { ...BASE_SEATS[id] };
       overlays.push(...baseOverlays(id, "primary", id));
+      lights.push(...roomLights(id, "primary", r));
     }
 
     const strides = packWings(crew);
@@ -309,16 +321,21 @@
       const leftX2 = leftX1 + leftW - 1;
       const rightX1 = leftX2 + 1 + gap;
       const rightX2 = rightX1 + rightW - 1;
-      const want = c.rooms.length ? [...c.rooms] : ["tor"];
+      const want: HarvestRoomId[] = c.rooms.length ? [...c.rooms] : ["tor"];
       enabled[c.id] = want;
       seats[c.id] = {};
       walk[c.id] = new Set();
 
+      // The gap column between the two room stacks carries a full-height trunk.
+      // Without it the north and south cross-corridors only reach the spine
+      // through a neighbouring room, so a wing missing LYMPH stranded its POE.
+      const trunkX = leftX2 + 1;
       const localHalls: Hall[] = [
         { x1: bx, y1: 6, x2: Math.max(bx, rightX2), y2: 6 },
         { x1: leftX1 + 2, y1: 5, x2: leftX1 + 2, y2: 7 },
-        { x1: leftX2, y1: 2, x2: leftX2 + 1, y2: 3 },
-        { x1: leftX2, y1: 8, x2: leftX2 + 1, y2: 9 },
+        { x1: trunkX, y1: 2, x2: trunkX, y2: 9 },
+        { x1: leftX2, y1: 2, x2: trunkX, y2: 3 },
+        { x1: leftX2, y1: 8, x2: trunkX, y2: 9 },
       ];
       // Paint a bridge to the wing; walk stays inside each body's own rooms.
       halls.push({ x1: 16, y1: 6, x2: bx + hallW, y2: 6 });
@@ -365,6 +382,7 @@
         seats[c.id][kind] = shiftSeat(kind, dest);
         const shifted = baseOverlays(kind, c.id, dest.id).map((ov) => shiftInto(ov, BASE[kind], dest));
         overlays.push(...shifted);
+        lights.push(...roomLights(kind, c.id, dest));
       }
     });
 
@@ -391,7 +409,7 @@
     }
 
     overlays.sort((a, b) => a.ty + viewOf(a.file).h - (b.ty + viewOf(b.file).h));
-    return { rooms: paintRooms, halls, overlays, ox, stCols, seats, walk, enabled, walkHalls };
+    return { rooms: paintRooms, halls, overlays, ox, stCols, seats, walk, enabled, walkHalls, lights };
   }
 
   const reduceMotion =
@@ -432,6 +450,8 @@
     lastGoal: string;
     thinkLeft: number;
     settleLeft: number;
+    roamIdx: number;
+    roamTimer: number;
   };
 
   function makeWalker(id: string, owner: string, skin: string, seat: Seat): Walker {
@@ -453,6 +473,8 @@
       lastGoal: "",
       thinkLeft: 0,
       settleLeft: 0,
+      roamIdx: 0,
+      roamTimer: 0,
     };
   }
 
@@ -547,6 +569,11 @@
     );
   }
 
+  function inCorridor(x: number, y: number): boolean {
+    if (liveRooms.some((r) => r.kind !== "hall" && x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2)) return false;
+    return liveHalls.some((h) => x >= h.x1 && x <= h.x2 && y >= h.y1 && y <= h.y2);
+  }
+
   function isWallRow(x: number, y: number): boolean {
     for (const r of liveRooms) {
       if (r.kind === "hall") continue;
@@ -572,7 +599,8 @@
   }
 
   function bucketDir(a: number, cur: Facing): Facing {
-    if (Math.abs(angNorm(a - DIR_A[cur])) < Math.PI / 4 + 0.13) return cur;
+    // Hysteresis: stay in current direction if within sector + small margin
+    if (Math.abs(angNorm(a - DIR_A[cur])) < Math.PI / 8 + 0.08) return cur;
     let best: Facing = "south";
     let bd = Infinity;
     (Object.keys(DIR_A) as Facing[]).forEach((d) => {
@@ -1034,66 +1062,6 @@
     }
   }
 
-  function hullBox(): { x0: number; y0: number; x1: number; y1: number } {
-    let x0 = VW;
-    let y0 = VH;
-    let x1 = 0;
-    let y1 = 0;
-    for (let y = 0; y < ST_ROWS; y++) {
-      for (let x = 0; x < stCols; x++) {
-        if (!inDeck(x, y)) continue;
-        const dx = (ox + x) * TILE;
-        const dy = (oy + y) * TILE;
-        if (dx < x0) x0 = dx;
-        if (dy < y0) y0 = dy;
-        if (dx + TILE > x1) x1 = dx + TILE;
-        if (dy + TILE > y1) y1 = dy + TILE;
-      }
-    }
-    return { x0, y0, x1, y1 };
-  }
-
-  function paintSolar(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
-    ctx.fillStyle = "#c4a464";
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = "#0a1218";
-    ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
-    const cell = 5;
-    for (let py = y + 2; py < y + h - 2; py += cell) {
-      for (let px = x + 2; px < x + w - 2; px += cell) {
-        const on = ((px + py) / cell) & 1;
-        ctx.fillStyle = on ? "#163044" : "#0f1c28";
-        ctx.fillRect(px, py, cell - 1, cell - 1);
-        ctx.fillStyle = "#2a5a72";
-        ctx.fillRect(px, py, cell - 1, 1);
-      }
-    }
-    ctx.fillStyle = "#8a7340";
-    for (let gx = x + 1; gx < x + w; gx += cell) ctx.fillRect(gx, y + 1, 1, h - 2);
-    for (let gy = y + 1; gy < y + h; gy += cell) ctx.fillRect(x + 1, gy, w - 2, 1);
-  }
-
-  function paintDish(ctx: CanvasRenderingContext2D, cx: number, cy: number) {
-    ctx.fillStyle = "#1c1c1a";
-    ctx.fillRect(cx - 16, cy - 12, 32, 26);
-    ctx.fillStyle = "#2e2c28";
-    ctx.fillRect(cx - 14, cy - 10, 28, 22);
-    ctx.fillStyle = "#c4a020";
-    ctx.fillRect(cx - 14, cy + 10, 28, 2);
-    ctx.fillStyle = "#3a3832";
-    ctx.fillRect(cx - 14, cy - 10, 28, 1);
-    ctx.fillStyle = "#5a5850";
-    ctx.fillRect(cx - 1, cy - 22, 2, 14);
-    ctx.fillStyle = "#4a6a78";
-    ctx.beginPath();
-    ctx.ellipse(cx, cy - 24, 9, 5, -0.35, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#8ab8c8";
-    ctx.beginPath();
-    ctx.ellipse(cx - 1, cy - 25, 4, 2, -0.35, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
   function paintAmberWindows(ctx: CanvasRenderingContext2D) {
     for (let y = 0; y < ST_ROWS; y++) {
       for (let x = 0; x < stCols; x++) {
@@ -1117,15 +1085,39 @@
     }
   }
 
+  // Solar wings and the comms dish used to float detached in the void next to the
+  // hull. Only the windows stay; anything bolted on has to sit flush on a deck tile.
   function paintHullExtras(ctx: CanvasRenderingContext2D) {
-    const b = hullBox();
-    if (b.x1 <= b.x0) return;
-    const wingW = 52;
-    const wingH = 28;
-    paintSolar(ctx, Math.max(2, b.x0 - wingW - 4), Math.min(VH - wingH - 2, b.y1 - 10), wingW, wingH);
-    paintSolar(ctx, Math.max(2, b.x0 - 34), Math.min(VH - 22, b.y1 + 6), 40, 20);
-    paintDish(ctx, Math.min(VW - 20, b.x1 + 22), Math.floor((b.y0 + b.y1) / 2));
     paintAmberWindows(ctx);
+  }
+
+  function deckPath(): Path2D {
+    const p = new Path2D();
+    for (let y = 0; y < ST_ROWS; y++) {
+      for (let x = 0; x < stCols; x++) {
+        if (!inDeck(x, y)) continue;
+        p.rect((ox + x) * TILE, (oy + y) * TILE, TILE, TILE);
+      }
+    }
+    return p;
+  }
+
+  function paintLightPools(ctx: CanvasRenderingContext2D) {
+    if (!deck.lights.length) return;
+    ctx.save();
+    ctx.clip(deckPath());
+    ctx.globalCompositeOperation = "lighter";
+    for (const l of deck.lights) {
+      const cx = (ox + l.tx) * TILE + TILE / 2;
+      const cy = (oy + l.ty) * TILE + TILE / 2;
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, l.r);
+      g.addColorStop(0, `rgba(${l.rgb},${l.a})`);
+      g.addColorStop(0.55, `rgba(${l.rgb},${(l.a * 0.38).toFixed(3)})`);
+      g.addColorStop(1, `rgba(${l.rgb},0)`);
+      ctx.fillStyle = g;
+      ctx.fillRect(cx - l.r, cy - l.r, l.r * 2, l.r * 2);
+    }
+    ctx.restore();
   }
 
   function paintDeck() {
@@ -1134,7 +1126,8 @@
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, VW, VH);
-    const rim = 6;
+    const rim = 11;
+    const skirt = 10;
     for (let y = 0; y < ST_ROWS; y++) {
       for (let x = 0; x < stCols; x++) {
         if (!inDeck(x, y)) continue;
@@ -1153,23 +1146,54 @@
             ctx.fillRect(dx, dy, TILE, wh);
           }
         }
-        ctx.fillStyle = "rgba(0,0,0,0.18)";
+        // Corridor tiles get a dimmer overlay + center wear lane
+        if (inCorridor(x, y)) {
+          ctx.fillStyle = "rgba(0,0,0,0.12)";
+          ctx.fillRect(dx, dy, TILE, TILE);
+          const hallH = liveHalls.find((h) => x >= h.x1 && x <= h.x2 && y >= h.y1 && y <= h.y2);
+          if (hallH) {
+            const isHorizontal = (hallH.x2 - hallH.x1) >= (hallH.y2 - hallH.y1);
+            if (isHorizontal) {
+              const midY = Math.floor((hallH.y1 + hallH.y2) / 2);
+              if (y === midY) {
+                ctx.fillStyle = "rgba(0,0,0,0.08)";
+                ctx.fillRect(dx, dy + 3, TILE, TILE - 6);
+              }
+            } else {
+              const midX = Math.floor((hallH.x1 + hallH.x2) / 2);
+              if (x === midX) {
+                ctx.fillStyle = "rgba(0,0,0,0.08)";
+                ctx.fillRect(dx + 3, dy, TILE - 6, TILE);
+              }
+            }
+          }
+        }
+        ctx.fillStyle = "rgba(0,0,0,0.22)";
         ctx.fillRect(dx, dy, TILE, 1);
         ctx.fillRect(dx, dy, 1, TILE);
         if (shellImg) {
           if (!inDeck(x - 1, y)) stampStrip(ctx, shellImg, dx - rim, dy, rim, TILE, x);
           if (!inDeck(x + 1, y)) stampStrip(ctx, shellImg, dx + TILE, dy, rim, TILE, x);
           if (!inDeck(x, y - 1)) stampStrip(ctx, shellImg, dx - rim, dy - rim, TILE + rim * 2, rim, x);
-          if (!inDeck(x, y + 1)) stampStrip(ctx, shellImg, dx - rim, dy + TILE, TILE + rim * 2, rim, x);
+          if (!inDeck(x, y + 1)) {
+            stampStrip(ctx, shellImg, dx - rim, dy + TILE, TILE + rim * 2, rim + skirt, x);
+            ctx.fillStyle = "rgba(0,0,0,0.28)";
+            ctx.fillRect(dx - rim, dy + TILE + rim, TILE + rim * 2, skirt);
+          }
         } else {
-          ctx.fillStyle = "#3a3632";
+          ctx.fillStyle = "#4a4540";
           if (!inDeck(x - 1, y)) ctx.fillRect(dx - rim, dy, rim, TILE);
           if (!inDeck(x + 1, y)) ctx.fillRect(dx + TILE, dy, rim, TILE);
           if (!inDeck(x, y - 1)) ctx.fillRect(dx - rim, dy - rim, TILE + rim * 2, rim);
-          if (!inDeck(x, y + 1)) ctx.fillRect(dx - rim, dy + TILE, TILE + rim * 2, rim);
+          if (!inDeck(x, y + 1)) ctx.fillRect(dx - rim, dy + TILE, TILE + rim * 2, rim + skirt);
         }
+        ctx.fillStyle = "rgba(230, 214, 170, 0.22)";
+        if (!inDeck(x, y - 1)) ctx.fillRect(dx, dy - rim, TILE, 1);
+        if (!inDeck(x - 1, y)) ctx.fillRect(dx - rim, dy, 1, TILE);
+        if (!inDeck(x + 1, y)) ctx.fillRect(dx + TILE + rim - 1, dy, 1, TILE);
       }
     }
+    paintLightPools(ctx);
     punchHull(ctx);
     paintHullExtras(ctx);
   }
@@ -1204,7 +1228,23 @@
     lastTs = ts;
     stepCam(dt);
     stepWalker(hero, inferred, dt);
-    for (const w of crewWalk) stepWalker(w, inferred, dt);
+    const ROAM_INTERVAL = 8;
+    for (const w of crewWalk) {
+      const cm = $naanCrew.find((c) => c.id === w.owner);
+      const ownRooms = cm?.rooms || [];
+      let crewGoal: HarvestRoomId;
+      if (ownRooms.length) {
+        w.roamTimer += dt;
+        if (w.sitting && w.working && w.roamTimer >= ROAM_INTERVAL) {
+          w.roamTimer = 0;
+          w.roamIdx = (w.roamIdx + 1) % ownRooms.length;
+        }
+        crewGoal = ownRooms[w.roamIdx % ownRooms.length];
+      } else {
+        crewGoal = inferred;
+      }
+      stepWalker(w, crewGoal, dt);
+    }
     const fps = hero.sitting ? (hero.working ? 6 : 4) : 10;
     acc += dt;
     if (acc >= 1 / fps) {
@@ -1238,12 +1278,10 @@
     void loadSkins(paintGen);
   }
 
-  function pctBox(r: Room): string {
-    const left = ((ox + r.x1) / VIEW_COLS) * 100;
-    const top = ((oy + r.y1) / VIEW_ROWS) * 100;
-    const w = ((r.x2 - r.x1 + 1) / VIEW_COLS) * 100;
-    const h = ((r.y2 - r.y1 + 1) / VIEW_ROWS) * 100;
-    return `left:${left}%;top:${top}%;width:${w}%;height:${h}%`;
+  function pctPlate(r: Room): string {
+    const left = ((ox + r.x1 + 0.12) / VIEW_COLS) * 100;
+    const top = ((oy + r.y1 + 0.08) / VIEW_ROWS) * 100;
+    return `left:${left}%;top:${top}%`;
   }
 
   function pctProp(ov: Overlay): string {
@@ -1286,10 +1324,6 @@
     on:dblclick={fitView}
   >
     <canvas class="void" bind:this={voidCv} width={VW} height={VH} aria-hidden="true"></canvas>
-    <div class="holo-vol" aria-hidden="true">
-      <div class="holo-cone"></div>
-      <div class="holo-mark">SYNAPSENET</div>
-    </div>
     <div class="world" style="transform:{worldXf}">
       <canvas class="deck" bind:this={deckCv} width={VW} height={VH} aria-hidden="true"></canvas>
 
@@ -1313,15 +1347,11 @@
             class="room-label"
             class:on={poseClock >= 0 && labelHot(r)}
             class:mine={poseClock >= 0 && r.owner === focusedId && !labelHot(r)}
-            class:dim={poseClock >= 0 && !labelHot(r)}
-            style={pctBox(r)}
+            style={pctPlate(r)}
           >
-            {#if ownerTag(r.owner)}
-              <span class="ro">{ownerTag(r.owner)}</span>
-            {/if}
-            <span class="rn">{r.name}</span>
+            <span class="rn">{ownerTag(r.owner) ? ownerTag(r.owner) + " · " : ""}{r.name}</span>
             {#if poseClock >= 0 && labelHot(r)}
-              <span class="rs">{r.sn} · {r.owner === focusW.owner ? poseLabel : ""}</span>
+              <span class="rs">{r.sn}{r.owner === focusW.owner && poseLabel ? " · " + poseLabel : ""}</span>
             {/if}
           </div>
         {/if}
@@ -1452,44 +1482,6 @@
     image-rendering: crisp-edges;
   }
 
-  .holo-vol {
-    position: absolute;
-    left: 50%;
-    top: 10%;
-    transform: translateX(-50%);
-    z-index: 2;
-    pointer-events: none;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-
-  .holo-cone {
-    width: 120px;
-    height: 48px;
-    background: linear-gradient(180deg, rgba(0, 229, 255, 0.18), transparent 70%);
-    clip-path: polygon(42% 0, 58% 0, 100% 100%, 0 100%);
-    opacity: 0.7;
-    animation: holo-pulse 2.8s ease-in-out infinite;
-  }
-
-  .holo-mark {
-    margin: -22px 0 0;
-    font-family: var(--font);
-    font-size: 8px;
-    line-height: 1;
-    letter-spacing: 4px;
-    color: var(--cy, #00e5ff);
-    text-shadow: 0 0 10px rgba(0, 229, 255, 0.55), 0 0 2px rgba(0, 229, 255, 0.8);
-    white-space: nowrap;
-    opacity: 0.88;
-  }
-
-  @keyframes holo-pulse {
-    0%, 100% { opacity: 0.45; }
-    50% { opacity: 0.85; }
-  }
-
   .world {
     position: absolute;
     inset: 0;
@@ -1535,41 +1527,33 @@
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
-    padding: 3px 4px;
+    padding: 1px 3px 2px;
     pointer-events: none;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: none;
+    background: rgba(4, 3, 2, 0.62);
     box-sizing: border-box;
     z-index: 30;
-    border-radius: 0;
+    white-space: nowrap;
   }
 
   .room-label.on {
-    border-color: var(--cy, #00e5ff);
+    background: rgba(0, 18, 24, 0.78);
+    box-shadow: 0 0 0 1px var(--cy, #00e5ff);
   }
 
   .room-label.mine {
-    border-color: rgba(0, 229, 255, 0.28);
-  }
-
-  .room-label.dim {
-    opacity: 0.55;
-  }
-
-  .ro {
-    font-family: var(--font);
-    font-size: 6px;
-    color: var(--cy, #00e5ff);
+    box-shadow: 0 0 0 1px rgba(0, 229, 255, 0.28);
   }
 
   .rn {
-    font-size: 7px;
-    color: rgba(245, 245, 247, 0.72);
+    font-size: 6px;
+    color: rgba(245, 245, 247, 0.78);
   }
 
   .rs {
-    font-size: 6px;
+    font-size: 5px;
     color: rgba(161, 161, 166, 0.9);
-    margin-top: 2px;
+    margin-top: 1px;
   }
 
   .walker {
@@ -1624,9 +1608,4 @@
     overflow-wrap: anywhere;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .holo-cone {
-      animation: none;
-    }
-  }
 </style>

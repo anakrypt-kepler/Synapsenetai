@@ -8,6 +8,7 @@
   import { activeTab, tabSlideDir, showSetupWizard, startStatusPolling, stopStatusPolling } from "../lib/store";
   import { checkFirstLaunch, initEngine } from "../lib/rpc";
   import { loadStationLookFromSettings } from "../lib/stationSkins";
+  import { initCellBgm } from "../lib/cellBgm";
   import { DUR_TAB_MS, TAB_SLIDE_PX, easeMenuDecel } from "../lib/hyprEase";
   import TopBar from "./components/TopBar.svelte";
   import StatusBar from "./components/StatusBar.svelte";
@@ -38,6 +39,7 @@
   $: slideInX = $tabSlideDir * TAB_SLIDE_PX;
 
   onMount(async () => {
+    initCellBgm();
     try {
       await bootEngine();
       const isFirst = await checkFirstLaunch();

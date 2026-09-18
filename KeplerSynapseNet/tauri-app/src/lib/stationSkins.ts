@@ -5,7 +5,7 @@ import catalog from "./stationCatalog.json";
 // 2D station look: agent sprite + floor/wall/shell skins from public/station.
 // Persisted through settings.update (settings.json). Does not change harvest.
 
-export type Facing = "north" | "south" | "east" | "west";
+export type Facing = "north" | "south" | "east" | "west" | "north-east" | "north-west" | "south-east" | "south-west";
 
 export type StationAgent = {
   id: string;
@@ -180,6 +180,18 @@ export function harvestPose(sitting: boolean, working: boolean): "walk" | "sit" 
   return working ? "type" : "sit";
 }
 
+const DIAG_FALLBACK: Record<string, Facing> = {
+  "north-east": "east",
+  "north-west": "west",
+  "south-east": "east",
+  "south-west": "west",
+};
+
+function dirSeq(map: Record<string, string[]> | undefined, dir: Facing, fallback: Facing): string[] {
+  if (!map) return [];
+  return map[dir] || map[DIAG_FALLBACK[dir] || ""] || map[fallback] || [];
+}
+
 export function agentPoseSrc(
   agent: StationAgent,
   pose: "walk" | "sit" | "type" | "idle",
@@ -187,17 +199,17 @@ export function agentPoseSrc(
   frame: number,
 ): string {
   if (pose === "walk") {
-    const seq = agent.walkDir?.[dir] || agent.walkDir?.south || agent.walkSrc || [];
+    const seq = dirSeq(agent.walkDir, dir, "south") || agent.walkSrc || [];
     if (seq.length) return seq[Math.abs(frame) % seq.length];
   }
   if (pose === "type") {
-    const seq = agent.typeDir?.[dir] || agent.typeDir?.north || agent.typeSrc || [];
+    const seq = dirSeq(agent.typeDir, dir, "north") || agent.typeSrc || [];
     if (seq.length) return seq[Math.abs(frame) % seq.length];
     pose = "sit";
   }
   if (pose === "sit") {
-    const seq = agent.sitSrc?.[dir] || agent.sitSrc?.south || [];
+    const seq = dirSeq(agent.sitSrc, dir, "south");
     if (seq.length) return seq[Math.abs(frame) % seq.length];
   }
-  return agent.rot?.[dir] || agent.rot?.south || agent.idleSrc || agent.src;
+  return agent.rot?.[dir] || agent.rot?.[DIAG_FALLBACK[dir] || "south"] || agent.rot?.south || agent.idleSrc || agent.src;
 }

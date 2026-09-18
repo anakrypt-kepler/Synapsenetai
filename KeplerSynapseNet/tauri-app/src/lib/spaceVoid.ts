@@ -73,10 +73,12 @@ function valueNoise(x: number, y: number, seed: number): number {
 
 function fbm(x: number, y: number, seed: number): number {
   return (
-    valueNoise(x, y, seed) * 0.5 +
-    valueNoise(x * 2.1, y * 2.1, seed + 11) * 0.28 +
-    valueNoise(x * 4.3, y * 4.3, seed + 23) * 0.14 +
-    valueNoise(x * 8.7, y * 8.7, seed + 41) * 0.08
+    valueNoise(x, y, seed) * 0.40 +
+    valueNoise(x * 2.1, y * 2.1, seed + 11) * 0.24 +
+    valueNoise(x * 4.3, y * 4.3, seed + 23) * 0.15 +
+    valueNoise(x * 8.7, y * 8.7, seed + 41) * 0.09 +
+    valueNoise(x * 17.1, y * 17.1, seed + 67) * 0.07 +
+    valueNoise(x * 33.5, y * 33.5, seed + 89) * 0.05
   );
 }
 
@@ -92,15 +94,31 @@ function mix(a: RGB, b: RGB, t: number): RGB {
 }
 
 function quant(c: RGB, dither: number): RGB {
-  const step = 14;
+  const step = 6;
+  const d = dither * 0.5;
   return [
-    Math.max(0, Math.min(255, Math.round((c[0] + dither) / step) * step)),
-    Math.max(0, Math.min(255, Math.round((c[1] + dither) / step) * step)),
-    Math.max(0, Math.min(255, Math.round((c[2] + dither) / step) * step)),
+    Math.max(0, Math.min(255, Math.round((c[0] + d) / step) * step)),
+    Math.max(0, Math.min(255, Math.round((c[1] + d) / step) * step)),
+    Math.max(0, Math.min(255, Math.round((c[2] + d) / step) * step)),
   ];
 }
 
 type PlanetKind = "terra" | "moon";
+
+function smoothstep(a: number, b: number, t: number): number {
+  const x = Math.max(0, Math.min(1, (t - a) / (b - a)));
+  return x * x * (3 - 2 * x);
+}
+
+function fbmCloud(x: number, y: number, seed: number): number {
+  return (
+    valueNoise(x * 1.3, y * 1.3, seed) * 0.38 +
+    valueNoise(x * 2.8, y * 2.8, seed + 13) * 0.26 +
+    valueNoise(x * 5.9, y * 5.9, seed + 31) * 0.18 +
+    valueNoise(x * 12.1, y * 12.1, seed + 53) * 0.10 +
+    valueNoise(x * 24.0, y * 24.0, seed + 71) * 0.08
+  );
+}
 
 function bakePlanet(
   w: number,
@@ -125,69 +143,107 @@ function bakePlanet(
   const Lx = lx / llen;
   const Ly = ly / llen;
   const Lz = lz / llen;
-  const x0 = Math.max(0, Math.floor(cx - radius - 4));
-  const y0 = Math.max(0, Math.floor(cy - radius - 4));
-  const x1 = Math.min(w - 1, Math.ceil(cx + radius + 4));
-  const y1 = Math.min(h - 1, Math.ceil(cy + radius + 4));
+  const atmosThick = kind === "terra" ? 0.12 : 0.04;
+  const x0 = Math.max(0, Math.floor(cx - radius * (1 + atmosThick) - 2));
+  const y0 = Math.max(0, Math.floor(cy - radius * (1 + atmosThick) - 2));
+  const x1 = Math.min(w - 1, Math.ceil(cx + radius * (1 + atmosThick) + 2));
+  const y1 = Math.min(h - 1, Math.ceil(cy + radius * (1 + atmosThick) + 2));
 
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
       const nx = (x - cx) / radius;
       const ny = (y - cy) / radius;
       const rr = nx * nx + ny * ny;
-      if (rr > 1.08) continue;
+      if (rr > (1 + atmosThick) * (1 + atmosThick)) continue;
       const p = (y * w + x) * 4;
       const dither = (hash2(x, y, seed) - 0.5) * 10;
 
       if (rr > 1) {
-        // atmosphere limb only for terra
-        if (kind !== "terra") continue;
-        const fall = 1 - (Math.sqrt(rr) - 1) / 0.08;
+        // atmosphere rim glow
+        const dist = Math.sqrt(rr) - 1;
+        const fall = 1 - dist / atmosThick;
         if (fall <= 0) continue;
-        const a = Math.round(110 * fall * fall);
-        D[p] = 70;
-        D[p + 1] = 150;
-        D[p + 2] = 220;
-        D[p + 3] = a;
+        const curve = fall * fall;
+        if (kind === "terra") {
+          const rimR = Math.round(mix([50, 130, 220], [90, 180, 255], curve)[0]);
+          const rimG = Math.round(mix([50, 130, 220], [90, 180, 255], curve)[1]);
+          const rimB = Math.round(mix([50, 130, 220], [90, 180, 255], curve)[2]);
+          D[p] = rimR;
+          D[p + 1] = rimG;
+          D[p + 2] = rimB;
+          D[p + 3] = Math.round(140 * curve);
+        } else {
+          D[p] = 140;
+          D[p + 1] = 135;
+          D[p + 2] = 128;
+          D[p + 3] = Math.round(40 * curve);
+        }
         continue;
       }
 
       const nz = Math.sqrt(Math.max(0, 1 - rr));
       const ndl = Math.max(0, nx * Lx + ny * Ly + nz * Lz);
-      const limb = Math.pow(nz, 0.45);
+      const limb = Math.pow(nz, 0.38);
       const lon = Math.atan2(nx, nz);
       const lat = Math.asin(Math.max(-1, Math.min(1, ny)));
-      const u = (lon / Math.PI + 1) * 2.4;
-      const v = (lat / Math.PI + 0.5) * 3.2;
+      const u = (lon / Math.PI + 1) * 2.8;
+      const v = (lat / Math.PI + 0.5) * 3.6;
       const n1 = fbm(u, v, seed);
       const n2 = fbm(u * 1.7 + 4, v * 1.7, seed + 7);
 
       let col: RGB;
       if (kind === "terra") {
-        const ice = Math.abs(lat) > 1.05 || (Math.abs(lat) > 0.82 && n1 > 0.42);
-        const land = n1 > 0.52;
-        const cloud = n2 > 0.72;
-        if (ice) col = mix([168, 188, 210], [228, 236, 244], n2);
-        else if (land) {
-          const dry = n2 > 0.55;
-          col = dry
-            ? mix([92, 78, 48], [128, 108, 58], n1)
-            : mix([36, 92, 48], [78, 122, 52], n1);
+        const iceLat = Math.abs(lat);
+        const ice = iceLat > 1.05 || (iceLat > 0.78 && n1 > 0.38);
+        const coastLine = smoothstep(0.44, 0.52, n1);
+        const land = n1 > 0.48;
+        if (ice) {
+          col = mix([178, 198, 222], [238, 244, 252], n2 * 0.6 + n1 * 0.4);
+        } else if (land) {
+          const elev = smoothstep(0.48, 0.72, n1);
+          const moisture = n2;
+          const desert: RGB = mix([148, 128, 78], [178, 158, 98], n1);
+          const forest: RGB = mix([28, 82, 38], [68, 118, 48], n1);
+          const highland: RGB = mix([108, 98, 78], [148, 138, 108], n1);
+          const base = moisture > 0.52 ? mix(forest, highland, elev) : mix(desert, highland, elev);
+          col = mix(base, [218, 210, 195], elev * 0.25);
         } else {
-          col = mix([10, 42, 92], [28, 98, 148], n1);
+          const depth = smoothstep(0.48, 0.2, n1);
+          const shallow: RGB = [18, 78, 138];
+          const deep: RGB = [6, 28, 72];
+          col = mix(shallow, deep, depth);
+          const shore = smoothstep(0.44, 0.48, n1);
+          col = mix(col, [42, 128, 168], shore * 0.3);
         }
-        if (cloud && !ice) col = mix(col, [220, 230, 238], 0.55 + n2 * 0.2);
-        const night: RGB = mix([4, 8, 18], [18, 28, 48], n1 * 0.4);
-        const day = mix(col, [255, 236, 200], ndl * 0.12);
-        col = mix(night, day, 0.12 + ndl * 0.88);
-        if (limb < 0.28) col = mix(col, [80, 160, 220], (0.28 - limb) * 1.4);
+        // Clouds: separate noise, semi-transparent whites
+        const cn = fbmCloud(u + 2.5, v + 1.2, seed + 200);
+        const cloudAlpha = smoothstep(0.42, 0.68, cn);
+        if (cloudAlpha > 0 && !ice) {
+          const cloudBright: RGB = [235, 240, 248];
+          const cloudShadow: RGB = [195, 205, 218];
+          const cloudCol = mix(cloudShadow, cloudBright, ndl * 0.7 + 0.3);
+          col = mix(col, cloudCol, cloudAlpha * 0.65);
+        }
+        // Day/night with softer terminator
+        const terminator = smoothstep(-0.08, 0.22, ndl);
+        const night: RGB = mix([3, 6, 14], [12, 20, 38], n1 * 0.3);
+        const day = mix(col, [255, 242, 210], ndl * 0.08);
+        col = mix(night, day, terminator);
+        // Limb darkening + blue atmosphere at edges
+        if (limb < 0.35) col = mix(col, [60, 140, 210], (0.35 - limb) * 1.2);
+        col = mix(col, [0, 0, 0] as RGB, (1 - limb) * 0.15);
       } else {
-        const crater = n1 > 0.62 ? 0.18 : 0;
-        const dust = mix([42, 40, 44], [118, 110, 98], n1);
-        const lit = mix(dust, [176, 166, 150], ndl);
-        col = mix([16, 14, 18], lit, 0.16 + ndl * 0.84);
-        col = mix(col, [8, 8, 10], crater);
-        if (limb < 0.22) col = mix(col, [160, 150, 138], (0.22 - limb) * 0.8);
+        // Moon: more cratered, varied regolith
+        const craterN = fbm(u * 2.2, v * 2.2, seed + 100);
+        const crater = smoothstep(0.56, 0.64, craterN) * 0.25;
+        const dust: RGB = mix([52, 48, 52], [138, 128, 112], n1);
+        const highlight = mix(dust, [188, 178, 162], n1 * 0.2);
+        const lit = mix(highlight, [200, 192, 178], ndl * 0.5);
+        const terminator = smoothstep(-0.04, 0.18, ndl);
+        col = mix([10, 8, 12], lit, terminator);
+        col = mix(col, [5, 4, 6] as RGB, crater);
+        if (limb < 0.2) col = mix(col, [150, 140, 128], (0.2 - limb) * 0.6);
+        col = mix(col, [0, 0, 0] as RGB, (1 - limb) * 0.1);
       }
 
       col = quant(col, dither);

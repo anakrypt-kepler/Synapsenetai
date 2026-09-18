@@ -1,0 +1,172 @@
+{
+  "gridCols": 26,
+  "gridRows": 12,
+  "viewCols": 60,
+  "viewRows": 28,
+  "rooms": {
+    "bed": {
+      "x1": 0, "y1": 4, "x2": 7, "y2": 11,
+      "seat": { "tx": 2, "ty": 10, "face": "south", "work": false },
+      "blocks": [
+        [1, 8, 2, 2],
+        [4, 5, 3, 1],
+        [2, 6, 5, 1],
+        [0, 10, 2, 1],
+        [5, 10, 2, 1],
+        [0, 5, 1, 1],
+        [7, 11, 1, 1],
+        [0, 7, 1, 1]
+      ],
+      "props": [
+        { "file": "$prop", "tx": 1, "ty": 8, "role": "prop" },
+        { "file": "quarters_lockerbank.png", "tx": 4, "ty": 5, "role": "dress" },
+        { "file": "couch.png", "tx": 2, "ty": 6, "role": "dress" },
+        { "file": "bookshelf.png", "tx": 0, "ty": 10, "role": "dress" },
+        { "file": "crate.png", "tx": 5, "ty": 10, "role": "dress" },
+        { "file": "plant.png", "tx": 0, "ty": 5, "role": "dress" },
+        { "file": "quarters_minifridge.png", "tx": 7, "ty": 11, "role": "dress" },
+        { "file": "monstera.png", "tx": 0, "ty": 7, "role": "dress" },
+        { "file": "desklamp.png", "tx": 4, "ty": 8, "role": "dress" },
+        { "file": "mug.png", "tx": 3, "ty": 11, "role": "dress" }
+      ],
+      "lights": [
+        { "tx": 4, "ty": 8, "r": 42, "rgb": "255,176,58", "a": 0.20 },
+        { "tx": 2, "ty": 6, "r": 30, "rgb": "255,150,60", "a": 0.10 }
+      ]
+    },
+    "tor": {
+      "x1": 10, "y1": 0, "x2": 16, "y2": 5,
+      "seat": { "tx": 13, "ty": 2, "face": "north", "work": true },
+      "blocks": [
+        [12, 1, 3, 1],
+        [15, 0, 2, 2],
+        [10, 1, 1, 2],
+        [11, 0, 2, 1],
+        [11, 4, 1, 1],
+        [14, 4, 2, 1],
+        [10, 5, 1, 1]
+      ],
+      "props": [
+        { "file": "$prop", "tx": 12, "ty": 1, "role": "prop" },
+        { "file": "$terminal", "tx": 13, "ty": 1, "role": "terminal" },
+        { "file": "$chair", "tx": 13, "ty": 2, "role": "chair" },
+        { "file": "comms_uplink.png", "tx": 15, "ty": 0, "role": "dress" },
+        { "file": "bridge_relaystack.png", "tx": 10, "ty": 1, "role": "dress" },
+        { "file": "screens.png", "tx": 11, "ty": 0, "role": "dress" },
+        { "file": "gigs_servercart.png", "tx": 11, "ty": 4, "role": "dress" },
+        { "file": "cablerun.png", "tx": 14, "ty": 4, "role": "dress" },
+        { "file": "plant.png", "tx": 10, "ty": 5, "role": "dress" },
+        { "file": "steamvent.png", "tx": 16, "ty": 5, "role": "dress" }
+      ],
+      "lights": [
+        { "tx": 13, "ty": 1, "r": 46, "rgb": "0,229,255", "a": 0.16 },
+        { "tx": 11, "ty": 0, "r": 34, "rgb": "0,229,255", "a": 0.12 },
+        { "tx": 15, "ty": 1, "r": 34, "rgb": "255,176,58", "a": 0.12 }
+      ]
+    },
+    "lymph": {
+      "x1": 10, "y1": 7, "x2": 16, "y2": 11,
+      "seat": { "tx": 13, "ty": 9, "face": "north", "work": true },
+      "blocks": [
+        [12, 8, 1, 1],
+        [15, 7, 1, 2],
+        [10, 8, 2, 2],
+        [14, 10, 2, 1],
+        [16, 10, 1, 2],
+        [10, 11, 2, 1],
+        [12, 11, 1, 1],
+        [14, 8, 1, 1]
+      ],
+      "props": [
+        { "file": "$prop", "tx": 12, "ty": 8, "role": "prop" },
+        { "file": "$terminal", "tx": 15, "ty": 7, "role": "terminal" },
+        { "file": "$chair", "tx": 13, "ty": 9, "role": "chair" },
+        { "file": "intake.png", "tx": 10, "ty": 8, "role": "dress" },
+        { "file": "tank.png", "tx": 14, "ty": 10, "role": "dress" },
+        { "file": "incubator.png", "tx": 16, "ty": 10, "role": "dress" },
+        { "file": "research_samplecart.png", "tx": 10, "ty": 11, "role": "dress" },
+        { "file": "terrarium.png", "tx": 12, "ty": 11, "role": "dress" },
+        { "file": "steamvent.png", "tx": 14, "ty": 8, "role": "dress" }
+      ],
+      "lights": [
+        { "tx": 15, "ty": 8, "r": 40, "rgb": "0,229,255", "a": 0.15 },
+        { "tx": 10, "ty": 9, "r": 38, "rgb": "120,235,180", "a": 0.12 },
+        { "tx": 16, "ty": 11, "r": 30, "rgb": "120,235,180", "a": 0.10 }
+      ]
+    },
+    "recipe": {
+      "x1": 18, "y1": 0, "x2": 25, "y2": 5,
+      "seat": { "tx": 20, "ty": 2, "face": "north", "work": true },
+      "blocks": [
+        [19, 1, 3, 1],
+        [23, 1, 2, 1],
+        [22, 0, 4, 1],
+        [18, 0, 3, 1],
+        [24, 3, 2, 1],
+        [23, 4, 3, 2],
+        [18, 4, 2, 1],
+        [25, 1, 1, 1],
+        [21, 4, 1, 1]
+      ],
+      "props": [
+        { "file": "$prop", "tx": 19, "ty": 1, "role": "prop" },
+        { "file": "$terminal", "tx": 20, "ty": 1, "role": "terminal" },
+        { "file": "$chair", "tx": 20, "ty": 2, "role": "chair" },
+        { "file": "chartwall.png", "tx": 18, "ty": 0, "role": "dress" },
+        { "file": "whiteboard.png", "tx": 22, "ty": 0, "role": "dress" },
+        { "file": "bookshelf.png", "tx": 23, "ty": 1, "role": "dress" },
+        { "file": "research_papers.png", "tx": 24, "ty": 3, "role": "dress" },
+        { "file": "easel.png", "tx": 23, "ty": 4, "role": "dress" },
+        { "file": "workbench.png", "tx": 18, "ty": 4, "role": "dress" },
+        { "file": "plant.png", "tx": 25, "ty": 1, "role": "dress" },
+        { "file": "toolbox.png", "tx": 21, "ty": 4, "role": "dress" }
+      ],
+      "lights": [
+        { "tx": 20, "ty": 1, "r": 46, "rgb": "0,229,255", "a": 0.16 },
+        { "tx": 23, "ty": 0, "r": 36, "rgb": "255,176,58", "a": 0.12 },
+        { "tx": 19, "ty": 4, "r": 32, "rgb": "255,176,58", "a": 0.11 }
+      ]
+    },
+    "poe": {
+      "x1": 18, "y1": 7, "x2": 25, "y2": 11,
+      "seat": { "tx": 21, "ty": 10, "face": "north", "work": true },
+      "blocks": [
+        [20, 8, 5, 2],
+        [18, 8, 1, 1],
+        [18, 7, 2, 1],
+        [22, 7, 3, 1],
+        [24, 10, 2, 1],
+        [18, 11, 2, 1],
+        [25, 8, 1, 2],
+        [18, 10, 1, 1],
+        [25, 11, 1, 1]
+      ],
+      "props": [
+        { "file": "$prop", "tx": 20, "ty": 8, "role": "prop" },
+        { "file": "$terminal", "tx": 18, "ty": 8, "role": "terminal" },
+        { "file": "$chair", "tx": 21, "ty": 10, "role": "chair" },
+        { "file": "bridge_tacscreen.png", "tx": 18, "ty": 7, "role": "dress" },
+        { "file": "missionboard.png", "tx": 22, "ty": 7, "role": "dress" },
+        { "file": "bridge_orderqueue.png", "tx": 24, "ty": 10, "role": "dress" },
+        { "file": "crate.png", "tx": 18, "ty": 11, "role": "dress" },
+        { "file": "war_intelcab.png", "tx": 25, "ty": 8, "role": "dress" },
+        { "file": "plant.png", "tx": 18, "ty": 10, "role": "dress" },
+        { "file": "arc_floorlight.png", "tx": 25, "ty": 11, "role": "dress" }
+      ],
+      "lights": [
+        { "tx": 22, "ty": 9, "r": 52, "rgb": "0,229,255", "a": 0.15 },
+        { "tx": 19, "ty": 7, "r": 34, "rgb": "0,229,255", "a": 0.12 },
+        { "tx": 25, "ty": 11, "r": 36, "rgb": "255,176,58", "a": 0.18 }
+      ]
+    }
+  },
+  "corridors": [
+    { "x1": 8, "y1": 6, "x2": 16, "y2": 6, "label": "MAIN CORRIDOR" },
+    { "x1": 13, "y1": 5, "x2": 13, "y2": 7, "label": null },
+    { "x1": 16, "y1": 2, "x2": 17, "y2": 3, "label": null },
+    { "x1": 16, "y1": 8, "x2": 17, "y2": 9, "label": null },
+    { "x1": 8, "y1": 5, "x2": 10, "y2": 5, "label": null }
+  ],
+  "hallSeat": { "tx": 8, "ty": 7, "face": "south", "work": false },
+  "hall": { "x1": 8, "y1": 6, "x2": 9, "y2": 8 }
+}
