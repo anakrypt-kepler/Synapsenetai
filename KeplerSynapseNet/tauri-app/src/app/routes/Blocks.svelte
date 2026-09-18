@@ -4,6 +4,8 @@
   import { onMount, onDestroy } from "svelte";
   import { rpcCall } from "../../lib/rpc";
   import { nodeStatus, myWalletAddress } from "../../lib/store";
+  import PixelStage from "../components/sprites/PixelStage.svelte";
+  import PixelBricks from "../components/sprites/PixelBricks.svelte";
 
   interface BlockEntry {
     height: number;
@@ -159,6 +161,11 @@
 </script>
 
 <div class="content-area">
+  <div class="page-col">
+  <PixelStage height={64} floor={false}>
+    <PixelBricks count={heightShown} max={16} />
+  </PixelStage>
+  <div class="section-title">BLOCKS</div>
   <div class="grid-4">
     <div class="card">
       <div class="card-header">HEIGHT</div>
@@ -236,7 +243,8 @@
     </div>
 
   {:else if tab === "chain"}
-    <div class="section-title">RECENT BLOCKS — POE CHAIN, NOT POW</div>
+    <div class="card">
+      <div class="card-header">RECENT BLOCKS — POE CHAIN, NOT POW</div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>#</th><th>HASH</th><th>PRODUCER</th><th>EVENTS</th><th>TIME</th><th></th></tr></thead>
@@ -264,9 +272,11 @@
         </tbody>
       </table>
     </div>
+    </div>
 
   {:else if tab === "producers"}
-    <div class="section-title">POE PRODUCERS — NOT HASH MINERS</div>
+    <div class="card">
+      <div class="card-header">POE PRODUCERS — NOT HASH MINERS</div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>#</th><th>ADDRESS</th><th>BLOCKS</th><th>LAST TIME</th></tr></thead>
@@ -292,19 +302,19 @@
         </tbody>
       </table>
     </div>
+    </div>
   {/if}
+  </div>
 </div>
 
 <style>
-  /* Visual reset: antialiased system UI for this tab. */
+  /* Body/data stays readable mono; chrome is pixel via tokens. */
   .content-area {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12px;
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
-    image-rendering: auto;
   }
 
   .mono {
@@ -312,13 +322,11 @@
   }
 
   button {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-    font-size: 12px;
-    letter-spacing: 0.04em;
-    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 10px;
+    letter-spacing: 0;
+    border-radius: 0;
     transition:
-      transform var(--dur) var(--ease),
-      box-shadow var(--dur) var(--ease),
       border-color var(--dur) var(--ease),
       background-color var(--dur) var(--ease),
       color var(--dur) var(--ease);
@@ -336,20 +344,14 @@
   .card,
   .detail-panel,
   .table-wrap {
-    border-radius: var(--radius);
-    background: var(--surface);
-    backdrop-filter: blur(var(--blur));
-    -webkit-backdrop-filter: blur(var(--blur));
-    border: 1px solid var(--border);
-    transition:
-      transform var(--dur) var(--ease),
-      box-shadow var(--dur) var(--ease),
-      border-color var(--dur) var(--ease);
+    border-radius: 0;
+    background: none;
+    border: none;
+    border-top: 1px solid var(--border);
   }
 
   .card:hover {
     border-color: rgba(255, 255, 255, 0.18);
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
   }
 
   .card-header,
@@ -367,8 +369,8 @@
   }
 
   table {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12px;
   }
 
   th, td {
@@ -504,11 +506,12 @@
   }
 
   .tag {
-    font-size: 11px;
-    padding: 3px 8px;
+    font-family: var(--font);
+    font-size: 8px;
+    padding: 3px 7px;
     border: 1px solid var(--border);
-    border-radius: 999px;
-    letter-spacing: 0.04em;
+    border-radius: 0;
+    letter-spacing: 0;
   }
 
   .empty-row {
@@ -541,13 +544,14 @@
   }
 
   .mine-badge {
-    font-size: 11px;
-    font-weight: 650;
-    padding: 2px 7px;
-    border-radius: 999px;
+    font-family: var(--font);
+    font-size: 8px;
+    font-weight: 400;
+    padding: 3px 6px;
+    border-radius: 0;
     background: var(--text-primary);
     color: #000;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
     margin-left: 6px;
     display: inline-block;
     vertical-align: middle;

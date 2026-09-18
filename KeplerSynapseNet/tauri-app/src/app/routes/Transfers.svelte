@@ -5,6 +5,10 @@
   import { sendNgt, getTransactions, rpcCall, privacyStatus } from "../../lib/rpc";
   import { nodeStatus } from "../../lib/store";
   import { generateQRSvg } from "../../lib/qr";
+  import PixelStage from "../components/sprites/PixelStage.svelte";
+  import PixelSprite from "../components/sprites/PixelSprite.svelte";
+  import coinSprite from "../../assets/sprites/coin.svg";
+  import snGlyph from "../../assets/sprites/sn-glyph.svg";
 
   let recipient = "";
   let amount = "";
@@ -168,6 +172,13 @@
 </script>
 
 <div class="content-area">
+  <div class="page-col">
+  <PixelStage height={60}>
+    <div class="send-track">
+      <PixelSprite src={coinSprite} anim="slide" size={18} travel={44} />
+      <PixelSprite src={snGlyph} anim="idle" size={20} label="destination" />
+    </div>
+  </PixelStage>
   <div class="section-title">SEND NGT</div>
   <div class="privacy-bar">
     <span class="mode-label">DESKTOP SEND IS ALWAYS PRIVATE</span>
@@ -236,7 +247,8 @@
     </div>
   </div>
 
-  <div class="section-title">HISTORY</div>
+  <div class="card">
+    <div class="card-header">HISTORY</div>
   <div class="filter-row">
     <button class="fbtn" type="button" class:active={filter === "all"} on:click={() => setFilter("all")}>ALL</button>
     <button class="fbtn" type="button" class:active={filter === "sent"} on:click={() => setFilter("sent")}>SENT</button>
@@ -261,30 +273,39 @@
       </tbody>
     </table>
   </div>
+  </div>
+  </div>
 </div>
 
 <style>
-  /* Visual reset: antialiased system UI for this tab. */
+  /* Body/data stays readable mono; chrome is pixel via tokens. */
   .content-area {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12px;
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
-    image-rendering: auto;
   }
 
+  .send-track {
+    display: flex;
+    align-items: center;
+    gap: 26px;
+    padding-bottom: 12px;
+  }
+
+  /* Dark pixel spinner: it sits on the white btn-primary while sending. */
   .content-area :global(.ks-spinner) {
     display: inline-block;
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
     margin-right: 8px;
-    border: 2px solid rgba(0, 0, 0, 0.25);
-    border-top-color: #000;
-    border-radius: 50%;
-    animation: ks-spin 0.7s linear infinite;
-    vertical-align: -2px;
+    border: 2px solid rgba(0, 0, 0, 0.3);
+    border-radius: 0;
+    background: linear-gradient(#000, #000) left top / 40% 40% no-repeat;
+    image-rendering: pixelated;
+    animation: ks-spin 0.7s steps(8) infinite;
+    vertical-align: -1px;
   }
 
   @keyframes ks-spin {
@@ -295,18 +316,22 @@
     font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
   }
 
-  button,
-  input {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-    font-size: 13px;
-    letter-spacing: 0.02em;
-    border-radius: var(--radius-sm);
+  button {
+    font-family: var(--font);
+    font-size: 10px;
+    letter-spacing: 0;
+    border-radius: 0;
     transition:
-      transform var(--dur) var(--ease),
-      box-shadow var(--dur) var(--ease),
       border-color var(--dur) var(--ease),
       background-color var(--dur) var(--ease),
       color var(--dur) var(--ease);
+  }
+
+  input {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0;
+    border-radius: 0;
   }
 
   button:hover:not(:disabled) {
@@ -328,20 +353,14 @@
   .card,
   .privacy-bar,
   .table-wrap {
-    border-radius: var(--radius);
-    background: var(--surface);
-    backdrop-filter: blur(var(--blur));
-    -webkit-backdrop-filter: blur(var(--blur));
-    border: 1px solid var(--border);
-    transition:
-      transform var(--dur) var(--ease),
-      box-shadow var(--dur) var(--ease),
-      border-color var(--dur) var(--ease);
+    border-radius: 0;
+    background: none;
+    border: none;
+    border-top: 1px solid var(--border);
   }
 
   .card:hover {
     border-color: rgba(255, 255, 255, 0.18);
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
   }
 
   .card-header,
@@ -362,10 +381,11 @@
   }
 
   .tag {
-    font-size: 11px;
-    border-radius: 999px;
-    padding: 3px 8px;
-    letter-spacing: 0.04em;
+    font-family: var(--font);
+    font-size: 8px;
+    border-radius: 0;
+    padding: 3px 7px;
+    letter-spacing: 0;
   }
 
   table {
@@ -485,12 +505,13 @@
   }
 
   .privacy-badge {
-    font-size: 11px;
-    padding: 4px 8px;
+    font-family: var(--font);
+    font-size: 8px;
+    padding: 4px 7px;
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: 0;
     color: var(--text-secondary);
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
   }
 
   .privacy-badge.enabled {

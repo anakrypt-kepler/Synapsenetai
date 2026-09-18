@@ -18,13 +18,15 @@
     position: relative;
     width: 100%;
     height: var(--stage-h);
+    margin: 0 auto;
+    flex-shrink: 0;
     background: #000000;
     overflow: hidden;
     display: flex;
     align-items: flex-end;
     justify-content: center;
     image-rendering: pixelated;
-    /* Only chrome above; the stage itself is just void + a floor. */
+    /* Full-width floor; tab heroes park in the flex center (no left/right patrol). */
     border-radius: 0;
   }
 

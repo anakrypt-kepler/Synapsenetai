@@ -12,6 +12,17 @@
     type SystemInfo,
   } from "../../lib/rpc";
   import ModelCatalog from "../components/ModelCatalog.svelte";
+  import PixelStage from "../components/sprites/PixelStage.svelte";
+  import PixelSprite from "../components/sprites/PixelSprite.svelte";
+  import gearSprite from "../../assets/sprites/gear.svg";
+  import SkinPicker from "../components/SkinPicker.svelte";
+  import {
+    stationCatalog,
+    stationLook,
+    saveStationLook,
+    loadStationLookFromSettings,
+    type StationLook,
+  } from "../../lib/stationSkins";
 
   let connectionType = "tor";
   let bridgeLines = "";
@@ -52,6 +63,12 @@
   let profileOk = false;
   let avatarStatus = "";
   let avatarOk = false;
+  let stationStatus = "";
+  let stationOk = false;
+  let agent = $stationLook.agent;
+  let floor = $stationLook.floor;
+  let wall = $stationLook.wall;
+  let shell = $stationLook.shell;
   let pqcKem = "ML-KEM-768 / KYBER768";
   let pqcSig = "ML-DSA-65 / DILITHIUM3";
   let pqcHashSig = "SLH-DSA-SHA2-128S / SPHINCS+";
@@ -186,6 +203,11 @@
       autoUpdate = parsed.auto_update == null ? true : asBool(parsed.auto_update, true);
       profileAlias = asStr(parsed.profile_alias, "");
       profileAvatarData = asStr(parsed.profile_avatar, "");
+      const look: StationLook = await loadStationLookFromSettings();
+      agent = look.agent;
+      floor = look.floor;
+      wall = look.wall;
+      shell = look.shell;
     } catch (e) {
       loadStatus = sysNote + failText(e);
       loadOk = false;
@@ -475,6 +497,26 @@
     }
   }
 
+  async function saveStation() {
+    stationStatus = "SAVING...";
+    stationOk = false;
+    saving = "station";
+    try {
+      const err = await saveStationLook({ agent, floor, wall, shell });
+      if (err) {
+        stationStatus = err.toUpperCase();
+        stationOk = false;
+      } else {
+        stationStatus = "STATION SAVED";
+        stationOk = true;
+      }
+    } catch (e) {
+      stationStatus = failText(e);
+      stationOk = false;
+    }
+    saving = "";
+  }
+
   async function saveProfile() {
     profileStatus = "SAVING...";
     profileOk = false;
@@ -497,6 +539,10 @@
 </script>
 
 <div class="content-area ks-set">
+  <div class="page-col">
+  <PixelStage height={60}>
+    <PixelSprite src={gearSprite} anim="rotate" size={24} label="settings" />
+  </PixelStage>
   {#if loadStatus}
     <div class="flash" class:ok={loadOk} class:err={!loadOk && !loadStatus.endsWith("...")}>{loadStatus}</div>
   {/if}
@@ -601,6 +647,19 @@
     {#if naanStatus}<div class="flash" class:ok={naanOk} class:err={!naanOk && !naanStatus.endsWith("...")}>{naanStatus}</div>{/if}
   </div>
 
+  <div class="section-title">Station</div>
+  <div class="card">
+    <p class="hint">These 2D skins paint the NAAN harvest map. Pick in SET or during first-run setup.</p>
+    <div class="station-skins">
+      <SkinPicker title="Agent" kind="agent" items={stationCatalog.agents} bind:value={agent} />
+      <SkinPicker title="Floor" kind="tile" items={stationCatalog.floors} bind:value={floor} />
+      <SkinPicker title="Wall" kind="tile" items={stationCatalog.walls} bind:value={wall} />
+      <SkinPicker title="Hull" kind="tile" items={stationCatalog.shells} bind:value={shell} />
+    </div>
+    <button class="btn-primary" on:click={saveStation} disabled={saving === "station"}>Save</button>
+    {#if stationStatus}<div class="flash" class:ok={stationOk} class:err={!stationOk && !stationStatus.endsWith("...")}>{stationStatus}</div>{/if}
+  </div>
+
   <div class="section-title">Profile</div>
   <div class="card">
     <div class="avatar-area">
@@ -650,27 +709,26 @@
     </div>
     <div class="hint">Handshake, signatures, and Tor are post-quantum or onion-wrapped. MSG is hybrid Kyber+X25519 over Tor when the peer advertised kem_pk; otherwise X25519 crypto_box_seal only (not PQC). The body is not on the wire. Destination onion is still visible to the Tor circuit, like any hidden-service dial.</div>
   </div>
+  </div>
 </div>
 
 <style>
   .ks-set {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Noto Sans", "Liberation Sans", sans-serif);
-    font-size: 13px;
-    line-height: 1.45;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    image-rendering: auto;
     color: var(--text-primary, #f5f5f7);
   }
 
   .ks-set .card {
-    background: var(--surface, rgba(22, 22, 22, 0.62));
-    backdrop-filter: saturate(140%) blur(var(--blur, 22px));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur, 22px));
-    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-    border-radius: var(--radius, 14px);
-    padding: 18px 20px;
-    margin-bottom: 14px;
+    background: none;
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    padding: 14px 2px;
+    margin-bottom: 8px;
   }
 
   .ks-set .section-title {
@@ -709,12 +767,12 @@
   }
 
   .ks-set :global(button) {
-    font-family: inherit;
-    font-size: 13px;
-    font-weight: 600;
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 400;
     letter-spacing: 0;
-    border-radius: var(--radius-sm, 10px);
-    padding: 8px 16px;
+    border-radius: 0;
+    padding: 9px 16px;
     transition: background var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
       border-color var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
       color var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1));
@@ -728,11 +786,12 @@
   }
 
   .ks-set .obtn {
-    font-size: 13px;
-    font-weight: 600;
-    padding: 8px 16px;
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 400;
+    padding: 9px 14px;
     border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-    border-radius: var(--radius-full, 999px);
+    border-radius: 0;
     color: var(--text-secondary, #a1a1a6);
     background: transparent;
     cursor: pointer;
@@ -765,7 +824,8 @@
   .status-dot {
     width: 8px;
     height: 8px;
-    border-radius: 50%;
+    border-radius: 0;
+    image-rendering: pixelated;
   }
 
   .path-row { display: flex; gap: 8px; }
@@ -810,6 +870,13 @@
     letter-spacing: 0;
     color: var(--text-secondary, #a1a1a6);
     line-height: 1.5;
+  }
+
+  .station-skins {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 12px;
   }
 
   .update-row {
@@ -869,11 +936,12 @@
     justify-content: space-between;
     align-items: baseline;
     gap: 12px;
-    padding: 12px 14px;
+    padding: 12px 2px;
     margin-bottom: 8px;
-    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-    border-radius: var(--radius-sm, 10px);
-    background: rgba(255, 255, 255, 0.03);
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    background: none;
   }
 
   .sec-label {

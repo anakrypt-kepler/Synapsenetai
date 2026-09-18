@@ -22,6 +22,20 @@
   <img src="pictures/header.gif" width="420" alt="SynapseNet" />
 </p>
 
+<h2 align="center">The cell</h2>
+
+<p align="center">
+  <img src="pictures/cell-naan.png" width="900" alt="NAAN crew, harvest log, and agent HUD" />
+</p>
+
+<p align="center">
+  <img src="pictures/cell-main.png" width="900" alt="MAIN: balance, Tor, peers, and chain height" />
+</p>
+
+<p align="center">
+  <img src="pictures/cell-station.png" width="900" alt="NAAN station in orbit with crew on the deck" />
+</p>
+
 I built this. One person. C++, crypto, Tor, a local model. Not a company. Not a committee.
 
 SynapseNet is a **decentralized intelligence network**. Bitcoin is to money what this is to knowledge: you mine useful contribution, not hashes. Your machine runs a GGUF. Peers talk over Tor hidden services. **Proof of Emergence** is the ledger that accepts knowledge — an LLM does not judge consensus. **NGT** is the unit on that ledger. **NAAN** is the miner: a local agent that grows the shared knowledge body while you sleep.

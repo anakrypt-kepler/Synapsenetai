@@ -7,6 +7,7 @@
   import "../styles/dark.css";
   import { activeTab, tabSlideDir, showSetupWizard, startStatusPolling, stopStatusPolling } from "../lib/store";
   import { checkFirstLaunch, initEngine } from "../lib/rpc";
+  import { loadStationLookFromSettings } from "../lib/stationSkins";
   import { DUR_TAB_MS, TAB_SLIDE_PX, easeMenuDecel } from "../lib/hyprEase";
   import TopBar from "./components/TopBar.svelte";
   import StatusBar from "./components/StatusBar.svelte";
@@ -44,6 +45,9 @@
     } catch {
       showSetupWizard.set(true);
     }
+    try {
+      await loadStationLookFromSettings();
+    } catch {}
     ready = true;
   });
 
@@ -66,6 +70,8 @@
 {#if !ready}
   <div class="boot-screen">
     <KsSpinner size={56} />
+    <div class="boot-word">SYNAPSENET</div>
+    <div class="boot-sub">BOOTING NODE</div>
   </div>
 {:else if $showSetupWizard}
   <SetupWizard on:complete={onSetupComplete} />
@@ -126,12 +132,28 @@
 <style>
   .boot-screen {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 18px;
     width: 100vw;
     height: 100vh;
     background: #000000;
     animation: boot-in var(--dur-tab) var(--ease-menu) both;
+  }
+
+  .boot-word {
+    font-family: var(--font);
+    font-size: 15px;
+    letter-spacing: 0;
+    color: var(--text-primary);
+  }
+
+  .boot-sub {
+    font-family: var(--font);
+    font-size: 8px;
+    letter-spacing: 0;
+    color: var(--text-faint);
   }
 
   @keyframes boot-in {
@@ -170,6 +192,7 @@
     contain: layout paint;
   }
 
+  /* Pixel mascot slot: keep header.gif, frame it as a hotbar cell (square, hairline). */
   .mascot-slot {
     position: absolute;
     right: 8px;
@@ -181,6 +204,9 @@
     contain: strict;
     isolation: isolate;
     pointer-events: none;
+    border: 1px solid var(--border);
+    border-radius: 0;
+    background: #000000;
   }
 
   .mascot {

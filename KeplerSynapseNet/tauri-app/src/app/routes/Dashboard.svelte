@@ -1,6 +1,12 @@
 <script lang="ts">
   // Home dashboard: NGT balance, Tor/peers, shortcuts into other tabs.
   import { nodeStatus, activeTab } from "../../lib/store";
+  import PixelStage from "../components/sprites/PixelStage.svelte";
+  import PixelSprite from "../components/sprites/PixelSprite.svelte";
+  import nodeSprite from "../../assets/sprites/node.svg";
+  import bookSprite from "../../assets/sprites/book.svg";
+  import gpuSprite from "../../assets/sprites/gpu.svg";
+  import naanWalk from "../../assets/sprites/naan-walk.svg";
 
   $: isTor = $nodeStatus.connection === "tor";
   $: hasOnion = !!$nodeStatus.onion;
@@ -31,6 +37,11 @@
 </script>
 
 <div class="content-area">
+  <div class="page-col">
+  <PixelStage height={64}>
+    <PixelSprite src={nodeSprite} anim={isTor ? "pulse" : "park"} size={26} label="node" />
+  </PixelStage>
+
   <div class="balance-block card">
     <div class="card-header">BALANCE</div>
     <div class="balance-value">{$nodeStatus.balance}<span class="balance-unit">NGT</span></div>
@@ -111,14 +122,17 @@
   <div class="section-title">EARN NGT</div>
   <div class="grid-3 earn-grid">
     <button class="earn-card" type="button" on:click={goKnowledge}>
+      <PixelSprite src={bookSprite} anim="idle" size={18} label="" />
       <div class="card-header">KNOW</div>
       <div class="earn-copy">Submit knowledge. Votes, then finalize. Acceptance pays RingCT to stealth. Author stays public.</div>
     </button>
     <button class="earn-card" type="button" on:click={goIde}>
+      <PixelSprite src={gpuSprite} anim="idle" size={18} label="" />
       <div class="card-header">IDE</div>
       <div class="earn-copy">Submit code the same path. Not hash mining. Pay is the PoE acceptance reward.</div>
     </button>
     <button class="earn-card" type="button" on:click={goNaan}>
+      <PixelSprite src={naanWalk} anim="idle" size={18} label="" />
       <div class="card-header">NAAN</div>
       <div class="earn-copy">Harvests over Tor and files drafts. Does not mint NGT. Mesh mint is only after PoE votes and finalize.</div>
     </button>
@@ -134,18 +148,17 @@
     <button class="btn-secondary" type="button" on:click={goRental}>[ RENT ]</button>
     <button class="btn-secondary" type="button" on:click={goNet}>[ NET ]</button>
   </div>
+  </div>
 </div>
 
 <style>
-  /* Visual reset: antialiased system UI for this tab. */
+  /* Body stays readable mono; chrome (headers/labels/buttons) is pixel via tokens. */
   .content-area {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12px;
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
-    image-rendering: auto;
   }
 
   .content-area :global(.ks-spinner) {
@@ -153,10 +166,11 @@
     width: 14px;
     height: 14px;
     margin-right: 8px;
-    border: 2px solid var(--border);
-    border-top-color: var(--text-primary);
-    border-radius: 50%;
-    animation: ks-spin 0.7s linear infinite;
+    border: 2px solid rgba(255, 255, 255, 0.22);
+    border-radius: 0;
+    background: linear-gradient(#e8e8ed, #e8e8ed) left top / 38% 38% no-repeat;
+    image-rendering: pixelated;
+    animation: ks-spin 0.7s steps(8) infinite;
     vertical-align: -2px;
   }
 
@@ -169,13 +183,11 @@
   }
 
   button {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-    font-size: 12px;
-    letter-spacing: 0.04em;
-    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 10px;
+    letter-spacing: 0;
+    border-radius: 0;
     transition:
-      transform var(--dur) var(--ease),
-      box-shadow var(--dur) var(--ease),
       border-color var(--dur) var(--ease),
       background-color var(--dur) var(--ease),
       color var(--dur) var(--ease);
@@ -192,15 +204,10 @@
 
   .card,
   .balance-block {
-    border-radius: var(--radius);
-    background: var(--surface);
-    backdrop-filter: blur(var(--blur));
-    -webkit-backdrop-filter: blur(var(--blur));
-    border: 1px solid var(--border);
-    transition:
-      transform var(--dur) var(--ease),
-      box-shadow var(--dur) var(--ease),
-      border-color var(--dur) var(--ease);
+    border-radius: 0;
+    background: none;
+    border: none;
+    border-top: 1px solid var(--border);
   }
 
   .card:hover,
@@ -210,11 +217,11 @@
 
   .card-header,
   .section-title {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    color: var(--text-faint);
+    font-family: var(--font);
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0;
+    color: var(--text-secondary);
   }
 
   .balance-block {
@@ -224,29 +231,21 @@
   }
 
   .balance-value {
-    font-size: 32px;
-    font-weight: 650;
-    letter-spacing: -0.03em;
+    font-family: var(--font);
+    font-size: 22px;
+    font-weight: 400;
+    letter-spacing: 0;
     color: var(--text-primary);
     overflow-wrap: anywhere;
+    line-height: 1.5;
   }
 
   .balance-unit {
-    font-size: 13px;
-    font-weight: 500;
+    font-size: 10px;
+    font-weight: 400;
     color: var(--text-secondary);
-    margin-left: 8px;
-    letter-spacing: 0.06em;
-  }
-
-  .main-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 10px;
-  }
-
-  .main-grid .card {
-    min-width: 0;
+    margin-left: 10px;
+    letter-spacing: 0;
   }
 
   .card-header {
@@ -266,10 +265,11 @@
     display: inline-block;
     width: 8px;
     height: 8px;
-    border-radius: 50%;
+    border-radius: 0;
     background: var(--err);
     margin-right: 8px;
     vertical-align: middle;
+    image-rendering: pixelated;
   }
 
   @keyframes tor-pulse {
@@ -289,13 +289,14 @@
   }
 
   .you-badge {
-    font-size: 11px;
-    font-weight: 650;
-    padding: 2px 8px;
-    border-radius: 999px;
+    font-family: var(--font);
+    font-size: 8px;
+    font-weight: 400;
+    padding: 3px 6px;
+    border-radius: 0;
     background: var(--ok);
     color: #000;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
     margin-left: 8px;
     display: inline-block;
     vertical-align: middle;
@@ -352,20 +353,14 @@
 
   .earn-card {
     text-align: left;
-    padding: 14px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    backdrop-filter: blur(var(--blur));
-    -webkit-backdrop-filter: blur(var(--blur));
+    padding: 12px 2px;
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    background: none;
     color: inherit;
     width: 100%;
     min-width: 0;
-    transition:
-      transform var(--dur) var(--ease),
-      box-shadow var(--dur) var(--ease),
-      border-color var(--dur) var(--ease),
-      background-color var(--dur) var(--ease);
   }
 
   .earn-card:hover {

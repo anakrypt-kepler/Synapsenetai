@@ -3,6 +3,9 @@
   // knowledge.submit writes knowledge.jsonl and appends a local PoE block. Still pending — not paid.
   import { onMount } from "svelte";
   import { submitKnowledge, searchKnowledge, rpcCall } from "../../lib/rpc";
+  import PixelStage from "../components/sprites/PixelStage.svelte";
+  import PixelSprite from "../components/sprites/PixelSprite.svelte";
+  import bookSprite from "../../assets/sprites/book.svg";
 
   type KnowledgeHit = { title: string; snippet: string; author: string };
   type KnowledgeSub = { title: string; kind?: string; status: string; ngt_earned: string };
@@ -111,9 +114,16 @@
       poeStats = { ...poeStats, ...JSON.parse(result) };
     } catch {}
   }
+
+  // Presentational: the book blinks once the local KB has entries.
+  $: hasEntries = (poeStats.total_entries || 0) > 0 || mySubmissions.length > 0;
 </script>
 
 <div class="content-area">
+  <div class="page-col">
+  <PixelStage height={60}>
+    <PixelSprite src={bookSprite} anim={hasEntries ? "blink" : "park"} size={24} label="knowledge" />
+  </PixelStage>
   <div class="section-title">SUBMIT KNOWLEDGE</div>
   <div class="card">
     <div class="path-hint">submit → local record pending → NGT on finalize</div>
@@ -169,7 +179,8 @@
     {/each}
   </div>
 
-  <div class="section-title">MY SUBMISSIONS</div>
+  <div class="card">
+    <div class="card-header">MY SUBMISSIONS</div>
   <div class="table-wrap">
     <table>
       <thead>
@@ -191,6 +202,7 @@
         {/each}
       </tbody>
     </table>
+  </div>
   </div>
 
   <div class="section-title">POE (PROOF OF EMERGENCE)</div>
@@ -218,56 +230,32 @@
       <div class="card-value">{poeStats.next_epoch_in}</div>
     </div>
   </div>
+  </div>
 </div>
 
 <style>
   .content-area {
-    font-family: var(--font);
-    font-size: 13px;
-    line-height: 1.45;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
     color: var(--text-primary);
     background: transparent;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    image-rendering: auto;
     padding-bottom: 84px;
   }
 
-  .section-title {
-    font-family: var(--font);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    color: var(--text-secondary);
-    margin-bottom: 10px;
-    margin-top: 20px;
-  }
-
-  .section-title:first-child {
-    margin-top: 0;
-  }
-
   .card {
-    background: var(--surface);
-    backdrop-filter: saturate(140%) blur(var(--blur));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px;
-    margin-bottom: 10px;
-    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+    background: none;
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    padding: 14px 2px;
+    margin-bottom: 8px;
   }
 
   .card:hover {
     border-color: rgba(255, 255, 255, 0.18);
-  }
-
-  .card-header {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    color: var(--text-secondary);
-    margin-bottom: 6px;
   }
 
   .card-value {
@@ -284,19 +272,19 @@
     color: var(--text-secondary);
   }
 
-  .content-area :global(input),
-  .content-area :global(textarea),
   .content-area :global(button) {
     font-family: var(--font);
-    font-size: 13px;
-    border-radius: var(--radius-sm);
-    image-rendering: auto;
+    font-size: 10px;
+    border-radius: 0;
     -webkit-font-smoothing: antialiased;
     transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
   }
 
   .content-area :global(input),
   .content-area :global(textarea) {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    border-radius: 0;
     background: rgba(0, 0, 0, 0.45);
     border: 1px solid var(--border);
     color: var(--text-primary);
@@ -374,18 +362,13 @@
   }
 
   .table-wrap {
-    background: var(--surface);
-    backdrop-filter: saturate(140%) blur(var(--blur));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
     overflow: auto;
     margin-bottom: 10px;
   }
 
   .table-wrap table {
-    font-family: var(--font);
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12px;
     margin: 0;
   }
 

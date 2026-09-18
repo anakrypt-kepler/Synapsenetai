@@ -202,10 +202,9 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Noto Sans", "Liberation Sans", sans-serif);
+    font-family: var(--font-mono);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    image-rendering: auto;
   }
 
   .note, .dir {
@@ -233,16 +232,15 @@
     gap: 8px 12px;
     align-items: center;
     padding: 14px 16px;
-    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-    border-radius: var(--radius, 14px);
-    background: rgba(255, 255, 255, 0.04);
-    transition: border-color var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
-      background var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1));
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+    border-radius: 0;
+    background: transparent;
+    transition: border-color var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1));
   }
 
   .row.active {
-    border-color: rgba(255, 255, 255, 0.28);
-    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.4);
+    background: transparent;
   }
 
   .meta {
@@ -257,8 +255,10 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    font-size: 14px;
-    font-weight: 600;
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.6;
     color: var(--text-primary, #f5f5f7);
   }
 
@@ -307,12 +307,12 @@
   }
 
   .catalog :global(button) {
-    font-family: inherit;
-    font-size: 13px;
-    font-weight: 600;
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 400;
     letter-spacing: 0;
-    border-radius: var(--radius-sm, 10px);
-    padding: 8px 14px;
+    border-radius: 0;
+    padding: 9px 14px;
     transition: background var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
       border-color var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
       color var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1));

@@ -2,6 +2,9 @@
   // NET MVP: you are a Tor cell. Dead directory onions are not peers.
   import { onMount, onDestroy } from "svelte";
   import { rpcCall } from "../../lib/rpc";
+  import PixelStage from "../components/sprites/PixelStage.svelte";
+  import PixelSprite from "../components/sprites/PixelSprite.svelte";
+  import onionSprite from "../../assets/sprites/onion.svg";
 
   interface PeerInfo {
     address: string;
@@ -345,6 +348,10 @@
 </script>
 
 <div class="content-area net-page">
+  <div class="page-col">
+  <PixelStage height={60}>
+    <PixelSprite src={onionSprite} anim={onTor ? "pulse" : "park"} size={24} label="tor circuit" />
+  </PixelStage>
   <div class="section-title">THIS SESSION</div>
   <div class="card">
     <div class="card-header">YOUR ONION — NEW EACH LAUNCH. THIS IS HOW YOU SHOW UP.</div>
@@ -357,6 +364,7 @@
   </div>
 
   <div class="section-title">PEER MAP</div>
+  <div class="card">
   <div class="peer-map">
     <div
       class="map-viewport"
@@ -443,6 +451,7 @@
       <div class="map-hint">Alone for now. When others join, they fan out around you as a mesh.</div>
     {/if}
   </div>
+  </div>
 
   <div class="grid-3">
     <div class="card">
@@ -459,10 +468,11 @@
     </div>
   </div>
 
-  <div class="section-title peers-header">
+  <div class="card">
+    <div class="card-header peers-header">
     <span>MESH — YOU {youUp ? "1" : "0"} · REMOTE {remoteUp} UP</span>
     <span class="net-status {onTor ? 'online' : 'connecting'}">{meshLabel()}</span>
-  </div>
+    </div>
   <div class="table-wrap">
     <table>
       <thead><tr><th></th><th>NODE</th><th>ROLE</th><th>PING</th><th>UP</th></tr></thead>
@@ -483,6 +493,7 @@
         {/each}
       </tbody>
     </table>
+  </div>
   </div>
   {#if listed.length > 0 && remotes.length === 0}
     <div class="hint">You are the cell. Share your onion so someone can join.</div>
@@ -519,37 +530,37 @@
       <div class="card-value">{discovery.peer_exchange}</div>
     </div>
   </div>
+  </div>
 </div>
 
 <style>
-  /* Sans chrome + glass cards. Graph positions stay the same. */
+  /* Flat black chrome. Graph positions stay the same (real peer data). */
   .net-page {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif);
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12px;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    image-rendering: auto;
     padding-bottom: 72px;
   }
 
   .net-page :global(.section-title) {
-    font-family: inherit;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
+    font-family: var(--font);
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0;
   }
 
   .net-page :global(.card) {
-    border-radius: var(--radius, 14px);
-    background: var(--surface);
-    backdrop-filter: blur(22px) saturate(140%);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    border-radius: 0;
+    background: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .net-page :global(.card-header) {
-    font-family: inherit;
-    font-size: 11px;
-    letter-spacing: 0.06em;
+    font-family: var(--font);
+    font-size: 9px;
+    letter-spacing: 0;
   }
 
   .net-page :global(.card-value) {
@@ -559,12 +570,11 @@
   }
 
   .net-page :global(button) {
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 600;
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 400;
     letter-spacing: 0;
-    border-radius: var(--radius-sm, 10px);
-    image-rendering: auto;
+    border-radius: 0;
     -webkit-font-smoothing: antialiased;
     transition:
       background var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
@@ -586,9 +596,9 @@
   }
 
   .net-page :global(th) {
-    font-family: inherit;
-    font-size: 11px;
-    letter-spacing: 0.06em;
+    font-family: var(--font);
+    font-size: 9px;
+    letter-spacing: 0;
   }
 
   .net-page :global(code) {
@@ -637,11 +647,11 @@
   }
 
   .peer-map {
-    border: 1px solid var(--border);
-    border-radius: var(--radius, 14px);
-    padding: 8px 8px 4px;
+    border: none;
+    border-radius: 0;
+    padding: 8px 0 4px;
     margin-top: 4px;
-    background: #0a0a0a;
+    background: #000000;
     overflow: hidden;
   }
 
@@ -672,12 +682,11 @@
   }
 
   .table-wrap {
-    border: 1px solid var(--border);
-    border-radius: var(--radius, 14px);
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
     overflow: hidden;
-    background: var(--surface);
-    backdrop-filter: blur(22px) saturate(140%);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    background: none;
   }
 
   .table-wrap :global(th),
@@ -713,16 +722,17 @@
   }
 
   .up-badge {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 7px;
+    font-family: var(--font);
+    font-size: 8px;
+    font-weight: 400;
+    padding: 3px 6px;
     background: var(--ok);
     color: #000;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
     margin-left: 8px;
     display: inline-block;
     vertical-align: middle;
-    border-radius: 999px;
+    border-radius: 0;
   }
 
   .onion-line {

@@ -2,9 +2,29 @@
   // NAAN harvests drafts over Tor. It does not mint NGT. Pay is PoE finalize.
   import { onMount, onDestroy, afterUpdate } from "svelte";
   import { naanControl, naanConfigUpdate, rpcCall } from "../../lib/rpc";
+  import NaanStation from "../components/sprites/NaanStation.svelte";
+  import SynapseHoloLogo from "../components/sprites/SynapseHoloLogo.svelte";
+  import NaanAgentHud from "../components/naan/NaanAgentHud.svelte";
+  import NaanCrewRoster from "../components/naan/NaanCrewRoster.svelte";
+  import {
+    naanRooms,
+    naanCrew,
+    ROOM_META,
+    MAX_CREW,
+    togglePrimaryRoom,
+    addCrewMember,
+    removeCrewMember,
+    toggleCrewRoom,
+    setCrewSkin,
+    loadNaanDeckFromSettings,
+  } from "../../lib/naanCrew";
+  import { stationCatalog, findAgent, agentPortraitSrc, stationLook } from "../../lib/stationSkins";
+  import { harvestLevel } from "../../lib/naanXp";
+  import { PRIMARY_NAAN_ID } from "../../lib/synapseHolo";
 
   let agentStatus = "OFF";
   let agentScore = { band: "-", submissions: 0, approval_rate: "0%" };
+  let approved = 0;
   let currentTask = "";
   let submissionHistory: { title: string; result: string; ngt_earned: string }[] = [];
   // Only filled when naan.status actually returns observatory rows. Never invent agents.
@@ -16,6 +36,8 @@
   let modelName = "";
   let modelLoaded = false;
   let inferenceReady = false;
+  let focusedId = PRIMARY_NAAN_ID;
+  let nowLine = "";
 
   let topicPreferences = "";
   let researchSources = "tor";
@@ -33,6 +55,7 @@
   let prevLogLen = 0;
 
   onMount(async () => {
+    await loadNaanDeckFromSettings();
     await loadAgentState();
     pollHandle = setInterval(loadAgentState, 3000);
   });
@@ -99,6 +122,7 @@
         submissions: Number(parsed.submissions) || 0,
         approval_rate: Number.isFinite(rate) ? Math.round(rate) + "%" : "0%",
       };
+      approved = Number(parsed.approved) || 0;
       currentTask = parsed.current_task || "";
       totalNgt = Number(parsed.total_ngt) || 0;
       modelLoaded = parsed.model_loaded === true;
@@ -227,6 +251,55 @@
   $: bypassList = Object.entries(bypassCounters).sort((a, b) => b[1] - a[1]);
   $: statusWarn = agentStatus === "COOLDOWN" || agentStatus === "BUDGET_EXHAUSTED";
   $: stopping = agentStatus === "STOPPING";
+  $: lastLog = agentLog.length ? agentLog[agentLog.length - 1].msg : "";
+  $: xp = harvestLevel({ submissions: agentScore.submissions, ngt: totalNgt });
+  $: harvestFocus = focusedId === PRIMARY_NAAN_ID;
+  $: focusSkin = harvestFocus
+    ? $stationLook.agent
+    : ($naanCrew.find((c) => c.id === focusedId)?.skin || $stationLook.agent);
+  $: roster = [
+    {
+      id: PRIMARY_NAAN_ID,
+      name: findAgent($stationLook.agent).label,
+      portrait: agentPortraitSrc($stationLook.agent),
+      level: xp.level,
+      working: agentStatus === "ACTIVE",
+      harvest: true,
+    },
+    ...$naanCrew.map((c) => ({
+      id: c.id,
+      name: findAgent(c.skin).label,
+      portrait: agentPortraitSrc(c.skin),
+      level: 1,
+      working: false,
+      harvest: false,
+    })),
+  ];
+  let hudKind: "down" | "working" | "on" = "on";
+  $: hudKind = pollError || agentStatus === "QUARANTINE"
+    ? "down"
+    : harvestFocus && (agentStatus === "ACTIVE" || stopping)
+      ? "working"
+      : "on";
+  $: hudStatus = pollError || agentStatus === "QUARANTINE"
+    ? "OFFLINE"
+    : harvestFocus && (agentStatus === "ACTIVE" || stopping)
+      ? "WORKING"
+      : harvestFocus
+        ? "ONLINE"
+        : "IDLE";
+  $: doneRows = harvestFocus ? submissionHistory.slice(-4).reverse() : [];
+  $: logTail = harvestFocus
+    ? agentLog.slice(-4).map((e) => ({ ts: fmtTime(e.ts), msg: e.msg }))
+    : [];
+  $: if (focusedId !== PRIMARY_NAAN_ID && !$naanCrew.some((c) => c.id === focusedId)) {
+    focusedId = PRIMARY_NAAN_ID;
+  }
+
+  function onCrewSkin(id: string, ev: Event) {
+    const el = ev.currentTarget;
+    if (el instanceof HTMLSelectElement) void setCrewSkin(id, el.value);
+  }
 </script>
 
 <div class="content-area">
@@ -237,7 +310,40 @@
     <div class="error-msg">{actionError}</div>
   {/if}
 
-  <div class="grid-2">
+  <div class="page-col">
+  <SynapseHoloLogo />
+  <NaanStation
+    status={agentStatus}
+    task={currentTask}
+    lastLog={lastLog}
+    submissions={agentScore.submissions}
+    ngt={totalNgt}
+    bind:focusedId
+    bind:nowLine
+  />
+
+  <div class="hud-row">
+    <NaanCrewRoster rows={roster} bind:focusedId />
+    <div class="hud-col">
+      <NaanAgentHud
+        name={findAgent(focusSkin).label}
+        portrait={agentPortraitSrc(focusSkin)}
+        harvest={harvestFocus}
+        statusKind={hudKind}
+        statusText={hudStatus}
+        model={modelName}
+        runs={harvestFocus ? agentScore.submissions : null}
+        level={harvestFocus ? xp.level : null}
+        kudos={harvestFocus ? approved : null}
+        {nowLine}
+        purpose={topicPreferences}
+        done={doneRows}
+        {logTail}
+      />
+    </div>
+  </div>
+
+  <div class="main-grid">
     <div class="card">
       <div class="card-header">STATUS</div>
       <div
@@ -280,33 +386,74 @@
     </div>
   </div>
 
-  <div class="grid-4">
-    <div class="card">
-      <div class="card-header">BAND</div>
-      <div class="card-value">{agentScore.band}</div>
-    </div>
-    <div class="card">
-      <div class="card-header">SUBS</div>
-      <div class="card-value">{agentScore.submissions}</div>
-    </div>
-    <div class="card">
-      <div class="card-header">RATE</div>
-      <div class="card-value">{agentScore.approval_rate}</div>
-    </div>
-    <div class="card">
-      <div class="card-header">EARNED NGT</div>
-      <div class="card-value ngt-val">{fmtNgt(totalNgt)} NGT</div>
-      <div class="ngt-note">0 until peer finalize</div>
-    </div>
-  </div>
   <p class="honest-note">
     NAAN harvests over Tor and files drafts. It does not credit the stealth wallet.
     NGT mints only after M-of-N votes and PoE finalize.
   </p>
 
   <div class="card">
-    <div class="card-header">CURRENT TASK</div>
-    <div class="task-txt">{currentTask || "IDLE"}</div>
+    <div class="card-header">COMMAND BLOCKS</div>
+    <div class="blk-row">
+      {#each ROOM_META as r}
+        <button
+          class="blk"
+          class:on={$naanRooms.includes(r.id)}
+          type="button"
+          disabled={$naanRooms.includes(r.id) && $naanRooms.length <= 1}
+          on:click={() => togglePrimaryRoom(r.id)}
+        >
+          {r.name}
+        </button>
+      {/each}
+    </div>
+    <p class="hint">Square toggles add or remove rooms and their props. At least one block stays so the walker can stand. Engine harvest is unchanged.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-header">CREW</div>
+    <div class="crew-actions">
+      <button
+        class="btn-secondary"
+        type="button"
+        disabled={$naanCrew.length >= MAX_CREW}
+        on:click={() => addCrewMember()}
+      >[ + AGENT ]</button>
+    </div>
+    {#each $naanCrew as c (c.id)}
+      <div class="crew-block">
+        <div class="crew-top">
+          <span class="crew-name">{findAgent(c.skin).label}</span>
+          <select
+            class="crew-skin"
+            value={c.skin}
+            on:change={(e) => onCrewSkin(c.id, e)}
+          >
+            {#each stationCatalog.agents as a}
+              <option value={a.id}>{a.label}</option>
+            {/each}
+          </select>
+          <button class="btn-secondary" type="button" on:click={() => {
+            if (focusedId === c.id) focusedId = PRIMARY_NAAN_ID;
+            void removeCrewMember(c.id);
+          }}>[ REMOVE ]</button>
+        </div>
+        <div class="blk-row">
+          {#each ROOM_META as r}
+            <button
+              class="blk"
+              class:on={c.rooms.includes(r.id)}
+              type="button"
+              disabled={c.rooms.includes(r.id) && c.rooms.length <= 1}
+              on:click={() => toggleCrewRoom(c.id, r.id)}
+            >
+              {r.name}
+            </button>
+          {/each}
+        </div>
+      </div>
+    {:else}
+      <p class="hint">No extra NAAN on this station. + AGENT adds an east wing, its own skin, and its own walker.</p>
+    {/each}
   </div>
 
   {#if lastBypass && lastBypass.cve}
@@ -411,40 +558,72 @@
       </tbody>
     </table>
   </div>
+  </div>
 </div>
 
 <style>
   .content-area {
-    font-family: var(--font);
-    font-size: 13px;
-    line-height: 1.45;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
     color: var(--text-primary);
     background: transparent;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    image-rendering: auto;
-    padding-bottom: 84px;
+    height: 100%;
+    overflow-y: auto;
+    padding: 18px 20px 84px;
+    box-sizing: border-box;
+    --ph: var(--cy, #00e5ff);
+    --ph-bright: #b8fbff;
+    --ph-dim: #148a99;
+    --ph-faint: #041418;
+    --ph-glow: rgba(0, 229, 255, 0.5);
+    --ph-glow2: rgba(0, 229, 255, 0.14);
+    --gold: #ffd34a;
+  }
+
+  .page-col {
+    max-width: 980px;
+    margin-inline: auto;
+    width: 100%;
+  }
+
+  .hud-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+    gap: 16px;
+    margin: 0 0 14px;
+    align-items: start;
+  }
+
+  .hud-col {
+    min-width: 0;
+  }
+
+  @media (max-width: 720px) {
+    .hud-row {
+      grid-template-columns: 1fr;
+    }
   }
 
   .section-title {
     font-family: var(--font);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0;
     color: var(--text-secondary);
     margin-bottom: 10px;
     margin-top: 20px;
   }
 
   .card {
-    background: var(--surface);
-    backdrop-filter: saturate(140%) blur(var(--blur));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px;
+    background: none;
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    padding: 16px 2px;
     margin-bottom: 10px;
-    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
   }
 
   .card:hover {
@@ -452,9 +631,10 @@
   }
 
   .card-header {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
+    font-family: var(--font);
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0;
     color: var(--text-secondary);
     margin-bottom: 6px;
   }
@@ -472,19 +652,20 @@
     letter-spacing: 0.06em;
   }
 
-  .content-area :global(input),
-  .content-area :global(textarea),
   .content-area :global(button) {
     font-family: var(--font);
-    font-size: 13px;
-    border-radius: var(--radius-sm);
-    image-rendering: auto;
+    font-size: 10px;
+    border-radius: 0;
     -webkit-font-smoothing: antialiased;
     transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
   }
 
   .content-area :global(input),
-  .content-area :global(textarea) {
+  .content-area :global(textarea),
+  .content-area :global(select) {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    border-radius: 0;
     background: rgba(0, 0, 0, 0.45);
     border: 1px solid var(--border);
     color: var(--text-primary);
@@ -492,7 +673,8 @@
   }
 
   .content-area :global(input:focus),
-  .content-area :global(textarea:focus) {
+  .content-area :global(textarea:focus),
+  .content-area :global(select:focus) {
     border-color: rgba(255, 255, 255, 0.32);
     outline: none;
   }
@@ -518,25 +700,6 @@
 
   .ctrl-actions {
     margin-top: 6px;
-  }
-
-  .grid-4 {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 10px;
-    margin-bottom: 8px;
-  }
-
-  .ngt-val {
-    color: var(--ok);
-    font-size: 15px;
-  }
-
-  .ngt-note {
-    font-size: 11px;
-    color: var(--text-secondary);
-    margin-top: 4px;
-    line-height: 1.4;
   }
 
   .honest-note {
@@ -565,13 +728,6 @@
     margin: 0 0 0 10px;
     padding: 6px 10px;
     vertical-align: middle;
-  }
-
-  .task-txt {
-    font-size: 13px;
-    color: var(--text-primary);
-    margin-top: 4px;
-    line-height: 1.5;
   }
 
   .bypass-card {
@@ -669,8 +825,9 @@
     flex-shrink: 0;
   }
 
+  /* Green terminal log on black. */
   .chat-msg {
-    color: var(--text-primary);
+    color: var(--ok);
     word-break: break-word;
   }
 
@@ -730,8 +887,8 @@
   }
 
   .table-wrap table {
-    font-family: var(--font);
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12px;
     margin: 0;
   }
 
@@ -771,5 +928,71 @@
   .ks-busy .ks-spinner {
     width: 16px;
     height: 16px;
+  }
+
+  .blk-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .blk {
+    font-family: var(--font);
+    font-size: 8px;
+    letter-spacing: 0;
+    color: var(--text-secondary);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 0;
+    min-width: 72px;
+    min-height: 36px;
+    padding: 10px 8px;
+    line-height: 1.3;
+  }
+
+  .blk.on {
+    color: var(--text-primary);
+    border-color: var(--cy, #00e5ff);
+  }
+
+  .blk:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .crew-actions {
+    margin-top: 6px;
+  }
+
+  .crew-block {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .crew-top {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .crew-name {
+    font-family: var(--font);
+    font-size: 9px;
+    color: var(--text-primary);
+    min-width: 0;
+  }
+
+  .crew-skin {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    border-radius: 0;
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    min-width: 140px;
   }
 </style>

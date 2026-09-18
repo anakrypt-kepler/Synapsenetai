@@ -3,6 +3,9 @@
   import { onMount } from "svelte";
   import { harvestList, harvestGet } from "../../lib/rpc";
   import { convertFileSrc } from "@tauri-apps/api/core";
+  import PixelStage from "../components/sprites/PixelStage.svelte";
+  import PixelSprite from "../components/sprites/PixelSprite.svelte";
+  import naanWalk from "../../assets/sprites/naan-walk.svg";
 
   interface HarvestAsset {
     sha256: string;
@@ -301,6 +304,10 @@
 
 {#if selected}
 <div class="content-area">
+  <div class="page-col">
+  <PixelStage height={56}>
+    <PixelSprite src={naanWalk} anim="park" size={26} label="harvester" />
+  </PixelStage>
   <button type="button" class="btn-back" on:click={clearSelection}>BACK</button>
   <div class="section-title">{displayText(selected.title) || "UNTITLED"}</div>
 
@@ -365,6 +372,8 @@
     {/each}
   </div>
   {/if}
+  <div class="card">
+    <div class="card-header">FILES</div>
   <div class="table-wrap">
     <table>
       <thead><tr><th>SHA-256</th><th>TYPE</th><th>SIZE</th><th>VT</th></tr></thead>
@@ -383,37 +392,56 @@
       </tbody>
     </table>
   </div>
+  </div>
   {/if}
 
   {#if selected.text}
-  <div class="section-title">TEXT</div>
-  <div class="text-block">{displayText(selected.text)}</div>
+  <div class="card">
+    <div class="card-header">TEXT</div>
+    <div class="text-block">{displayText(selected.text)}</div>
+  </div>
   {/if}
 
-  <div class="section-title">IDENTITY</div>
   <div class="card">
+    <div class="card-header">IDENTITY</div>
     <div class="meta-row">DRAFT: <span class="mono">{shortId(selected.draft_sha256)}</span></div>
     <div class="meta-row">NODE: <span class="mono">{shortId(selected.node_id_hash)}</span></div>
+  </div>
   </div>
 </div>
 
 {:else}
 
 <div class="content-area">
+  <div class="page-col">
+  <PixelStage height={64}>
+    <PixelSprite src={naanWalk} anim="park" size={26} label="harvester" />
+  </PixelStage>
   <div class="section-title">KNOWLEDGE HARVEST</div>
   {#if loading}
-    <div class="loading">
-      <span class="ks-spinner"></span>
-      <span>Loading harvests</span>
+    <div class="card">
+      <div class="card-header">ENTRIES</div>
+      <div class="loading">
+        <span class="ks-spinner"></span>
+        <span>Loading harvests</span>
+      </div>
     </div>
   {:else if entries.length === 0 && offset === 0}
-    <div class="empty-state">No harvests yet. Run NAAN.</div>
+    <div class="card">
+      <div class="card-header">ENTRIES</div>
+      <div class="empty-state">No harvests yet. Run NAAN.</div>
+    </div>
   {:else if entries.length === 0}
-    <div class="empty-state">No more entries.</div>
-    <div class="pagination">
-      <button type="button" class="btn-primary" disabled={!canPrev} on:click={goPrev}>PREV</button>
+    <div class="card">
+      <div class="card-header">ENTRIES</div>
+      <div class="empty-state">No more entries.</div>
+      <div class="pagination">
+        <button type="button" class="btn-primary" disabled={!canPrev} on:click={goPrev}>PREV</button>
+      </div>
     </div>
   {:else}
+    <div class="card">
+      <div class="card-header">ENTRIES</div>
     <div class="table-wrap">
       <table>
         <thead>
@@ -460,144 +488,78 @@
       {/if}
     </div>
     {/if}
+    </div>
   {/if}
+  </div>
 </div>
 {/if}
 
 <style>
   .content-area {
-    font-family: var(--font);
-    font-size: 13px;
-    line-height: 1.45;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
     color: var(--text-primary);
     background: transparent;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    image-rendering: auto;
     padding-bottom: 84px;
   }
 
-  .section-title {
-    font-family: var(--font);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    color: var(--text-secondary);
-    margin-bottom: 10px;
-    margin-top: 20px;
-  }
-
-  .section-title:first-child {
-    margin-top: 0;
-  }
-
   .card {
-    background: var(--surface);
-    backdrop-filter: saturate(140%) blur(var(--blur));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px;
-    margin-bottom: 10px;
-    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+    border-radius: 0;
+    background: none;
+    border: none;
+    border-top: 1px solid var(--border);
   }
 
   .card:hover {
     border-color: rgba(255, 255, 255, 0.18);
   }
 
-  .card-header {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    color: var(--text-secondary);
-    margin-bottom: 6px;
-  }
-
   .card-value {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text-primary);
     overflow-wrap: anywhere;
   }
 
   .content-area :global(button) {
     font-family: var(--font);
-    font-size: 13px;
-    border-radius: var(--radius-sm);
-    image-rendering: auto;
+    font-size: 10px;
+    border-radius: 0;
     -webkit-font-smoothing: antialiased;
-    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
-  }
-
-  .btn-primary {
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    padding: 8px 16px;
   }
 
   .btn-back {
-    background: var(--surface);
-    backdrop-filter: saturate(140%) blur(var(--blur));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
+    background: none;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: 0;
     color: var(--text-primary);
     font-family: var(--font);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    padding: 8px 14px;
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0;
+    padding: 8px 12px;
     cursor: pointer;
-    margin-bottom: 12px;
-    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+    margin: 10px 0 8px;
   }
 
   .btn-back:hover {
     background: var(--accent-muted);
-    border-color: rgba(255, 255, 255, 0.22);
+    border-color: rgba(255, 255, 255, 0.4);
   }
 
   .table-wrap {
-    background: var(--surface);
-    backdrop-filter: saturate(140%) blur(var(--blur));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
     overflow: auto;
-    margin-bottom: 10px;
-  }
-
-  .table-wrap table {
-    font-family: var(--font);
-    font-size: 13px;
     margin: 0;
   }
 
-  .table-wrap th {
-    font-family: var(--font);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    color: var(--text-secondary);
-    padding: 10px 12px;
-  }
-
-  .table-wrap td {
-    font-size: 13px;
-    padding: 10px 12px;
-  }
-
-  .tag {
-    font-family: var(--font);
-    font-size: 11px;
-    border-radius: var(--radius-full, 999px);
-    padding: 2px 8px;
+  .table-wrap table {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    margin: 0;
   }
 
   .clickable {
     cursor: pointer;
-    transition: background var(--dur) var(--ease);
   }
   .clickable:hover { background: var(--accent-muted); }
 
@@ -611,9 +573,8 @@
   }
 
   .cve-badge {
-    background: rgba(0, 0, 0, 0.35);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: 0;
     padding: 2px 8px;
     font-size: 12px;
     font-family: var(--font-mono);
@@ -624,8 +585,9 @@
     display: inline-block;
     width: 7px;
     height: 7px;
-    border-radius: 50%;
+    border-radius: 0;
     margin-right: 4px;
+    image-rendering: pixelated;
   }
 
   .img-grid {
@@ -637,10 +599,8 @@
 
   .img-thumb {
     width: 132px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--surface);
-    padding: 6px;
+    border-top: 1px solid var(--border);
+    padding: 6px 2px;
   }
 
   .img-thumb img {
@@ -648,7 +608,7 @@
     height: 88px;
     object-fit: cover;
     display: block;
-    border-radius: 8px;
+    border-radius: 0;
     image-rendering: auto;
   }
 
@@ -675,14 +635,8 @@
   }
 
   .text-block {
-    background: var(--surface);
-    backdrop-filter: saturate(140%) blur(var(--blur));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 14px;
-    font-family: var(--font);
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12px;
     line-height: 1.55;
     max-height: 300px;
     overflow-y: auto;
@@ -709,12 +663,9 @@
     justify-content: center;
     gap: 10px;
     text-align: center;
-    padding: 32px 16px;
+    padding: 24px 8px;
     color: var(--text-secondary);
-    font-size: 13px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    font-size: 12px;
   }
 
   .loading .ks-spinner {

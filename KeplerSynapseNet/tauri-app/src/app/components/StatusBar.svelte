@@ -38,17 +38,17 @@
     align-items: center;
     height: var(--statusbar-h);
     border-top: 1px solid var(--border);
-    background: var(--surface);
-    backdrop-filter: saturate(140%) blur(var(--blur));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
-    padding: 0 12px;
-    font-size: 11px;
+    background: #000000;
+    padding: 0 10px;
+    font-family: var(--font);
+    font-size: 8px;
     color: var(--text-secondary);
     flex-shrink: 0;
     gap: 0;
-    letter-spacing: 0.04em;
-    font-weight: 500;
+    letter-spacing: 0;
+    font-weight: 400;
     text-transform: uppercase;
+    overflow-x: auto;
   }
 
   .statusbar-item {
@@ -77,13 +77,14 @@
   .conn-indicator {
     width: 7px;
     height: 7px;
-    border-radius: var(--radius-full);
+    border-radius: 0;
     background: var(--err);
     flex-shrink: 0;
+    image-rendering: pixelated;
   }
 
   .conn-indicator.connected {
-    background: var(--text-primary);
+    background: var(--ok);
   }
 
   @keyframes blink-tor {

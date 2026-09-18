@@ -4,6 +4,9 @@
   import { onMount, onDestroy } from "svelte";
   import { rpcCall } from "../../lib/rpc";
   import { nodeStatus } from "../../lib/store";
+  import PixelStage from "../components/sprites/PixelStage.svelte";
+  import PixelSprite from "../components/sprites/PixelSprite.svelte";
+  import gpuSprite from "../../assets/sprites/gpu.svg";
 
   interface GpuListing {
     node_id: string;
@@ -111,6 +114,10 @@
 </script>
 
 <div class="content-area rent-page">
+  <div class="page-col">
+  <PixelStage height={60}>
+    <PixelSprite src={gpuSprite} anim="park" size={26} label="gpu" />
+  </PixelStage>
   <div class="info-box">
     <div class="info-title">LOCAL SHARE FLAG ONLY</div>
     <div class="info-line">SHARE GPU writes a local sharing flag and price. Other nodes cannot see it.</div>
@@ -122,7 +129,8 @@
     <div class="error-msg">{listError}</div>
   {/if}
 
-  <div class="section-title">BROWSE</div>
+  <div class="card">
+    <div class="card-header">BROWSE</div>
   {#if listings.length === 0}
     <div class="empty-block">
       <div class="empty-head">NO REMOTE GPUs</div>
@@ -154,8 +162,10 @@
     </div>
     <div class="stub-line">RENT DISABLED — NOT A REAL RENTAL. ENGINE STUB.</div>
   {/if}
+  </div>
 
-  <div class="section-title">MY RENTALS</div>
+  <div class="card">
+    <div class="card-header">MY RENTALS</div>
   {#if myRentals.length === 0}
     <div class="empty-block">
       <div class="empty-head">NO RENTALS</div>
@@ -186,6 +196,7 @@
     </div>
     <div class="stub-line">STOP DISABLED — ENGINE DOES NOT PERSIST RENTALS.</div>
   {/if}
+  </div>
 
   <div class="section-title">SHARE GPU</div>
   <div class="card">
@@ -217,46 +228,45 @@
     <div class="info-line">2. Advertise the share flag over Tor so other nodes can fill rental.list.</div>
     <div class="info-line">3. Require an NGT payment before a rental is real. No free stub rent.</div>
   </div>
+  </div>
 </div>
 
 <style>
-  /* Forms and cards only. Share price storage is unchanged. */
+  /* Flat black. Forms and cards only. Share price storage is unchanged. */
   .rent-page {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif);
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12px;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    image-rendering: auto;
     padding-bottom: 72px;
   }
 
   .rent-page :global(.section-title) {
-    font-family: inherit;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
+    font-family: var(--font);
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0;
   }
 
   .rent-page :global(.card) {
-    border-radius: var(--radius, 14px);
-    background: var(--surface);
-    backdrop-filter: blur(22px) saturate(140%);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    border-radius: 0;
+    background: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .rent-page :global(.card-header) {
-    font-family: inherit;
-    font-size: 11px;
-    letter-spacing: 0.06em;
+    font-family: var(--font);
+    font-size: 9px;
+    letter-spacing: 0;
   }
 
   .rent-page :global(button) {
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 600;
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 400;
     letter-spacing: 0;
-    border-radius: var(--radius-sm, 10px);
-    image-rendering: auto;
+    border-radius: 0;
     -webkit-font-smoothing: antialiased;
     transition:
       background var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
@@ -265,18 +275,17 @@
   }
 
   .rent-page :global(input) {
-    font-family: inherit;
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12px;
     letter-spacing: 0;
-    border-radius: var(--radius-sm, 10px);
-    image-rendering: auto;
+    border-radius: 0;
     -webkit-font-smoothing: antialiased;
   }
 
   .rent-page :global(.form-group label) {
-    font-family: inherit;
-    font-size: 11px;
-    letter-spacing: 0.06em;
+    font-family: var(--font);
+    font-size: 9px;
+    letter-spacing: 0;
   }
 
   .rent-page :global(table) {
@@ -284,9 +293,9 @@
   }
 
   .rent-page :global(th) {
-    font-family: inherit;
-    font-size: 11px;
-    letter-spacing: 0.06em;
+    font-family: var(--font);
+    font-size: 9px;
+    letter-spacing: 0;
   }
 
   .rent-page :global(code) {
@@ -336,21 +345,22 @@
   }
 
   .info-box {
-    border: 1px solid var(--border);
-    border-radius: var(--radius, 14px);
-    padding: 14px 16px;
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    padding: 14px 2px;
     margin-top: 12px;
-    background: var(--surface);
-    backdrop-filter: blur(22px) saturate(140%);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    background: none;
   }
 
   .info-title {
-    font-size: 12px;
-    font-weight: 600;
+    font-family: var(--font);
+    font-size: 9px;
+    font-weight: 400;
     color: var(--text-primary);
     margin-bottom: 8px;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
+    line-height: 1.6;
   }
 
   .info-line {
@@ -360,22 +370,20 @@
   }
 
   .empty-block {
-    border: 1px solid var(--border);
-    border-radius: var(--radius, 14px);
-    padding: 20px 16px;
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    padding: 20px 2px;
     text-align: center;
-    background: var(--surface);
-    backdrop-filter: blur(22px) saturate(140%);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    background: none;
   }
 
   .table-wrap {
-    border: 1px solid var(--border);
-    border-radius: var(--radius, 14px);
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
     overflow: hidden;
-    background: var(--surface);
-    backdrop-filter: blur(22px) saturate(140%);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    background: none;
   }
 
   .empty-head {

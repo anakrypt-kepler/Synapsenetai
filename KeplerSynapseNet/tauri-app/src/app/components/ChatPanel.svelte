@@ -415,10 +415,9 @@
     flex-direction: column;
     height: 100%;
     background: transparent;
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif);
+    font-family: var(--font-mono);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    image-rendering: auto;
   }
 
   .chat-header {
@@ -434,10 +433,11 @@
   }
 
   .chat-title {
-    font-size: 12px;
-    font-weight: 600;
+    font-family: var(--font);
+    font-size: 9px;
+    font-weight: 400;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0;
     color: var(--text-secondary);
   }
 
@@ -466,16 +466,15 @@
   }
 
   .web4-toggle {
-    font-family: inherit;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 4px 8px;
+    font-family: var(--font);
+    font-size: 9px;
+    font-weight: 400;
+    padding: 5px 8px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm, 10px);
+    border-radius: 0;
     color: var(--text-secondary);
     background: none;
     letter-spacing: 0;
-    image-rendering: auto;
     transition:
       background var(--dur-fast, 200ms) var(--ease-fast, cubic-bezier(0.34, 0.8, 0.34, 1)),
       color var(--dur-fast, 200ms) var(--ease-fast, cubic-bezier(0.34, 0.8, 0.34, 1)),

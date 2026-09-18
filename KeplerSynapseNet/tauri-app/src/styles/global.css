@@ -1,27 +1,45 @@
+/*
+  SynapseNet desktop skin: fully black void + Minecraft-style pixel chrome.
+  Vendored locally (no CDN at runtime, Tor/offline safe). OFL license sits next
+  to the font in src/assets/fonts/OFL.txt. This is a free OFL face that reads as
+  Minecraft — it is NOT Mojang's Minecraft font.
+*/
+@font-face {
+  font-family: "Press Start 2P";
+  src: url("../assets/fonts/PressStart2P-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
+  /* Void. No grey slabs, no glass. */
   --bg: #000000;
-  --surface: rgba(18, 18, 18, 0.92);
-  --surface-solid: #111111;
-  --surface-alt: #161616;
-  --border: rgba(255, 255, 255, 0.12);
+  --surface: #000000;
+  --surface-solid: #000000;
+  --surface-alt: #000000;
+  --border: rgba(255, 255, 255, 0.14);
   --text-primary: #f5f5f7;
   --text-secondary: #a1a1a6;
   --text-faint: #6e6e73;
   --accent: #ffffff;
   --accent-hover: #d4d4d8;
   --accent-muted: rgba(255, 255, 255, 0.08);
+  /* Sparse accents: terminal green for logs/live, cyan for the SynapseNet mark. */
   --ok: #30d158;
+  --ok-term: #39ff14;
+  --cy: #00e5ff;
   --warn: #ffd60a;
   --err: #ff453a;
   --ok-muted: rgba(48, 209, 88, 0.12);
   --warn-muted: rgba(255, 214, 10, 0.12);
   --err-muted: rgba(255, 69, 58, 0.12);
-  --radius: 14px;
-  --radius-sm: 10px;
-  --radius-full: 999px;
-  /* 1080p@180 / WebKit: backdrop blur eats the 5.5ms frame. Black bg makes it a no-op anyway. */
+  /* Square pixels everywhere in chrome. */
+  --radius: 0;
+  --radius-sm: 0;
+  --radius-full: 0;
+  /* WebKit @180Hz: blur eats the frame and black bg makes it a no-op anyway. */
   --blur: 0px;
-  /* Hyprland / end-4 curves. Durations sized for 180Hz paint, not compositor workspace 700ms. */
   --ease: cubic-bezier(0.05, 0.7, 0.1, 1);
   --ease-menu: cubic-bezier(0.1, 1, 0, 1);
   --ease-spatial: cubic-bezier(0.38, 1.21, 0.22, 1);
@@ -31,11 +49,14 @@
   --dur-fast: 160ms;
   --dur-enter: 180ms;
   --dur-tab: 260ms;
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Noto Sans", "Liberation Sans", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  /* Pixel face for chrome (tabs, labels, status, wizard, buttons). */
+  --font: "Press Start 2P", "Pixeloid Sans", "Monocraft", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --font-pixel: var(--font);
+  /* Readable mono for data/long text: addresses, seeds, hex, logs, code, tables. */
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", "Liberation Mono", Consolas, monospace;
   --mascot-size: 56px;
-  --statusbar-h: 28px;
-  --topbar-h: 44px;
+  --statusbar-h: 30px;
+  --topbar-h: 46px;
   color-scheme: dark;
 }
 
@@ -51,16 +72,18 @@ html, body, #app {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  font-family: var(--font);
-  font-size: 13px;
-  line-height: 1.45;
+  /* Default to readable mono so paragraphs/tables/data stay legible at 1280x800.
+     Pixel chrome opts in explicitly with var(--font). */
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
   background: var(--bg);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* WebKitGTK @ 180Hz: blur + saturate on every card misses vblank. */
+/* WebKitGTK @ 180Hz: kill blur/saturate on every surface. */
 .app-layout *,
 .app-layout *::before,
 .app-layout *::after {
@@ -68,31 +91,39 @@ html, body, #app {
   -webkit-backdrop-filter: none !important;
 }
 
+/* Pixel art / gif must not be smoothed. */
+img[src$=".svg"],
+img[src$=".gif"],
+.pixelated {
+  image-rendering: pixelated;
+}
+
 a {
   color: inherit;
   text-decoration: none;
 }
 
+/* Chrome buttons: square pixel labels. */
 button {
   font-family: var(--font);
-  font-size: inherit;
+  font-size: 10px;
+  letter-spacing: 0;
+  line-height: 1.4;
   cursor: pointer;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: none;
   color: var(--text-primary);
-  padding: 6px 14px;
+  padding: 8px 12px;
   transition:
     color var(--dur-fast) var(--ease-fast),
     background-color var(--dur-fast) var(--ease-fast),
     border-color var(--dur-fast) var(--ease-fast),
-    box-shadow var(--dur-fast) var(--ease-fast),
-    transform var(--dur) var(--ease-spatial),
     opacity var(--dur-enter) var(--ease);
 }
 
 button:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.4);
   background: var(--accent-muted);
 }
 
@@ -101,24 +132,24 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* Inputs hold typed data (hex, seeds, messages): keep them readable + square. */
 input, textarea, select {
-  font-family: var(--font);
-  font-size: inherit;
+  font-family: var(--font-mono);
+  font-size: 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: var(--surface-solid);
   color: var(--text-primary);
-  padding: 8px 10px;
+  padding: 9px 10px;
   outline: none;
   caret-color: #e8e8ed;
   transition:
     border-color var(--dur-fast) var(--ease-fast),
-    box-shadow var(--dur-fast) var(--ease-fast),
     background-color var(--dur-fast) var(--ease-fast);
 }
 
 input:focus, textarea:focus, select:focus {
-  border-color: rgba(255, 255, 255, 0.4);
+  border-color: rgba(255, 255, 255, 0.5);
   outline: none;
 }
 
@@ -133,9 +164,11 @@ input:focus, textarea:focus, select:focus {
   display: none;
 }
 
+/* Tables: 1px lines on void. Cells stay readable mono; headers are pixel. */
 table {
   width: 100%;
   border-collapse: collapse;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -146,33 +179,28 @@ th, td {
 }
 
 th {
-  font-weight: 600;
+  font-family: var(--font);
+  font-weight: 400;
   color: var(--text-secondary);
   text-transform: uppercase;
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  font-size: 9px;
+  letter-spacing: 0;
 }
 
+/* Status LEDs read as pixel squares, not round dots. */
 .status-dot {
   display: inline-block;
   width: 8px;
   height: 8px;
-  border-radius: var(--radius-full);
+  border-radius: 0;
   margin-right: 6px;
   flex-shrink: 0;
+  image-rendering: pixelated;
 }
 
-.status-dot.green {
-  background: var(--ok);
-}
-
-.status-dot.yellow {
-  background: var(--warn);
-}
-
-.status-dot.red {
-  background: var(--err);
-}
+.status-dot.green { background: var(--ok); }
+.status-dot.yellow { background: var(--warn); }
+.status-dot.red { background: var(--err); }
 
 @keyframes blink-tor {
   0%, 100% { opacity: 1; }
@@ -183,33 +211,43 @@ th {
   animation: blink-tor 2.4s ease-in-out infinite;
 }
 
+/*
+  .card / .glass: box meaning removed. No fill, no glass, no radius. Padding only
+  with an optional 1px top hairline. Routes that still set their own border via
+  var(--border) now render as flat black wireframe panels, not grey slabs.
+*/
 .glass,
 .card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: none;
+  border: none;
+  border-radius: 0;
   contain: layout style;
 }
 
 .card {
-  padding: 14px;
-  margin-bottom: 10px;
+  padding: 14px 2px;
+  margin-bottom: 8px;
+  border-top: 1px solid var(--border);
 }
 
 .card-header {
-  font-size: 11px;
-  font-weight: 600;
+  font-family: var(--font);
+  font-size: 9px;
+  font-weight: 400;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   color: var(--text-secondary);
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  line-height: 1.5;
 }
 
 .card-value {
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-family: var(--font);
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0;
   color: var(--text-primary);
+  line-height: 1.5;
 }
 
 .form-group {
@@ -218,12 +256,14 @@ th {
 
 .form-group label {
   display: block;
-  font-size: 11px;
-  font-weight: 600;
+  font-family: var(--font);
+  font-size: 9px;
+  font-weight: 400;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   color: var(--text-secondary);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  line-height: 1.5;
 }
 
 .form-group input,
@@ -236,7 +276,7 @@ th {
   background: var(--text-primary);
   color: #000000;
   border-color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -253,7 +293,7 @@ th {
 
 .btn-secondary:hover:not(:disabled) {
   color: var(--text-primary);
-  border-color: rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.4);
   background: var(--accent-muted);
 }
 
@@ -270,7 +310,7 @@ th {
 }
 
 .content-area {
-  padding: 20px 20px 28px;
+  padding: 18px 20px 28px;
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
@@ -278,16 +318,37 @@ th {
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   scroll-behavior: auto;
+  font-family: var(--font-mono);
+}
+
+/* Centered reading column. Wide windows get side void instead of a left-stuck table. */
+.page-col {
+  max-width: 980px;
+  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
+}
+
+.main-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.main-grid .card {
+  min-width: 0;
 }
 
 .section-title {
-  font-size: 11px;
-  font-weight: 600;
+  font-family: var(--font);
+  font-size: 9px;
+  font-weight: 400;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   color: var(--text-secondary);
   margin-bottom: 10px;
   margin-top: 18px;
+  line-height: 1.6;
 }
 
 .section-title:first-child {
@@ -296,23 +357,25 @@ th {
 
 .tag {
   display: inline-block;
-  padding: 3px 8px;
-  font-size: 11px;
-  border-radius: var(--radius-full);
+  padding: 3px 7px;
+  font-family: var(--font);
+  font-size: 8px;
+  border-radius: 0;
   border: 1px solid var(--border);
   color: var(--text-secondary);
+  line-height: 1.6;
 }
 
 .mono {
   font-family: var(--font-mono);
 }
 
-/* Indeterminate rounded bar. Class name kept as an alias for existing screens. */
+/* Kept as aliases: flat 1px indeterminate bar, no rounded pill. */
 .pixel-loading,
 .pixel-loading-bar {
   height: 4px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 0;
   position: relative;
   overflow: hidden;
 }
@@ -325,9 +388,9 @@ th {
   bottom: 0;
   left: 0;
   width: 36%;
-  border-radius: inherit;
+  border-radius: 0;
   background: var(--text-primary);
-  animation: ks-indeterminate 1.15s var(--ease) infinite;
+  animation: ks-indeterminate 1.15s steps(12) infinite;
 }
 
 @keyframes ks-indeterminate {
@@ -336,28 +399,31 @@ th {
 }
 
 .error-msg {
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
   color: var(--err);
   margin-bottom: 8px;
   padding: 8px 10px;
   border: 1px solid var(--err);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: var(--err-muted);
 }
 
 .success-msg {
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
   color: var(--ok);
   margin-bottom: 8px;
   padding: 8px 10px;
   border: 1px solid var(--ok);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: var(--ok-muted);
 }
 
 /*
-  Gemini-style scalloped ring (keep in sync with KsSpinner.svelte):
-  10 lobes, inner r = 25.5 + 7.2*sin(10θ), outer 47.2, 1.15s linear spin.
+  Pixel square spinner. Replaces the old Gemini scallop everywhere .ks-spinner
+  is used. A bright pixel block steps around a square frame — a Minecraft-style
+  loader. KsSpinner.svelte mirrors this look for JS-driven callsites.
 */
 .ks-spinner {
   display: inline-block;
@@ -365,24 +431,25 @@ th {
   height: 48px;
   flex-shrink: 0;
   vertical-align: middle;
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: contain;
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Cpath%20fill%3D%22%23e8e8ed%22%20fill-rule%3D%22evenodd%22%20d%3D%22M50%202.8A47.2%2047.2%200%201%201%2050%2097.2A47.2%2047.2%200%201%201%2050%202.8ZM50.00%2024.50L50.62%2026.37L51.15%2028.13L51.60%2029.65L52.01%2030.84L52.42%2031.61L52.86%2031.93L53.38%2031.77L54.01%2031.16L54.76%2030.16L55.67%2028.85L56.71%2027.34L57.88%2025.75L59.13%2024.21L60.43%2022.83L61.71%2021.74L62.91%2021.01L63.97%2020.71L64.85%2020.86L65.49%2021.48L65.87%2022.52L65.98%2023.92L65.85%2025.59L65.50%2027.45L64.99%2029.37L64.39%2031.25L63.78%2032.98L63.25%2034.48L62.89%2035.68L62.77%2036.55L62.94%2037.06L63.45%2037.23L64.32%2037.11L65.52%2036.75L67.02%2036.22L68.75%2035.61L70.63%2035.01L72.55%2034.50L74.41%2034.15L76.08%2034.02L77.48%2034.13L78.52%2034.51L79.14%2035.15L79.29%2036.03L78.99%2037.09L78.26%2038.29L77.17%2039.57L75.79%2040.87L74.25%2042.12L72.66%2043.29L71.15%2044.33L69.84%2045.24L68.84%2045.99L68.23%2046.62L68.07%2047.14L68.39%2047.58L69.16%2047.99L70.35%2048.40L71.87%2048.85L73.63%2049.38L75.50%2050.00L77.35%2050.72L79.06%2051.52L80.50%2052.40L81.56%2053.32L82.18%2054.24L82.30%2055.12L81.91%2055.91L81.04%2056.60L79.75%2057.14L78.11%2057.53L76.24%2057.77L74.25%2057.88L72.28%2057.89L70.45%2057.85L68.86%2057.81L67.60%2057.84L66.74%2057.98L66.31%2058.31L66.30%2058.85L66.68%2059.63L67.40%2060.66L68.37%2061.93L69.48%2063.39L70.63%2064.99L71.71%2066.66L72.61%2068.31L73.26%2069.87L73.58%2071.24L73.54%2072.34L73.12%2073.12L72.34%2073.54L71.24%2073.58L69.87%2073.26L68.31%2072.61L66.66%2071.71L64.99%2070.63L63.39%2069.48L61.93%2068.37L60.66%2067.40L59.63%2066.68L58.85%2066.30L58.31%2066.31L57.98%2066.74L57.84%2067.60L57.81%2068.86L57.85%2070.45L57.89%2072.28L57.88%2074.25L57.77%2076.24L57.53%2078.11L57.14%2079.75L56.60%2081.04L55.91%2081.91L55.12%2082.30L54.24%2082.18L53.32%2081.56L52.40%2080.50L51.52%2079.06L50.72%2077.35L50.00%2075.50L49.38%2073.63L48.85%2071.87L48.40%2070.35L47.99%2069.16L47.58%2068.39L47.14%2068.07L46.62%2068.23L45.99%2068.84L45.24%2069.84L44.33%2071.15L43.29%2072.66L42.12%2074.25L40.87%2075.79L39.57%2077.17L38.29%2078.26L37.09%2078.99L36.03%2079.29L35.15%2079.14L34.51%2078.52L34.13%2077.48L34.02%2076.08L34.15%2074.41L34.50%2072.55L35.01%2070.63L35.61%2068.75L36.22%2067.02L36.75%2065.52L37.11%2064.32L37.23%2063.45L37.06%2062.94L36.55%2062.77L35.68%2062.89L34.48%2063.25L32.98%2063.78L31.25%2064.39L29.37%2064.99L27.45%2065.50L25.59%2065.85L23.92%2065.98L22.52%2065.87L21.48%2065.49L20.86%2064.85L20.71%2063.97L21.01%2062.91L21.74%2061.71L22.83%2060.43L24.21%2059.13L25.75%2057.88L27.34%2056.71L28.85%2055.67L30.16%2054.76L31.16%2054.01L31.77%2053.38L31.93%2052.86L31.61%2052.42L30.84%2052.01L29.65%2051.60L28.13%2051.15L26.37%2050.62L24.50%2050.00L22.65%2049.28L20.94%2048.48L19.50%2047.60L18.44%2046.68L17.82%2045.76L17.70%2044.88L18.09%2044.09L18.96%2043.40L20.25%2042.86L21.89%2042.47L23.76%2042.23L25.75%2042.12L27.72%2042.11L29.55%2042.15L31.14%2042.19L32.40%2042.16L33.26%2042.02L33.69%2041.69L33.70%2041.15L33.32%2040.37L32.60%2039.34L31.63%2038.07L30.52%2036.61L29.37%2035.01L28.29%2033.34L27.39%2031.69L26.74%2030.13L26.42%2028.76L26.46%2027.66L26.88%2026.88L27.66%2026.46L28.76%2026.42L30.13%2026.74L31.69%2027.39L33.34%2028.29L35.01%2029.37L36.61%2030.52L38.07%2031.63L39.34%2032.60L40.37%2033.32L41.15%2033.70L41.69%2033.69L42.02%2033.26L42.16%2032.40L42.19%2031.14L42.15%2029.55L42.11%2027.72L42.12%2025.75L42.23%2023.76L42.47%2021.89L42.86%2020.25L43.40%2018.96L44.09%2018.09L44.88%2017.70L45.76%2017.82L46.68%2018.44L47.60%2019.50L48.48%2020.94L49.28%2022.65L50.00%2024.50Z%22%2F%3E%3C%2Fsvg%3E");
-  animation: ks-spin 1.15s linear infinite;
+  box-sizing: border-box;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  border-radius: 0;
+  background:
+    linear-gradient(#e8e8ed, #e8e8ed) left top / 38% 38% no-repeat;
+  image-rendering: pixelated;
+  animation: ks-spin 0.8s steps(8) infinite;
 }
 
 @keyframes ks-spin {
   to { transform: rotate(360deg); }
 }
 
-/* windowsIn feel without scale (scale forces extra raster on WebKit). */
 @keyframes ks-popin {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
-/* kitty cursor_blink_interval 0.6 ease-in-out + 3px beam */
+/* kitty cursor_blink beam for the chat caret. */
 @keyframes kitty-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.12; }
@@ -393,11 +460,10 @@ th {
   width: 3px;
   height: 1.05em;
   margin-left: 2px;
-  border-radius: 1px;
+  border-radius: 0;
   background: #e8e8ed;
   vertical-align: -0.12em;
-  box-shadow: -5px 0 8px 0 rgba(232, 232, 237, 0.35);
-  animation: kitty-blink 1.2s ease-in-out infinite;
+  animation: kitty-blink 1.2s steps(2) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

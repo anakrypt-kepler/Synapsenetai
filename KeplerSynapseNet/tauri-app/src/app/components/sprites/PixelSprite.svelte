@@ -3,9 +3,12 @@
   // so Kepler can replace the art 1:1 without touching Svelte. Animation is a
   // pure-CSS projection of live state chosen by the route (e.g. spin when mining).
   // No JS loop, no canvas. Reduced motion is frozen globally in global.css.
+  import AgentLevelChip from "./AgentLevelChip.svelte";
+
   export let src: string;
   export let anim:
     | "idle"
+    | "park"
     | "spin"
     | "rotate"
     | "walk"
@@ -15,26 +18,51 @@
     | "slide"
     | "none" = "idle";
   export let size: number = 16;
-  // Horizontal travel for the "slide" coin (px). walk/run use the whole stage.
+  // Horizontal travel for the "slide" coin (px). walk/run patrol the stage;
+  // park stays in the PixelStage flex center with the idle bob.
   export let travel: number = 40;
   export let label: string = "";
+  // Optional dump Lv plate above a parked sprite. Omit to leave walk/run untouched.
+  export let level: number | undefined = undefined;
+  export let frac: number | undefined = undefined;
+  export let name: string | undefined = undefined;
+
+  $: showLv = level != null && Number.isFinite(level);
 </script>
 
 <span
   class="psprite {anim}"
+  class:has-lv={showLv}
   style="--sz:{size}px; --travel:{travel}px"
   role={label ? "img" : undefined}
   aria-label={label || undefined}
   aria-hidden={label ? undefined : "true"}
 >
+  {#if showLv}
+    <span class="lv-hang">
+      <AgentLevelChip level={level ?? 1} {frac} {name} />
+    </span>
+  {/if}
   <img class="sprite-img" {src} alt="" width={size} height={size} draggable="false" />
 </span>
 
 <style>
   .psprite {
+    position: relative;
     display: inline-flex;
     width: var(--sz);
     height: var(--sz);
+    line-height: 0;
+    overflow: visible;
+  }
+
+  .lv-hang {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    transform: translate(-50%, calc(-100% - 1px));
+    z-index: 2;
+    pointer-events: none;
     line-height: 0;
   }
 
@@ -55,7 +83,8 @@
     left: 4%;
   }
 
-  .idle .sprite-img {
+  .idle .sprite-img,
+  .park .sprite-img {
     animation: sp-idle 2.6s ease-in-out infinite;
   }
 

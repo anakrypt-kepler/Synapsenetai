@@ -5,6 +5,9 @@
   import ChatPanel from "../components/ChatPanel.svelte";
   import { rpcCall } from "../../lib/rpc";
   import { activeTab, nodeStatus } from "../../lib/store";
+  import PixelStage from "../components/sprites/PixelStage.svelte";
+  import PixelSprite from "../components/sprites/PixelSprite.svelte";
+  import naanRun from "../../assets/sprites/naan-run.svg";
 
   // PoE stores the file as text. Language is only the tab name / extension.
   const langs: { id: string; ext: string; label: string }[] = [
@@ -138,122 +141,142 @@
   }
 </script>
 
-<div class="ide-layout">
-  <div class="ide-editor">
-    <div class="editor-tabs">
-      {#each files as file, i}
-        <button class="editor-tab" class:active={activeFile === i} type="button" on:click={() => setActive(i)}>
-          {file.name}
-        </button>
-      {/each}
-      <button class="editor-tab tab-new" type="button" on:click={addFile}>+</button>
-    </div>
-    <div class="editor-content">
-      {#if files[activeFile]}
-        <textarea
-          class="code-textarea"
-          bind:value={files[activeFile].content}
-          spellcheck="false"
-        ></textarea>
-      {/if}
-    </div>
-    <div class="ide-earn">
-      <div class="earn-row">
-        <span>Wallet {$nodeStatus.balance} NGT</span>
-        <span>Chain #{$nodeStatus.last_block || poeStats.chain_height}</span>
-        <span>Epoch {poeStats.current_epoch}</span>
-      </div>
-      <div class="earn-hint">
-        Any language. PoE stores text, it does not compile. Submit → chain → NGT on finalize. Author stays public.
-      </div>
-      {#if myCode.length > 0}
-        <div class="code-subs">
-          {#each myCode.slice(-4).reverse() as sub}
-            <div class="code-sub">
-              <span>{sub.title}</span>
-              <span>{sub.status}</span>
-              <span>{sub.ngt_earned} NGT</span>
-            </div>
+<div class="content-area ide-page">
+  <div class="page-col">
+    <PixelStage height={56}>
+      <PixelSprite src={naanRun} anim="park" size={24} label="agent in the software" />
+    </PixelStage>
+    <div class="section-title">IDE</div>
+    <div class="ide-layout">
+      <div class="ide-editor">
+        <div class="card-header">EDITOR</div>
+        <div class="editor-tabs">
+          {#each files as file, i}
+            <button class="editor-tab" class:active={activeFile === i} type="button" on:click={() => setActive(i)}>
+              {file.name}
+            </button>
           {/each}
+          <button class="editor-tab tab-new" type="button" on:click={addFile}>+</button>
         </div>
-      {/if}
-    </div>
-    <div class="editor-status">
-      <span>LN:{files[activeFile] ? files[activeFile].content.split("\n").length : 0}</span>
-      <select class="lang-pick" bind:value={langId} on:change={() => setLang(langId)}>
-        {#each langs as lang}
-          <option value={lang.id}>{lang.label}</option>
-        {/each}
-      </select>
-      <button class="btn-secondary sub-btn" type="button" on:click={submitToPoe} disabled={submitting}>PoE</button>
-      {#if submitResult}
-        <span class="sub-result">{submitResult}</span>
-      {/if}
-    </div>
-  </div>
-  <div class="ide-chat">
-    {#if !$nodeStatus.model_loaded}
-      <button class="chat-model-hint" type="button" on:click={() => activeTab.set("settings")}>
-        Load GGUF in Settings. LLM is chat, not consensus.
-      </button>
-    {/if}
-    <div class="chat-wrap">
-      <ChatPanel />
+        <div class="editor-content">
+          {#if files[activeFile]}
+            <textarea
+              class="code-textarea"
+              bind:value={files[activeFile].content}
+              spellcheck="false"
+            ></textarea>
+          {/if}
+        </div>
+        <div class="ide-earn">
+          <div class="earn-row">
+            <span>Wallet {$nodeStatus.balance} NGT</span>
+            <span>Chain #{$nodeStatus.last_block || poeStats.chain_height}</span>
+            <span>Epoch {poeStats.current_epoch}</span>
+          </div>
+          <div class="earn-hint">
+            Any language. PoE stores text, it does not compile. Submit → chain → NGT on finalize. Author stays public.
+          </div>
+          {#if myCode.length > 0}
+            <div class="code-subs">
+              {#each myCode.slice(-4).reverse() as sub}
+                <div class="code-sub">
+                  <span>{sub.title}</span>
+                  <span>{sub.status}</span>
+                  <span>{sub.ngt_earned} NGT</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        <div class="editor-status">
+          <span>LN:{files[activeFile] ? files[activeFile].content.split("\n").length : 0}</span>
+          <select class="lang-pick" bind:value={langId} on:change={() => setLang(langId)}>
+            {#each langs as lang}
+              <option value={lang.id}>{lang.label}</option>
+            {/each}
+          </select>
+          <button class="btn-secondary sub-btn" type="button" on:click={submitToPoe} disabled={submitting}>PoE</button>
+          {#if submitResult}
+            <span class="sub-result">{submitResult}</span>
+          {/if}
+        </div>
+      </div>
+      <div class="ide-chat">
+        <div class="card-header">CHAT</div>
+        {#if !$nodeStatus.model_loaded}
+          <button class="chat-model-hint" type="button" on:click={() => activeTab.set("settings")}>
+            Load GGUF in Settings. LLM is chat, not consensus.
+          </button>
+        {/if}
+        <div class="chat-wrap">
+          <ChatPanel />
+        </div>
+      </div>
     </div>
   </div>
 </div>
 
 <style>
-  /* Glass IDE chrome. Editor well stays a dark mono surface. */
-  .ide-layout {
+  /* Parked hero above a 2-col split. Editor well stays readable mono. */
+  .ide-page {
     display: flex;
-    height: 100%;
-    background: #000000;
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif);
+    flex-direction: column;
+    overflow: hidden;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    image-rendering: auto;
-    color: var(--text-primary);
+    padding-bottom: 72px;
   }
 
-  .ide-editor {
+  .ide-page :global(.page-col) {
     flex: 1;
     display: flex;
     flex-direction: column;
-    border-right: 1px solid var(--border);
+    min-height: 0;
+  }
+
+  .ide-layout {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .ide-editor,
+  .ide-chat {
     min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border: none;
+    border-top: 1px solid var(--border);
+    padding: 10px 2px;
+    background: none;
   }
 
   .editor-tabs {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 10px;
+    padding: 8px 2px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
     overflow-x: auto;
-    background: var(--surface);
-    backdrop-filter: blur(22px) saturate(140%);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
   }
 
   .editor-tab {
     padding: 6px 12px;
     font-family: inherit;
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 400;
     border: 1px solid transparent;
-    border-radius: var(--radius-sm, 10px);
+    border-radius: 0;
     background: transparent;
     color: var(--text-secondary);
     letter-spacing: 0;
     white-space: nowrap;
-    image-rendering: auto;
-    -webkit-font-smoothing: antialiased;
-    transition:
-      background var(--dur-fast, 200ms) var(--ease-fast, cubic-bezier(0.34, 0.8, 0.34, 1)),
-      color var(--dur-fast, 200ms) var(--ease-fast, cubic-bezier(0.34, 0.8, 0.34, 1)),
-      border-color var(--dur-fast, 200ms) var(--ease-fast, cubic-bezier(0.34, 0.8, 0.34, 1));
   }
 
   .editor-tab:hover:not(:disabled) {
@@ -279,9 +302,8 @@
   .editor-content {
     flex: 1;
     overflow: hidden;
-    margin: 8px;
-    border-radius: var(--radius, 14px);
-    border: 1px solid var(--border);
+    margin: 8px 0;
+    border-top: 1px solid var(--border);
     background: #000000;
     min-height: 0;
   }
@@ -294,18 +316,16 @@
     border-radius: 0;
     background: #000000;
     color: var(--text-primary);
-    font-family: var(--font-mono, ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace);
+    font-family: var(--font-mono);
     font-size: 13px;
     font-variant-ligatures: none;
-    padding: 12px 14px;
+    padding: 12px 10px;
     line-height: 1.55;
     tab-size: 4;
     white-space: pre;
     overflow: auto;
     letter-spacing: 0;
     caret-color: #e8e8ed;
-    image-rendering: auto;
-    -webkit-font-smoothing: antialiased;
   }
 
   .code-textarea:focus {
@@ -317,15 +337,12 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 8px 12px;
+    padding: 8px 2px;
     border-top: 1px solid var(--border);
     font-size: 12px;
     color: var(--text-secondary);
     flex-shrink: 0;
     letter-spacing: 0;
-    background: var(--surface);
-    backdrop-filter: blur(22px) saturate(140%);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
   }
 
   .lang-pick {
@@ -333,24 +350,19 @@
     font-family: inherit;
     font-size: 12px;
     padding: 4px 8px;
-    border-radius: var(--radius-sm, 10px);
-    background: var(--surface-solid, #111);
+    border-radius: 0;
+    background: var(--surface-solid, #000);
     color: var(--text-primary);
     border: 1px solid var(--border);
   }
 
   .sub-btn {
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    padding: 6px 14px;
-    border-radius: var(--radius-sm, 10px);
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 400;
+    padding: 7px 12px;
+    border-radius: 0;
     letter-spacing: 0;
-    image-rendering: auto;
-    transition:
-      background var(--dur-fast, 200ms) var(--ease-fast, cubic-bezier(0.34, 0.8, 0.34, 1)),
-      color var(--dur-fast, 200ms) var(--ease-fast, cubic-bezier(0.34, 0.8, 0.34, 1)),
-      border-color var(--dur-fast, 200ms) var(--ease-fast, cubic-bezier(0.34, 0.8, 0.34, 1));
   }
 
   .sub-result {
@@ -364,21 +376,17 @@
 
   .ide-earn {
     border-top: 1px solid var(--border);
-    padding: 10px 12px;
+    padding: 10px 2px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
     gap: 6px;
-    background: var(--surface);
-    backdrop-filter: blur(22px) saturate(140%);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
   }
 
   .earn-row {
     display: flex;
     gap: 16px;
     font-size: 12px;
-    font-weight: 500;
     color: var(--text-primary);
     letter-spacing: 0;
     flex-wrap: wrap;
@@ -406,19 +414,6 @@
     letter-spacing: 0;
   }
 
-  .ide-chat {
-    width: 320px;
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    /* Keep chat above the 56px bottom-right mascot overlay. */
-    padding-bottom: 56px;
-    background: var(--surface);
-    backdrop-filter: blur(22px) saturate(140%);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
-  }
-
   .chat-model-hint {
     flex-shrink: 0;
     border: none;
@@ -431,9 +426,7 @@
     letter-spacing: 0;
     line-height: 1.45;
     text-align: left;
-    padding: 10px 12px;
-    image-rendering: auto;
-    -webkit-font-smoothing: antialiased;
+    padding: 10px 2px;
   }
 
   .chat-model-hint:hover:not(:disabled) {
@@ -446,5 +439,6 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    padding: 4px 2px 0;
   }
 </style>

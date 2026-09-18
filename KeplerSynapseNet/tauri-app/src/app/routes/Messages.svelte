@@ -5,6 +5,9 @@
   // delivered=false means the local log still saved; the onion hop failed.
   import { onMount, onDestroy, tick } from "svelte";
   import { rpcCall } from "../../lib/rpc";
+  import PixelStage from "../components/sprites/PixelStage.svelte";
+  import PixelSprite from "../components/sprites/PixelSprite.svelte";
+  import envelopeSprite from "../../assets/sprites/envelope.svg";
 
   interface NodeMessage {
     from: string;
@@ -206,7 +209,13 @@
   $: sealBadge = kyberReal && peerHybrid[activePeer] ? "TOR · HYBRID SEAL" : "TOR · SEALED";
 </script>
 
-<div class="msg-layout">
+<div class="content-area msg-page">
+  <div class="page-col">
+    <PixelStage height={56}>
+      <PixelSprite src={envelopeSprite} anim="park" size={26} label="messages" />
+    </PixelStage>
+    <div class="section-title">MESSAGES</div>
+    <div class="msg-layout">
   <div class="msg-sidebar">
     <div class="sidebar-header">NODES</div>
     <div class="sidebar-compose">
@@ -299,49 +308,73 @@
       </div>
     {/if}
   </div>
+    </div>
+  </div>
 </div>
 
 <style>
-  .msg-layout {
+  .msg-page {
     display: flex;
-    height: 100%;
-    background: transparent;
-    font-family: var(--font);
-    font-size: 13px;
-    line-height: 1.45;
+    flex-direction: column;
+    overflow: hidden;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    image-rendering: auto;
+    padding-bottom: 72px;
   }
 
-  .msg-layout :global(button),
+  .msg-page :global(.page-col) {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .msg-layout {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(180px, 240px) 1fr;
+    gap: 10px;
+    background: transparent;
+  }
+
+  .msg-layout :global(button) {
+    font-family: var(--font);
+    font-size: 10px;
+    border-radius: 0;
+    -webkit-font-smoothing: antialiased;
+    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+
   .msg-layout :global(input),
   .msg-layout :global(textarea) {
-    font-family: var(--font);
-    font-size: 13px;
-    border-radius: var(--radius-sm);
-    image-rendering: auto;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    border-radius: 0;
     -webkit-font-smoothing: antialiased;
     transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
   }
 
   .msg-sidebar {
-    width: 220px;
-    border-right: 1px solid var(--border);
+    min-width: 0;
     overflow-y: auto;
-    flex-shrink: 0;
-    background: var(--surface);
-    backdrop-filter: saturate(140%) blur(var(--blur));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
+    border: none;
+    border-top: 1px solid var(--border);
+    padding: 10px 2px;
+    background: none;
   }
 
   .sidebar-header {
     padding: 12px 14px;
-    font-size: 11px;
-    font-weight: 600;
+    font-family: var(--font);
+    font-size: 9px;
+    font-weight: 400;
     color: var(--text-secondary);
-    letter-spacing: 0.08em;
+    letter-spacing: 0;
     border-bottom: 1px solid var(--border);
   }
 
@@ -358,8 +391,8 @@
     font-family: var(--font-mono);
     font-size: 12px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: rgba(0, 0, 0, 0.45);
+    border-radius: 0;
+    background: var(--surface-solid);
     color: var(--text-primary);
     padding: 8px 10px;
   }
@@ -426,19 +459,21 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
+    min-height: 0;
+    border: none;
+    border-top: 1px solid var(--border);
+    padding: 10px 2px;
   }
 
   .msg-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 16px;
+    padding: 10px 2px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
     gap: 8px;
-    background: var(--surface);
-    backdrop-filter: saturate(140%) blur(var(--blur));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
+    background: none;
   }
 
   .msg-peer {
@@ -457,11 +492,11 @@
 
   .msg-crypto {
     font-size: 11px;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
     white-space: nowrap;
-    font-weight: 600;
+    font-weight: 400;
     padding: 3px 8px;
-    border-radius: var(--radius-full, 999px);
+    border-radius: 0;
     border: 1px solid var(--border);
   }
 
@@ -494,11 +529,9 @@
   .msg-bubble {
     padding: 10px 14px;
     border: 1px solid var(--border);
-    border-radius: 16px;
+    border-radius: 0;
     max-width: 76%;
-    background: var(--surface);
-    backdrop-filter: saturate(140%) blur(var(--blur));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
+    background: none;
     align-self: flex-start;
   }
 
@@ -544,25 +577,23 @@
   .msg-input-area {
     display: flex;
     gap: 10px;
-    padding: 12px 16px;
+    padding: 12px 2px;
     border-top: 1px solid var(--border);
     flex-shrink: 0;
-    background: var(--surface);
-    backdrop-filter: saturate(140%) blur(var(--blur));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur));
+    background: none;
     align-items: flex-end;
   }
 
   .msg-input {
     flex: 1;
     resize: none;
-    font-size: 14px;
+    font-size: 13px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: rgba(0, 0, 0, 0.45);
+    border-radius: 0;
+    background: var(--surface-solid);
     color: var(--text-primary);
     padding: 10px 12px;
-    font-family: var(--font);
+    font-family: var(--font-mono);
   }
 
   .msg-input:focus {
@@ -571,10 +602,10 @@
   }
 
   .send-btn {
-    font-weight: 600;
-    letter-spacing: 0.04em;
+    font-weight: 400;
+    letter-spacing: 0;
     padding: 10px 16px;
-    border-radius: var(--radius-sm);
+    border-radius: 0;
     align-self: stretch;
   }
 
@@ -590,10 +621,12 @@
   }
 
   .empty-title {
-    font-size: 15px;
-    font-weight: 600;
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 400;
     color: var(--text-primary);
-    letter-spacing: 0.06em;
+    letter-spacing: 0;
+    line-height: 1.6;
   }
 
   .empty-desc {

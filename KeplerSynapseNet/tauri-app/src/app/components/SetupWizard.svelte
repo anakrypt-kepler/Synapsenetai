@@ -14,6 +14,13 @@
     type SystemInfo,
   } from "../../lib/rpc";
   import ModelCatalog from "./ModelCatalog.svelte";
+  import SkinPicker from "./SkinPicker.svelte";
+  import {
+    stationCatalog,
+    DEFAULT_STATION_LOOK,
+    saveStationLook,
+    type StationLook,
+  } from "../../lib/stationSkins";
 
   const dispatch = createEventDispatcher();
 
@@ -49,6 +56,8 @@
 
   let dataDir = "~/.synapsenet/";
   let walletFile = "~/.synapsenet/wallet.dat";
+
+  let look: StationLook = { ...DEFAULT_STATION_LOOK };
 
   onMount(async () => {
     try {
@@ -96,8 +105,8 @@
   }
 
   function nextStep() {
-    if (step < 5) step += 1;
-    if (step === 5) runReadyChecks();
+    if (step < 6) step += 1;
+    if (step === 6) runReadyChecks();
   }
 
   function prevStep() {
@@ -186,6 +195,9 @@
         launch_at_login: launchAtStartup,
       }));
     } catch {}
+    try {
+      await saveStationLook(look);
+    } catch {}
     if (modelPath) {
       try { await modelLoad(modelPath); } catch {}
     }
@@ -207,14 +219,14 @@
 </script>
 
 <div class="wizard-overlay">
-  <div class="wizard">
+  <div class="wizard" class:wide={step === 5}>
     <div class="wizard-header">
-      <span class="wizard-title">SynapseNet Setup</span>
-      <span class="wizard-step">{step} of 5</span>
+      <span class="wizard-title">SYNAPSENET SETUP</span>
+      <span class="wizard-step">STEP {step} OF 6</span>
     </div>
 
     <div class="wizard-progress" aria-hidden="true">
-      {#each [1, 2, 3, 4, 5] as s}
+      {#each [1, 2, 3, 4, 5, 6] as s}
         <div class="progress-segment" class:active={s <= step}></div>
       {/each}
     </div>
@@ -360,6 +372,16 @@
 
           {:else if step === 5}
             <div class="step-content">
+              <h2 class="step-title">Station</h2>
+              <p class="step-desc">Pick the 2D agent and location skins for the NAAN harvest map. You can change this later in SET.</p>
+              <SkinPicker title="Agent" kind="agent" items={stationCatalog.agents} bind:value={look.agent} />
+              <SkinPicker title="Floor" kind="tile" items={stationCatalog.floors} bind:value={look.floor} />
+              <SkinPicker title="Wall" kind="tile" items={stationCatalog.walls} bind:value={look.wall} />
+              <SkinPicker title="Hull" kind="tile" items={stationCatalog.shells} bind:value={look.shell} />
+            </div>
+
+          {:else if step === 6}
+            <div class="step-content">
               <h2 class="step-title">Ready</h2>
               {#if readyChecking}
                 <div class="waiting">
@@ -399,12 +421,12 @@
     </div>
 
     <div class="wizard-footer">
-      {#if step > 1 && step < 5}
+      {#if step > 1 && step < 6}
         <button class="btn-secondary" on:click={prevStep}>Back</button>
       {:else}
         <div></div>
       {/if}
-      {#if step < 5}
+      {#if step < 6}
         <button class="btn-primary" on:click={nextStep} disabled={(step === 1 && !canProceedStep1) || (step === 3 && !canProceedStep3)}>
           Continue
         </button>
@@ -427,28 +449,31 @@
     align-items: center;
     justify-content: center;
     z-index: 1000;
-    padding: 24px;
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Noto Sans", "Liberation Sans", sans-serif);
-    font-size: 13px;
-    line-height: 1.45;
+    padding: 0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
     color: var(--text-primary, #f5f5f7);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    image-rendering: auto;
   }
 
+  /* Full-bleed void: no modal card floating on grey. */
   .wizard {
     width: 100%;
-    max-width: 560px;
-    max-height: 90vh;
-    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-    border-radius: var(--radius, 14px);
-    background: var(--surface, rgba(22, 22, 22, 0.62));
-    backdrop-filter: saturate(140%) blur(var(--blur, 22px));
-    -webkit-backdrop-filter: saturate(140%) blur(var(--blur, 22px));
+    max-width: 640px;
+    height: 100%;
+    max-height: 100%;
+    border: none;
+    border-radius: 0;
+    background: none;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+
+  .wizard.wide {
+    max-width: 920px;
   }
 
   .wizard-header {
@@ -459,33 +484,39 @@
   }
 
   .wizard-title {
-    font-size: 15px;
-    font-weight: 600;
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 400;
     color: var(--text-primary, #f5f5f7);
-    letter-spacing: -0.01em;
+    letter-spacing: 0;
   }
 
   .wizard-step {
-    font-size: 12px;
+    font-family: var(--font);
+    font-size: 8px;
     color: var(--text-secondary, #a1a1a6);
   }
 
+  /* 5 pixel ticks, not a rounded bar. */
   .wizard-progress {
     display: flex;
-    gap: 6px;
-    padding: 8px 24px 0;
+    gap: 8px;
+    padding: 12px 24px 0;
   }
 
   .progress-segment {
-    flex: 1;
-    height: 4px;
-    border-radius: var(--radius-full, 999px);
-    background: var(--border, rgba(255, 255, 255, 0.12));
-    transition: background var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1));
+    flex: 0 0 auto;
+    width: 16px;
+    height: 10px;
+    border-radius: 0;
+    background: transparent;
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+    image-rendering: pixelated;
   }
 
   .progress-segment.active {
-    background: var(--text-primary, #f5f5f7);
+    background: var(--ok);
+    border-color: var(--ok);
   }
 
   .wizard-body {
@@ -518,11 +549,13 @@
   }
 
   .step-title {
-    font-size: 15px;
-    font-weight: 600;
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 400;
     color: var(--text-primary, #f5f5f7);
-    margin: 0;
-    letter-spacing: -0.01em;
+    margin: 0 0 4px;
+    letter-spacing: 0;
+    line-height: 1.6;
   }
 
   .step-desc {
@@ -619,9 +652,11 @@
   }
 
   .option-name {
-    font-size: 15px;
-    font-weight: 600;
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 400;
     color: var(--text-primary, #f5f5f7);
+    line-height: 1.6;
   }
 
   .option-desc {
@@ -709,12 +744,12 @@
   }
 
   .wizard :global(button) {
-    font-family: inherit;
-    font-size: 13px;
-    font-weight: 600;
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 400;
     letter-spacing: 0;
-    border-radius: var(--radius-sm, 10px);
-    padding: 9px 16px;
+    border-radius: 0;
+    padding: 10px 16px;
     transition: background var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
       border-color var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
       color var(--dur, 280ms) var(--ease, cubic-bezier(0.22, 1, 0.36, 1));

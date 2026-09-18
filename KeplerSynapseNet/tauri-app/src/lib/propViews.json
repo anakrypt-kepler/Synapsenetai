@@ -1,0 +1,17 @@
+{
+  "desk.png": { "w": 3, "h": 1, "bx": -1, "by": -16.3956, "bw": 38, "bh": 28.3956 },
+  "console.png": { "w": 2, "h": 1, "bx": -3, "by": -6.7727, "bw": 28, "bh": 18.7727 },
+  "filter.png": { "w": 1, "h": 1, "bx": -1, "by": -9.125, "bw": 14, "bh": 20.125 },
+  "comms_uplink.png": { "w": 2, "h": 2, "bx": 2, "by": -5.4194, "bw": 19, "bh": 29.4194 },
+  "holotable.png": { "w": 4, "h": 2, "bx": -1, "by": -30.878, "bw": 50, "bh": 54.878 },
+  "bridge_tacscreen.png": { "w": 2, "h": 1, "bx": -1, "by": -8.2558, "bw": 26, "bh": 20.2558 },
+  "research_corelens.png": { "w": 1, "h": 2, "bx": -2, "by": -3.1429, "bw": 20, "bh": 27.1429 },
+  "research_samplecart.png": { "w": 2, "h": 1, "bx": -1, "by": -12.5854, "bw": 28, "bh": 24.5854 },
+  "crate.png": { "w": 2, "h": 1, "bx": -1, "by": -8.8, "bw": 26, "bh": 20.8 },
+  "bunk.png": { "w": 2, "h": 2, "bx": 0, "by": -1.4634, "bw": 24, "bh": 25.4634 },
+  "plant.png": { "w": 1, "h": 1, "bx": 1, "by": 0, "bw": 10, "bh": 12 },
+  "chair-n.png": { "w": 1, "h": 1, "bx": 0, "by": -6.0541, "bw": 12, "bh": 18.0541 },
+  "desklamp.png": { "w": 1, "h": 1, "bx": 0, "by": -1.9286, "bw": 12, "bh": 13.9286 },
+  "deskterminal.png": { "w": 1, "h": 1, "bx": 0, "by": 1.4458, "bw": 12, "bh": 10.5542 },
+  "bookshelf.png": { "w": 2, "h": 1, "bx": -1, "by": -17.3944, "bw": 26, "bh": 30.3944 }
+}

@@ -5,6 +5,23 @@
   import { nodeStatus, myWalletAddress } from "../../lib/store";
   import { rpcCall } from "../../lib/rpc";
   import { generateQRSvg } from "../../lib/qr";
+  import PixelStage from "../components/sprites/PixelStage.svelte";
+  import PixelSprite from "../components/sprites/PixelSprite.svelte";
+  import coinSprite from "../../assets/sprites/coin.svg";
+
+  // Animation state only (presentational): spin the coin while mining or when the
+  // balance just changed; idle wobble otherwise. Reads existing nodeStatus, no RPC.
+  let coinLastBal = "";
+  let coinKick = false;
+  let coinKickTimer: ReturnType<typeof setTimeout> | null = null;
+  $: coinMining = $nodeStatus.naan_state !== "off";
+  $: if ($nodeStatus.balance !== coinLastBal) {
+    coinLastBal = $nodeStatus.balance;
+    coinKick = true;
+    if (coinKickTimer) clearTimeout(coinKickTimer);
+    coinKickTimer = setTimeout(() => (coinKick = false), 2500);
+  }
+  $: coinAnim = (coinMining || coinKick ? "spin" : "idle") as "spin" | "idle";
 
   let walletAddress = "";
   let qrSvg = "";
@@ -97,6 +114,7 @@
 
   onDestroy(() => {
     alive = false;
+    if (coinKickTimer) clearTimeout(coinKickTimer);
     wipeSeedUi();
     wipeRestoreDraft();
   });
@@ -258,6 +276,11 @@
 </script>
 
 <div class="content-area">
+  <div class="page-col">
+  <PixelStage height={64}>
+    <PixelSprite src={coinSprite} anim={coinAnim} size={28} label="NGT coin" />
+  </PixelStage>
+
   <div class="card">
     <div class="card-header">WALLET NGT (PRIVATE)</div>
     <div class="card-value">{$nodeStatus.balance} NGT</div>
@@ -305,7 +328,8 @@
     </div>
   </div>
 
-  <div class="section-title">SEED PHRASE</div>
+  <div class="card">
+    <div class="card-header">SEED PHRASE</div>
   <p class="hint">Anyone with this seed can spend your NGT. Hide clears it from this screen.</p>
   {#if seedStep === "hidden"}
     <button class="btn-secondary seed-toggle" on:click={requestShowSeed} disabled={busy}>
@@ -330,8 +354,10 @@
   {#if seedError}
     <div class="error-msg">{seedError}</div>
   {/if}
+  </div>
 
-  <div class="section-title">RESTORE 24 WORDS</div>
+  <div class="card">
+    <div class="card-header">RESTORE 24 WORDS</div>
   <div class="form-group">
     <label>BIP39 SEED (STAYS IN THIS TAB)</label>
     <textarea
@@ -348,8 +374,10 @@
     <div class="error-msg">{restoreError}</div>
   {/if}
   <button class="btn-secondary" on:click={restoreWallet} disabled={busy}>[ RESTORE ]</button>
+  </div>
 
-  <div class="section-title">MANAGE</div>
+  <div class="card">
+    <div class="card-header">MANAGE</div>
   <div class="grid-2">
     <button class="btn-secondary" on:click={exportWallet} disabled={busy}>[ EXPORT ]</button>
     <button class="btn-secondary" on:click={importWallet} disabled={busy}>[ IMPORT ]</button>
@@ -361,18 +389,18 @@
     </div>
   {/if}
   <p class="hint">Export writes wallet_export.key under the node data dir. Import accepts .key or .dat.</p>
+  </div>
+  </div>
 </div>
 
 <style>
-  /* Visual reset: antialiased system UI for this tab. */
+  /* Body/data stays readable mono; chrome is pixel via tokens. */
   .content-area {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12px;
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
-    image-rendering: auto;
   }
 
   .content-area :global(.ks-spinner) {
@@ -380,10 +408,11 @@
     width: 14px;
     height: 14px;
     margin-right: 8px;
-    border: 2px solid var(--border);
-    border-top-color: var(--text-primary);
-    border-radius: 50%;
-    animation: ks-spin 0.7s linear infinite;
+    border: 2px solid rgba(255, 255, 255, 0.22);
+    border-radius: 0;
+    background: linear-gradient(#e8e8ed, #e8e8ed) left top / 38% 38% no-repeat;
+    image-rendering: pixelated;
+    animation: ks-spin 0.7s steps(8) infinite;
     vertical-align: -2px;
   }
 
@@ -395,19 +424,23 @@
     font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
   }
 
-  button,
-  input,
-  textarea {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-    font-size: 13px;
-    letter-spacing: 0.02em;
-    border-radius: var(--radius-sm);
+  button {
+    font-family: var(--font);
+    font-size: 10px;
+    letter-spacing: 0;
+    border-radius: 0;
     transition:
-      transform var(--dur) var(--ease),
-      box-shadow var(--dur) var(--ease),
       border-color var(--dur) var(--ease),
       background-color var(--dur) var(--ease),
       color var(--dur) var(--ease);
+  }
+
+  input,
+  textarea {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0;
+    border-radius: 0;
   }
 
   button:hover:not(:disabled) {
@@ -432,36 +465,19 @@
   .card,
   .confirm-box,
   .path-box {
-    border-radius: var(--radius);
-    background: var(--surface);
-    backdrop-filter: blur(var(--blur));
-    -webkit-backdrop-filter: blur(var(--blur));
-    border: 1px solid var(--border);
-    transition:
-      transform var(--dur) var(--ease),
-      box-shadow var(--dur) var(--ease),
-      border-color var(--dur) var(--ease);
+    border-radius: 0;
+    background: none;
+    border: none;
+    border-top: 1px solid var(--border);
   }
 
   .card:hover,
   .path-box:hover {
     border-color: rgba(255, 255, 255, 0.18);
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
-  }
-
-  .card-header,
-  .section-title,
-  .form-group label {
-    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    color: var(--text-faint);
   }
 
   .card-value {
     font-size: 22px;
-    letter-spacing: -0.02em;
   }
 
   .error-msg,
