@@ -3,6 +3,7 @@
   // A name-tag over the head — never a skill gate. pointer-events none.
   export let level: number = 1;
   export let frac: number | undefined = undefined;
+  export let compact: boolean = false;
   export let name: string | undefined = undefined;
 
   $: lv = Math.max(1, Math.floor(Number.isFinite(level) ? level : 1));
@@ -14,7 +15,7 @@
   $: fillPct = bar > 0 ? Math.max(1, Math.round(bar * 100)) : 0;
 </script>
 
-<span class="ag-lv" class:named={!!label} class:has-bar={bar > 0} aria-hidden="true">
+<span class="ag-lv" class:named={!!label} class:has-bar={bar > 0} class:compact aria-hidden="true">
   {#if label}
     <span class="ag-nm">{label}</span>
   {/if}
@@ -63,6 +64,17 @@
     background: #ffd34a;
     opacity: 0.6;
     pointer-events: none;
+  }
+
+  .ag-lv.compact {
+    max-width: 64px;
+    gap: 3px;
+    padding: 1px 4px 2px;
+    font-size: 7px;
+  }
+
+  .ag-lv.compact .ag-nm {
+    max-width: 36px;
   }
 
   .ag-n {

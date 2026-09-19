@@ -41,12 +41,12 @@
   export let focusedId: string = PRIMARY_NAAN_ID;
   export let nowLine: string = "";
 
-  const TILE = 16;
-  const DUMP_T = 12;
-  const PRIMARY_COLS = 26;
-  const ST_ROWS = 12;
-  const VIEW_COLS = 64;
-  const VIEW_ROWS = 36;
+  const TILE = Number(stationLayout.tile) || 16;
+  const DUMP_T = Number(stationLayout.dumpT) || 12;
+  const PRIMARY_COLS = Number(stationLayout.gridCols) || 26;
+  const ST_ROWS = Number(stationLayout.gridRows) || 12;
+  const VIEW_COLS = Number(stationLayout.viewCols) || 64;
+  const VIEW_ROWS = Number(stationLayout.viewRows) || 36;
   const VW = VIEW_COLS * TILE;
   const VH = VIEW_ROWS * TILE;
   const SPEED = 34 / DUMP_T;
@@ -100,6 +100,7 @@
   type DeckLight = LayoutLight & { owner: string };
   const LAYOUT_ROOMS = stationLayout.rooms as Record<string, LayoutRoom>;
   const LAYOUT_CORRIDORS = stationLayout.corridors as Array<{ x1: number; y1: number; x2: number; y2: number; label: string | null }>;
+  const originY = Number((stationLayout as { originY?: number }).originY) || 14;
 
   function layoutRoom(kind: HarvestRoomId): LayoutRoom {
     return LAYOUT_ROOMS[kind] || LAYOUT_ROOMS.bed;
@@ -431,7 +432,7 @@
   let liveHalls: Hall[] = PRIMARY_HALLS.map((h) => ({ ...h }));
   let overlays: Overlay[] = [];
   let ox = 19;
-  const oy = 14;
+  const oy = originY;
   let stCols = PRIMARY_COLS;
   let deck: Deck = buildDeck(["bed", "tor", "lymph", "recipe", "poe"], []);
   let goalHot: Record<string, RoomKind> = { primary: "bed" };
@@ -834,9 +835,27 @@
   }
 
   function ownerTag(owner: string): string {
-    if (owner === PRIMARY_NAAN_ID) return "";
+    if (owner === PRIMARY_NAAN_ID || owner === "primary") return "";
     const c = $naanCrew.find((x) => x.id === owner);
     return c ? agentShortName(c.skin) : "";
+  }
+
+  function wingOwners(): string[] {
+    const seen: string[] = [];
+    for (const r of liveRooms) {
+      if (r.kind === "hall" || r.owner === "primary" || r.owner === PRIMARY_NAAN_ID) continue;
+      if (!seen.includes(r.owner)) seen.push(r.owner);
+    }
+    return seen;
+  }
+
+  function pctBanner(owner: string): string {
+    const owned = liveRooms.filter((r) => r.owner === owner && r.kind !== "hall");
+    const x1 = Math.min(...owned.map((r) => r.x1));
+    const y1 = Math.min(...owned.map((r) => r.y1));
+    const left = ((ox + x1 + 0.12) / VIEW_COLS) * 100;
+    const top = ((oy + y1 - 2.6) / VIEW_ROWS) * 100;
+    return `left:${left}%;top:${top}%`;
   }
 
   function labelHot(r: Room): boolean {
@@ -1298,7 +1317,9 @@
 
   function pctPlate(r: Room): string {
     const left = ((ox + r.x1 + 0.12) / VIEW_COLS) * 100;
-    const top = ((oy + r.y1 + 0.08) / VIEW_ROWS) * 100;
+    const top = r.y1 <= 2
+      ? ((oy + r.y1 - 1.6) / VIEW_ROWS) * 100
+      : ((oy + r.y2 + 1.2) / VIEW_ROWS) * 100;
     return `left:${left}%;top:${top}%`;
   }
 
@@ -1360,6 +1381,10 @@
         />
       {/each}
 
+      {#each wingOwners() as owner}
+        <div class="wing-banner" style={pctBanner(owner)}>{ownerTag(owner)}</div>
+      {/each}
+
       {#each liveRooms as r}
         {#if r.kind !== "hall"}
           <div
@@ -1368,7 +1393,7 @@
             class:mine={poseClock >= 0 && r.owner === focusedId && !labelHot(r)}
             style={pctPlate(r)}
           >
-            <span class="rn">{ownerTag(r.owner) ? ownerTag(r.owner) + " · " : ""}{r.name}</span>
+            <span class="rn">{r.name}</span>
             {#if poseClock >= 0 && labelHot(r)}
               <span class="rs">{r.sn}{r.owner === focusW.owner && poseLabel ? " · " + poseLabel : ""}</span>
             {/if}
@@ -1386,7 +1411,12 @@
         on:pointerdown|stopPropagation={() => focusOwner(PRIMARY_NAAN_ID)}
         on:keydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); focusOwner(PRIMARY_NAAN_ID); } }}
       >
-        <AgentLevelChip level={xp.level} frac={xp.frac} name={agent.label} />
+        <AgentLevelChip
+          compact
+          level={xp.level}
+          frac={xp.frac}
+          name={focusedId === PRIMARY_NAAN_ID ? agentShortName(look.agent) : undefined}
+        />
         <img src={heroSrc} alt="" width="48" height="48" draggable="false" />
       </div>
 
@@ -1401,7 +1431,11 @@
           on:pointerdown|stopPropagation={() => focusOwner(cv.owner)}
           on:keydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); focusOwner(cv.owner); } }}
         >
-          <AgentLevelChip level={1} name={cv.name} />
+          <AgentLevelChip
+            compact
+            level={1}
+            name={focusedId === cv.owner ? agentShortName($naanCrew.find((x) => x.id === cv.owner)?.skin || "") : undefined}
+          />
           <img src={cv.src} alt="" width="48" height="48" draggable="false" />
         </div>
       {/each}
@@ -1554,10 +1588,24 @@
     padding: 1px 3px 2px;
     pointer-events: none;
     border: none;
-    background: rgba(4, 3, 2, 0.62);
+    background: rgba(4, 3, 2, 0.78);
     box-sizing: border-box;
-    z-index: 30;
+    z-index: 22;
     white-space: nowrap;
+  }
+
+  .wing-banner {
+    position: absolute;
+    padding: 1px 4px 2px;
+    pointer-events: none;
+    background: rgba(4, 3, 2, 0.86);
+    color: #ffd34a;
+    font-family: var(--font);
+    font-size: 7px;
+    letter-spacing: 0.4px;
+    z-index: 23;
+    white-space: nowrap;
+    box-shadow: 0 0 0 1px rgba(255, 211, 74, 0.35);
   }
 
   .room-label.on {

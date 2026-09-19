@@ -1,8 +1,11 @@
 {
   "gridCols": 26,
   "gridRows": 12,
-  "viewCols": 60,
-  "viewRows": 28,
+  "viewCols": 64,
+  "viewRows": 36,
+  "tile": 16,
+  "dumpT": 12,
+  "originY": 14,
   "rooms": {
     "bed": {
       "x1": 0, "y1": 4, "x2": 7, "y2": 11,
