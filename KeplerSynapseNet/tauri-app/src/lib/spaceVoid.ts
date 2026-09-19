@@ -123,7 +123,10 @@ function fbmCloud(x: number, y: number, seed: number): number {
 type PlanetBlit = { cv: HTMLCanvasElement; x: number; y: number };
 
 // Crop to the disc. A full-sky ImageData upload leaves 16x16 GPU tiles in empty
-// sky on WebKitGTK when the unused pixels stay 0,0,0,0.
+// sky on WebKitGTK when the unused pixels stay 0,0,0,0. The disc crop alone
+// leaves all-zero corner tiles inside the padded square, which still render as
+// opaque black squares — so the bake context stays on a software buffer and
+// unused pixels get a near-invisible non-zero fill.
 function bakePlanet(
   cx: number,
   cy: number,
@@ -139,11 +142,19 @@ function bakePlanet(
   const cv = document.createElement("canvas");
   cv.width = size;
   cv.height = size;
-  const c = cv.getContext("2d", { alpha: true });
+  const c = cv.getContext("2d", { alpha: true, willReadFrequently: true });
   if (!c) return { cv, x: originX, y: originY };
   c.clearRect(0, 0, size, size);
   const img = c.createImageData(size, size);
   const D = img.data;
+  // Faint non-zero fill (alpha 2/255 is invisible over the starfield) so no
+  // 16x16 GPU tile is ever fully transparent black.
+  for (let i = 0; i < D.length; i += 4) {
+    D[i] = 8;
+    D[i + 1] = 10;
+    D[i + 2] = 16;
+    D[i + 3] = 2;
+  }
   const lx = 0.58;
   const ly = -0.32;
   const lz = 0.74;
