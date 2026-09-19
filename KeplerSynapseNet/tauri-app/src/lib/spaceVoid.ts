@@ -120,21 +120,29 @@ function fbmCloud(x: number, y: number, seed: number): number {
   );
 }
 
+type PlanetBlit = { cv: HTMLCanvasElement; x: number; y: number };
+
+// Crop to the disc. A full-sky ImageData upload leaves 16x16 GPU tiles in empty
+// sky on WebKitGTK when the unused pixels stay 0,0,0,0.
 function bakePlanet(
-  w: number,
-  h: number,
   cx: number,
   cy: number,
   radius: number,
   kind: PlanetKind,
   seed: number,
-): HTMLCanvasElement {
+): PlanetBlit {
+  const atmosThick = kind === "terra" ? 0.12 : 0.04;
+  const pad = Math.max(4, Math.ceil(radius * (1 + atmosThick) + 2));
+  const size = pad * 2;
+  const originX = Math.round(cx) - pad;
+  const originY = Math.round(cy) - pad;
   const cv = document.createElement("canvas");
-  cv.width = w;
-  cv.height = h;
-  const c = cv.getContext("2d");
-  if (!c) return cv;
-  const img = c.createImageData(w, h);
+  cv.width = size;
+  cv.height = size;
+  const c = cv.getContext("2d", { alpha: true });
+  if (!c) return { cv, x: originX, y: originY };
+  c.clearRect(0, 0, size, size);
+  const img = c.createImageData(size, size);
   const D = img.data;
   const lx = 0.58;
   const ly = -0.32;
@@ -143,19 +151,16 @@ function bakePlanet(
   const Lx = lx / llen;
   const Ly = ly / llen;
   const Lz = lz / llen;
-  const atmosThick = kind === "terra" ? 0.12 : 0.04;
-  const x0 = Math.max(0, Math.floor(cx - radius * (1 + atmosThick) - 2));
-  const y0 = Math.max(0, Math.floor(cy - radius * (1 + atmosThick) - 2));
-  const x1 = Math.min(w - 1, Math.ceil(cx + radius * (1 + atmosThick) + 2));
-  const y1 = Math.min(h - 1, Math.ceil(cy + radius * (1 + atmosThick) + 2));
+  const pxCx = cx - originX;
+  const pxCy = cy - originY;
 
-  for (let y = y0; y <= y1; y++) {
-    for (let x = x0; x <= x1; x++) {
-      const nx = (x - cx) / radius;
-      const ny = (y - cy) / radius;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const nx = (x - pxCx) / radius;
+      const ny = (y - pxCy) / radius;
       const rr = nx * nx + ny * ny;
       if (rr > (1 + atmosThick) * (1 + atmosThick)) continue;
-      const p = (y * w + x) * 4;
+      const p = (y * size + x) * 4;
       const dither = (hash2(x, y, seed) - 0.5) * 10;
 
       if (rr > 1) {
@@ -254,7 +259,7 @@ function bakePlanet(
     }
   }
   c.putImageData(img, 0, 0);
-  return cv;
+  return { cv, x: originX, y: originY };
 }
 
 type Star = { x: number; y: number; s: number; tint: string; tw: number; glint?: boolean; rate?: number };
@@ -267,12 +272,8 @@ type Sky = {
   spark: Star[];
   mid: Star[];
   near: Star[];
-  terra: HTMLCanvasElement;
-  moon: HTMLCanvasElement;
-  terraX: number;
-  terraY: number;
-  moonX: number;
-  moonY: number;
+  terra: PlanetBlit;
+  moon: PlanetBlit;
 };
 
 let sky: Sky | null = null;
@@ -364,14 +365,10 @@ function rebuild(w: number, h: number) {
     });
   }
 
-  const terraX = w * 0.16;
-  const terraY = h * 0.44;
-  const moonX = w * 0.86;
-  const moonY = h * 0.20;
-  const terra = bakePlanet(w, h, terraX, terraY, Math.max(48, h * 0.28), "terra", 0x51A7);
-  const moon = bakePlanet(w, h, moonX, moonY, Math.max(18, h * 0.085), "moon", 0xC0DE);
+  const terra = bakePlanet(w * 0.16, h * 0.44, Math.max(48, h * 0.28), "terra", 0x51A7);
+  const moon = bakePlanet(w * 0.86, h * 0.20, Math.max(18, h * 0.085), "moon", 0xC0DE);
 
-  sky = { w, h, neb, dust, spark, mid, near, terra, moon, terraX, terraY, moonX, moonY };
+  sky = { w, h, neb, dust, spark, mid, near, terra, moon };
 }
 
 function wrapX(x: number, w: number): number {
@@ -403,6 +400,7 @@ export function paintVoid(
     ctx.fillRect(0, 0, w, h);
     return;
   }
+  ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = BASE;
   ctx.fillRect(0, 0, w, h);
   const t = reduceMotion ? 0 : now / 1000;
@@ -439,6 +437,6 @@ export function paintVoid(
   }
   const bx = reduceMotion ? 0 : Math.round(3 * Math.sin((t / 18) * Math.PI * 2));
   const by = reduceMotion ? 0 : Math.round(2 * Math.sin((t / 23) * Math.PI * 2));
-  ctx.drawImage(sky.terra, bx, by);
-  ctx.drawImage(sky.moon, -bx, by);
+  ctx.drawImage(sky.terra.cv, sky.terra.x + bx, sky.terra.y + by);
+  ctx.drawImage(sky.moon.cv, sky.moon.x - bx, sky.moon.y + by);
 }

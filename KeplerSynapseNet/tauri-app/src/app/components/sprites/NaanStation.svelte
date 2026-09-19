@@ -1194,6 +1194,19 @@
       }
     }
     paintLightPools(ctx);
+    // Kill any stray tile-sized pixels that landed off the dilated hull.
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-in";
+    const hull = new Path2D();
+    for (let y = 0; y < ST_ROWS; y++) {
+      for (let x = 0; x < stCols; x++) {
+        if (!inDeck(x, y)) continue;
+        hull.rect((ox + x) * TILE - rim, (oy + y) * TILE - rim, TILE + rim * 2, TILE + rim + skirt);
+      }
+    }
+    ctx.fillStyle = "#fff";
+    ctx.fill(hull);
+    ctx.restore();
     punchHull(ctx);
     paintHullExtras(ctx);
   }
@@ -1338,6 +1351,7 @@
           alt=""
           draggable="false"
           style={pctProp(ov)}
+          on:error={(e) => { e.currentTarget.style.display = "none"; }}
         />
       {/each}
 
