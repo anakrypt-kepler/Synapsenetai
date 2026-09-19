@@ -469,9 +469,14 @@ pub fn search_knowledge(query: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn naan_control(action: String) -> Result<String, String> {
-    let params = serde_json::json!({ "action": action }).to_string();
-    ffi::rpc_call("naan.control", &params)
+pub fn naan_control(action: String, agent_id: Option<String>) -> Result<String, String> {
+    let mut params = serde_json::json!({ "action": action });
+    if let Some(id) = agent_id {
+        if !id.is_empty() {
+            params["agent_id"] = serde_json::Value::String(id);
+        }
+    }
+    ffi::rpc_call("naan.control", &params.to_string())
 }
 
 #[tauri::command]

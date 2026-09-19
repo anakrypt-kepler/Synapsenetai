@@ -152,6 +152,14 @@ add_executable(test_naan_adversarial test_naan_adversarial.cpp)
 target_link_libraries(test_naan_adversarial synapsed_core)
 add_test(NAME NaanAdversarialTests COMMAND test_naan_adversarial)
 
+add_executable(test_naan_task_share test_naan_task_share.cpp)
+target_link_libraries(test_naan_task_share synapsed_core Threads::Threads)
+add_test(NAME NaanTaskShareTests COMMAND test_naan_task_share)
+
+add_executable(test_naan_multi_agent test_naan_multi_agent.cpp)
+target_link_libraries(test_naan_multi_agent synapsed_lib)
+add_test(NAME NaanMultiAgentTests COMMAND test_naan_multi_agent)
+
 add_executable(test_web_route_policy test_web_route_policy.cpp)
 target_link_libraries(test_web_route_policy synapsed_core)
 add_test(NAME WebRoutePolicyTests COMMAND test_web_route_policy)
@@ -345,6 +353,8 @@ set(SYNAPSENET_TEST_TARGETS
     test_naan_integration
     test_naan_recovery
     test_naan_adversarial
+    test_naan_task_share
+    test_naan_multi_agent
     test_web_route_policy
     test_web_connector_health
     test_web_extraction_risk

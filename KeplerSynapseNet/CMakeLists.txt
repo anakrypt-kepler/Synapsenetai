@@ -314,6 +314,7 @@ set(CORE_SOURCES
     src/core/implant_compatibility.cpp
     src/core/implant_safety_pipeline.cpp
     src/core/knowledge.cpp
+    src/core/naan_task_share.cpp
     src/core/ledger.cpp
     src/core/poe_v1.cpp
     src/core/poe_v1_engine.cpp

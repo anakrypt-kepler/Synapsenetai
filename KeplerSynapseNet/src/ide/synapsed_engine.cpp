@@ -25,6 +25,8 @@
 #include <regex>
 
 #define SYSTEM_IGNORE(cmd) do { (void)!system(cmd); } while(0)
+#include <cctype>
+#include <filesystem>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -53,6 +55,7 @@
 #include <signal.h>
 #ifdef __linux__
 #include <sys/prctl.h>
+#include <sys/sysinfo.h>
 #endif
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -2730,6 +2733,23 @@ int SynapsedEngine::init(const std::string& configPath) {
 
     const char* home = std::getenv("HOME");
     dataDir_ = home ? std::string(home) + "/.synapsenet" : "/tmp/.synapsenet";
+    {
+        std::ifstream cf(configPath);
+        if (cf.good()) {
+            std::string content((std::istreambuf_iterator<char>(cf)),
+                                std::istreambuf_iterator<char>());
+            nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
+            if (!j.is_discarded() && j.is_object() &&
+                j.contains("data_dir") && j["data_dir"].is_string()) {
+                const std::string d = j["data_dir"].get<std::string>();
+                if (!d.empty()) dataDir_ = d;
+            }
+        }
+    }
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(dataDir_, ec);
+    }
     loadNaanWebConfig();
     compactLocalPoeChain();
 
@@ -2829,7 +2849,7 @@ void SynapsedEngine::shutdown() {
     if (modelDlThread_.joinable()) modelDlThread_.join();
     stopSessionTor();
     if (sessionBootThread_.joinable()) sessionBootThread_.join();
-    stopNaan();
+    stopAllNaanAgents();
     if (naanThread_.joinable()) naanThread_.join();
     stopListener();
     if (blockFetchThread_.joinable()) blockFetchThread_.join();
@@ -2869,6 +2889,62 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
   try {
     if (method == "naan.control") {
         return naanControl(paramsJson);
+    }
+    if (method == "settings.update") {
+        if (!isInitialized()) return "{\"error\":\"not initialized\"}";
+        bool wantStart = false;
+        bool wantStop = false;
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            std::string existing;
+            {
+                std::ifstream sf(dataDir_ + "/settings.json");
+                if (sf.good()) {
+                    existing.assign((std::istreambuf_iterator<char>(sf)),
+                                     std::istreambuf_iterator<char>());
+                }
+            }
+            if (existing.empty()) {
+                existing = "{\"connection_type\":\"tor\",\"model_loaded\":false}";
+            }
+            nlohmann::json base = nlohmann::json::parse(existing, nullptr, false);
+            nlohmann::json patch = nlohmann::json::parse(paramsJson, nullptr, false);
+            if (base.is_discarded()) base = nlohmann::json::object();
+            if (patch.is_discarded() || !patch.is_object()) {
+                return "{\"error\":\"invalid settings json\"}";
+            }
+            if (!base.is_object()) base = nlohmann::json::object();
+            for (auto it = patch.begin(); it != patch.end(); ++it) {
+                base[it.key()] = it.value();
+            }
+            if (!base.contains("connection_type") ||
+                (base["connection_type"] != "tor" &&
+                 base["connection_type"] != "tor_bridges")) {
+                base["connection_type"] = "tor";
+            }
+            std::ofstream sf(dataDir_ + "/settings.json", std::ios::trunc);
+            if (sf.good()) sf << base.dump();
+            cfgSources_ = "tor";
+            persistNaanSources();
+            if (base.contains("naan_topics") && base["naan_topics"].is_string()) {
+                auto topics = parseTopicCsv(base["naan_topics"].get<std::string>());
+                if (!topics.empty()) cfgTopics_ = topics;
+            }
+            if (base.contains("profile_alias") && base["profile_alias"].is_string())
+                profileAlias_ = base["profile_alias"].get<std::string>();
+            if (patch.contains("naan_enabled")) {
+                bool wantNaan = false;
+                if (base.contains("naan_enabled")) {
+                    if (base["naan_enabled"].is_boolean()) wantNaan = base["naan_enabled"].get<bool>();
+                    else if (base["naan_enabled"].is_number()) wantNaan = base["naan_enabled"].get<int>() != 0;
+                }
+                if (wantNaan) wantStart = true;
+                else wantStop = true;
+            }
+        }
+        if (wantStart) startNaan();
+        if (wantStop) stopNaan();
+        return "{\"ok\":true}";
     }
     if (method == "model.catalog") {
         if (!isInitialized()) return "{\"error\":\"not initialized\"}";
@@ -4091,56 +4167,6 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         return live;
     }
 
-    if (method == "settings.update") {
-        std::string existing;
-        {
-            std::ifstream sf(dataDir_ + "/settings.json");
-            if (sf.good()) {
-                existing.assign((std::istreambuf_iterator<char>(sf)),
-                                 std::istreambuf_iterator<char>());
-            }
-        }
-        if (existing.empty()) {
-            existing = "{\"connection_type\":\"tor\",\"model_loaded\":false}";
-        }
-        nlohmann::json base = nlohmann::json::parse(existing, nullptr, false);
-        nlohmann::json patch = nlohmann::json::parse(paramsJson, nullptr, false);
-        if (base.is_discarded()) base = nlohmann::json::object();
-        if (patch.is_discarded() || !patch.is_object()) {
-            return "{\"error\":\"invalid settings json\"}";
-        }
-        if (!base.is_object()) base = nlohmann::json::object();
-        for (auto it = patch.begin(); it != patch.end(); ++it) {
-            base[it.key()] = it.value();
-        }
-        if (!base.contains("connection_type") ||
-            (base["connection_type"] != "tor" &&
-             base["connection_type"] != "tor_bridges")) {
-            base["connection_type"] = "tor";
-        }
-        std::ofstream sf(dataDir_ + "/settings.json", std::ios::trunc);
-        if (sf.good()) sf << base.dump();
-        // Harvest sources are independent of connection type. Always Tor SOCKS.
-        cfgSources_ = "tor";
-        persistNaanSources();
-        if (base.contains("naan_topics") && base["naan_topics"].is_string()) {
-            auto topics = parseTopicCsv(base["naan_topics"].get<std::string>());
-            if (!topics.empty()) cfgTopics_ = topics;
-        }
-        if (base.contains("profile_alias") && base["profile_alias"].is_string())
-            profileAlias_ = base["profile_alias"].get<std::string>();
-        if (patch.contains("naan_enabled")) {
-            bool wantNaan = false;
-            if (base.contains("naan_enabled")) {
-                if (base["naan_enabled"].is_boolean()) wantNaan = base["naan_enabled"].get<bool>();
-                else if (base["naan_enabled"].is_number()) wantNaan = base["naan_enabled"].get<int>() != 0;
-            }
-            if (wantNaan) startNaan();
-            else stopNaan();
-        }
-        return "{\"ok\":true}";
-    }
-
     if (method == "naan.config") {
         size_t tp = paramsJson.find("\"topics\"");
         if (tp != std::string::npos) {
@@ -4480,15 +4506,26 @@ bool SynapsedEngine::isUrlSafe(const std::string& url) const {
 }
 
 std::string SynapsedEngine::fetchViaTor(const std::string& url) const {
+    return fetchViaTor(url, "");
+}
+
+std::string SynapsedEngine::fetchViaTor(const std::string& url, const std::string& cookieTag) const {
     if (!isUrlSafe(url)) return "";
     torRateLimit(extractDomain(url));
     std::string ua = randomUserAgent();
     int timeout = 45;
     if (url.find("dread") != std::string::npos) timeout = 90;
+    std::string tag;
+    for (char c : cookieTag) {
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_') tag.push_back(c);
+    }
+    const std::string cookieFile = tag.empty()
+        ? (dataDir_ + "/tor_cookies.txt")
+        : (dataDir_ + "/tor_cookies_" + tag + ".txt");
     std::string cmd = "curl -s -k --max-time " + std::to_string(timeout) +
         " --socks5-hostname 127.0.0.1:" + std::to_string(gSocksPort.load()) + " -L "
         "-H \"User-Agent: " + ua + "\" "
-        "-c " + dataDir_ + "/tor_cookies.txt -b " + dataDir_ + "/tor_cookies.txt "
+        "-c " + cookieFile + " -b " + cookieFile + " "
         "\"" + url + "\" 2>/dev/null";
     return execCmd(cmd);
 }
@@ -6210,9 +6247,21 @@ void SynapsedEngine::primeCookieJar() const {
 }
 
 std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetries) const {
+    return fetchWithRetry(url, maxRetries, nullptr, "");
+}
+
+std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetries,
+                                           const std::atomic<bool>* stopFlag,
+                                           const std::string& cookieTag) const {
+    auto stopped = [&]() {
+        // Per-agent harvest passes that agent's stop flag. Do not treat
+        // the primary NAAN stop as a kill switch for extra crew loops.
+        if (stopFlag) return stopFlag->load();
+        return naanStop_.load();
+    };
     bool isOnion = url.find(".onion") != std::string::npos;
     int effectiveRetries = std::max(1, maxRetries);
-    if (naanStop_.load()) return "";
+    if (stopped()) return "";
 
     primeCookieJar();
 
@@ -6233,17 +6282,17 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
     }
 
     for (int attempt = 0; attempt < effectiveRetries; attempt++) {
-        if (naanStop_.load()) return "";
+        if (stopped()) return "";
         std::string html;
         int httpCode = 200;
         auto fetchStart = std::chrono::high_resolution_clock::now();
 
         // Always SOCKS. Direct HTTPS from this host is an IP leak.
-        html = fetchViaTor(url);
-        if (naanStop_.load()) return "";
+        html = fetchViaTor(url, cookieTag);
+        if (stopped()) return "";
 
         if (html.empty()) {
-            for (int s = 0; s < 2 + attempt * 3 && !naanStop_.load(); s++)
+            for (int s = 0; s < 2 + attempt * 3 && !stopped(); s++)
                 std::this_thread::sleep_for(std::chrono::seconds(1));
             continue;
         }
@@ -8191,6 +8240,18 @@ std::string SynapsedEngine::modelLoad(const std::string& paramsJson) {
 
 std::string SynapsedEngine::modelUnloadRpc() {
     {
+        std::lock_guard<std::mutex> lock(mtx_);
+        for (const auto& kv : naanAgents_) {
+            if (!kv.second || !kv.second->running.load()) continue;
+            if (kv.second->modelMode != "own") {
+                return "{\"error\":\"a running NAAN agent still shares the primary model\"}";
+            }
+        }
+        if (naanRunning_.load()) {
+            return "{\"error\":\"a running NAAN agent still shares the primary model\"}";
+        }
+    }
+    {
         std::lock_guard<std::mutex> llama(llamaMtx_);
         if (llamaEngine_ && llamaEngine_->isModelLoaded("desktop")) {
             llamaEngine_->unloadModel("desktop");
@@ -8272,24 +8333,350 @@ std::string SynapsedEngine::naanStatus() const {
        << ",\"model_loaded\":" << (modelLoaded_ ? "true" : "false")
        << ",\"inference\":" << (inferenceReady_ ? "true" : "false")
        << ",\"model_name\":\"" << jsonEscape(modelName_) << "\""
-       << "}";
+       << ",\"agents\":[";
+    std::vector<std::string> agentIds{"primary"};
+    {
+        std::ifstream sf(dataDir_ + "/settings.json");
+        if (sf.good()) {
+            nlohmann::json j = nlohmann::json::parse(
+                std::string((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>()),
+                nullptr, false);
+            if (!j.is_discarded() && j.contains("naan_crew") && j["naan_crew"].is_array()) {
+                for (const auto& row : j["naan_crew"]) {
+                    if (!row.is_object() || !row.contains("id") || !row["id"].is_string()) continue;
+                    const std::string id = row["id"].get<std::string>();
+                    if (id.empty() || id == "primary") continue;
+                    agentIds.push_back(id);
+                }
+            }
+        }
+    }
+    for (size_t i = 0; i < agentIds.size(); i++) {
+        if (i) ss << ",";
+        ss << formatNaanAgentJson(agentIds[i]);
+    }
+    ss << "]}";
     return ss.str();
 }
 
-std::string SynapsedEngine::naanControl(const std::string& paramsJson) {
-    if (paramsJson.find("\"start\"") != std::string::npos ||
-        paramsJson.find("\"action\":\"start\"") != std::string::npos) {
-        if (naanStop_.load() && naanRunning_.load())
-            return "{\"error\":\"still stopping\"}";
-        startNaan();
-        return "{\"ok\":true,\"state\":\"active\"}";
+namespace {
+
+constexpr const char* kPrimaryNaanId = "primary";
+
+std::string parseNaanAgentId(const nlohmann::json& p) {
+    if (!p.is_object()) return kPrimaryNaanId;
+    if (p.contains("agent_id") && p["agent_id"].is_string()) {
+        const std::string id = p["agent_id"].get<std::string>();
+        if (!id.empty()) return id;
     }
-    if (paramsJson.find("\"stop\"") != std::string::npos ||
-        paramsJson.find("\"action\":\"stop\"") != std::string::npos) {
-        if (!naanRunning_.load())
-            return "{\"ok\":true,\"state\":\"off\"}";
-        stopNaan();
-        return "{\"ok\":true,\"state\":\"stopping\"}";
+    return kPrimaryNaanId;
+}
+
+} // namespace
+
+bool SynapsedEngine::isKnownNaanAgent(const std::string& agentId) const {
+    if (agentId == kPrimaryNaanId) return true;
+    std::ifstream sf(dataDir_ + "/settings.json");
+    if (!sf.good()) return false;
+    std::string content((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+    nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
+    if (j.is_discarded() || !j.is_object() || !j.contains("naan_crew")) return false;
+    const auto& crew = j["naan_crew"];
+    if (!crew.is_array()) return false;
+    for (const auto& row : crew) {
+        if (!row.is_object() || !row.contains("id") || !row["id"].is_string()) continue;
+        if (row["id"].get<std::string>() == agentId) return true;
+    }
+    return false;
+}
+
+void SynapsedEngine::applyCrewModelSettings(const std::string& agentId) {
+    if (agentId == kPrimaryNaanId) return;
+    auto it = naanAgents_.find(agentId);
+    if (it == naanAgents_.end() || !it->second) return;
+    NaanAgentSlot& slot = *it->second;
+    slot.modelMode = "primary";
+    slot.modelPath.clear();
+    slot.modelName.clear();
+    std::ifstream sf(dataDir_ + "/settings.json");
+    if (!sf.good()) return;
+    std::string content((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+    nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
+    if (j.is_discarded() || !j.is_object() || !j.contains("naan_crew") || !j["naan_crew"].is_array()) return;
+    for (const auto& row : j["naan_crew"]) {
+        if (!row.is_object() || !row.contains("id") || !row["id"].is_string()) continue;
+        if (row["id"].get<std::string>() != agentId) continue;
+        if (row.contains("model_mode") && row["model_mode"].is_string())
+            slot.modelMode = row["model_mode"].get<std::string>();
+        if (row.contains("model_path") && row["model_path"].is_string())
+            slot.modelPath = row["model_path"].get<std::string>();
+        break;
+    }
+    if (slot.modelMode != "own") {
+        slot.modelMode = "primary";
+        slot.modelPath.clear();
+    }
+    if (!slot.modelPath.empty()) {
+        size_t slash = slot.modelPath.rfind('/');
+        slot.modelName = (slash != std::string::npos) ? slot.modelPath.substr(slash + 1) : slot.modelPath;
+    }
+}
+
+std::string SynapsedEngine::formatNaanAgentJson(const std::string& agentId) const {
+    nlohmann::json o;
+    o["id"] = agentId;
+    o["state"] = "off";
+    o["error"] = "";
+    o["current_task"] = "";
+    o["task_id"] = "";
+    o["model_mode"] = agentId == kPrimaryNaanId ? "primary" : "primary";
+    o["model_name"] = "";
+    o["model_path"] = "";
+    o["model_ready"] = false;
+    o["inference_state"] = "idle";
+    o["submissions"] = 0;
+    o["approved"] = 0;
+    o["log"] = nlohmann::json::array();
+    o["history"] = nlohmann::json::array();
+    auto it = naanAgents_.find(agentId);
+    const NaanAgentSlot* slot = (it != naanAgents_.end()) ? it->second.get() : nullptr;
+    if (agentId == kPrimaryNaanId && !slot) {
+        o["state"] = naanState_;
+        o["current_task"] = naanRunning_.load() ? naanCurrentTask_ : "";
+        o["model_name"] = modelName_;
+        o["model_path"] = modelPath_;
+        o["model_ready"] = inferenceReady_;
+        o["inference_state"] = inferenceReady_ ? "ready" : (modelLoaded_ ? "registered" : "idle");
+        o["submissions"] = naanSubmissions_;
+        o["approved"] = naanApproved_;
+        for (const auto& e : naanLog_) {
+            o["log"].push_back({{"ts", e.ts}, {"text", e.text}});
+        }
+        for (const auto& h : naanHist_) {
+            o["history"].push_back({{"title", h.title}, {"topic", h.topic}, {"status", h.status}, {"ngt", h.ngt}});
+        }
+        return o.dump();
+    }
+    if (!slot) return o.dump();
+    o["state"] = slot->state;
+    o["error"] = slot->error;
+    o["current_task"] = slot->running.load() ? slot->currentTask : "";
+    o["task_id"] = slot->currentTaskId;
+    o["model_mode"] = slot->modelMode;
+    o["model_name"] = slot->modelMode == "own" && !slot->modelName.empty() ? slot->modelName : modelName_;
+    o["model_path"] = slot->modelMode == "own" && !slot->modelPath.empty() ? slot->modelPath : modelPath_;
+    o["model_ready"] = inferenceReady_;
+    o["inference_state"] = slot->inferenceState.empty() ? (inferenceReady_ ? "ready" : "idle") : slot->inferenceState;
+    o["submissions"] = slot->submissions;
+    o["approved"] = slot->approved;
+    for (const auto& e : slot->log) {
+        o["log"].push_back({{"ts", e.ts}, {"text", e.text}});
+    }
+    for (const auto& h : slot->hist) {
+        o["history"].push_back({{"title", h.title}, {"topic", h.topic}, {"status", h.status}, {"ngt", h.ngt}});
+    }
+    return o.dump();
+}
+
+std::string SynapsedEngine::startNaanAgent(const std::string& agentId) {
+    if (agentId.empty()) return "{\"error\":\"missing agent_id\"}";
+    if (!isKnownNaanAgent(agentId)) return "{\"error\":\"unknown agent\"}";
+
+    std::lock_guard<std::mutex> startLock(naanStartMtx_);
+    NaanAgentSlot* slot = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        auto& ptr = naanAgents_[agentId];
+        if (!ptr) ptr = std::make_unique<NaanAgentSlot>();
+        slot = ptr.get();
+        slot->id = agentId;
+        applyCrewModelSettings(agentId);
+        if (slot->running.load() && !slot->stop.load()) {
+            nlohmann::json ok;
+            ok["ok"] = true;
+            ok["state"] = slot->state.empty() ? "active" : slot->state;
+            ok["agent_id"] = agentId;
+            ok["note"] = "already running";
+            return ok.dump();
+        }
+    }
+    if (slot->thread.joinable()) slot->thread.join();
+
+    std::string ownPath;
+    bool loadOwn = false;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (slot->running.load() && !slot->stop.load()) {
+            nlohmann::json ok;
+            ok["ok"] = true;
+            ok["state"] = slot->state.empty() ? "active" : slot->state;
+            ok["agent_id"] = agentId;
+            ok["note"] = "already running";
+            return ok.dump();
+        }
+        applyCrewModelSettings(agentId);
+        if (slot->modelMode == "own") {
+            if (slot->modelPath.empty() || !validateGguf(slot->modelPath)) {
+                slot->error = "invalid GGUF file";
+                slot->state = "error";
+                return "{\"error\":\"invalid GGUF file\"}";
+            }
+#ifdef __linux__
+            struct stat st{};
+            if (stat(slot->modelPath.c_str(), &st) == 0) {
+                const uint64_t needMb = static_cast<uint64_t>(st.st_size) / (1024 * 1024);
+                uint64_t ramLimit = 0;
+                std::ifstream sf(dataDir_ + "/settings.json");
+                if (sf.good()) {
+                    nlohmann::json sj = nlohmann::json::parse(
+                        std::string((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>()),
+                        nullptr, false);
+                    if (!sj.is_discarded() && sj.contains("ram_limit_mb") && sj["ram_limit_mb"].is_number())
+                        ramLimit = sj["ram_limit_mb"].get<uint64_t>();
+                }
+                struct sysinfo info{};
+                if (ramLimit > 0 && sysinfo(&info) == 0) {
+                    const uint64_t already = modelSizeMb_;
+                    if (already + needMb + 256 > ramLimit) {
+                        slot->error = "not enough RAM; use the primary model";
+                        slot->state = "error";
+                        return "{\"error\":\"not enough RAM; use the primary model\"}";
+                    }
+                }
+            }
+#endif
+            if (slot->modelPath == modelPath_) {
+                slot->modelMode = "primary";
+            } else {
+                loadOwn = true;
+                ownPath = slot->modelPath;
+                slot->inferenceState = "loading";
+                slot->state = "loading";
+            }
+        }
+        slot->stop.store(false);
+        slot->error.clear();
+        slot->spent = 0;
+        // Mark running before the slow GGUF load so a second Start Agent
+        // cannot spawn another loop for the same id.
+        slot->running.store(true);
+        if (!loadOwn) slot->state = "active";
+        if (agentId == kPrimaryNaanId) {
+            naanStop_.store(false);
+            naanState_ = slot->state;
+            naanRunning_.store(true);
+            naanSpentThisEpoch_ = 0.0;
+        }
+    }
+
+    if (loadOwn) {
+        bool okLoad = false;
+        std::string loadErr;
+        {
+            std::lock_guard<std::mutex> llama(llamaMtx_);
+            try {
+                if (!llamaEngine_) {
+                    llamaEngine_ = std::make_unique<synapse::model::InferenceEngine>();
+                    llamaEngine_->initialize(1);
+                    llamaEngine_->setDefaultTimeout(120000);
+                }
+                const std::string mid = "naan-" + agentId;
+                if (llamaEngine_->isModelLoaded(mid)) llamaEngine_->unloadModel(mid);
+                okLoad = llamaEngine_->loadModel(mid, ownPath, 0);
+                if (!okLoad) loadErr = "llama.cpp could not load this GGUF";
+            } catch (...) {
+                okLoad = false;
+                loadErr = "llama.cpp could not load this GGUF";
+            }
+        }
+        if (!okLoad) {
+            std::lock_guard<std::mutex> lock(mtx_);
+            slot->running.store(false);
+            slot->stop.store(true);
+            slot->inferenceState = "error";
+            slot->error = loadErr;
+            slot->state = "error";
+            if (agentId == kPrimaryNaanId) {
+                naanRunning_.store(false);
+                naanState_ = "error";
+            }
+            return "{\"error\":\"" + jsonEscape(loadErr) + "\"}";
+        }
+        std::lock_guard<std::mutex> lock(mtx_);
+        slot->inferenceState = "ready";
+        slot->state = "active";
+        if (agentId == kPrimaryNaanId) naanState_ = "active";
+    }
+
+    if (agentId == kPrimaryNaanId && !modelPath_.empty()) {
+        std::thread([this]() { ensureLlamaLoaded(); }).detach();
+    }
+
+    slot->thread = std::thread(&SynapsedEngine::naanLoopFor, this, agentId);
+    nlohmann::json ok;
+    ok["ok"] = true;
+    ok["state"] = "active";
+    ok["agent_id"] = agentId;
+    return ok.dump();
+}
+
+std::string SynapsedEngine::stopNaanAgent(const std::string& agentId) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    auto it = naanAgents_.find(agentId);
+    if (it == naanAgents_.end() || !it->second || !it->second->running.load()) {
+        if (agentId == kPrimaryNaanId && !naanRunning_.load()) {
+            return "{\"ok\":true,\"state\":\"off\",\"agent_id\":\"primary\"}";
+        }
+        if (it == naanAgents_.end() || !it->second) {
+            return "{\"ok\":true,\"state\":\"off\",\"agent_id\":\"" + jsonEscape(agentId) + "\"}";
+        }
+    }
+    NaanAgentSlot& slot = *it->second;
+    slot.stop.store(true);
+    if (slot.running.load()) slot.state = "stopping";
+    else slot.state = "off";
+    if (agentId == kPrimaryNaanId) {
+        naanStop_.store(true);
+        if (naanRunning_.load()) naanState_ = "stopping";
+        else naanState_ = "off";
+    }
+    nlohmann::json ok;
+    ok["ok"] = true;
+    ok["state"] = slot.state;
+    ok["agent_id"] = agentId;
+    return ok.dump();
+}
+
+void SynapsedEngine::stopAllNaanAgents() {
+    std::vector<std::thread*> threads;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        naanStop_.store(true);
+        for (auto& kv : naanAgents_) {
+            if (!kv.second) continue;
+            kv.second->stop.store(true);
+            if (kv.second->running.load()) kv.second->state = "stopping";
+            if (kv.second->thread.joinable()) threads.push_back(&kv.second->thread);
+        }
+        if (naanRunning_.load()) naanState_ = "stopping";
+    }
+    for (auto* t : threads) {
+        if (t->joinable()) t->join();
+    }
+}
+
+std::string SynapsedEngine::naanControl(const std::string& paramsJson) {
+    nlohmann::json p = nlohmann::json::parse(paramsJson.empty() ? "{}" : paramsJson, nullptr, false);
+    const std::string agentId = parseNaanAgentId(p.is_discarded() ? nlohmann::json::object() : p);
+    std::string action;
+    if (!p.is_discarded() && p.is_object() && p.contains("action") && p["action"].is_string()) {
+        action = p["action"].get<std::string>();
+    }
+    if (action == "start" || paramsJson.find("\"start\"") != std::string::npos) {
+        return startNaanAgent(agentId);
+    }
+    if (action == "stop" || paramsJson.find("\"stop\"") != std::string::npos) {
+        return stopNaanAgent(agentId);
     }
     if (paramsJson.find("\"topics\"") != std::string::npos) {
         std::lock_guard<std::mutex> lock(mtx_);
@@ -8372,26 +8759,11 @@ void SynapsedEngine::persistNaanSources() const {
 }
 
 void SynapsedEngine::startNaan() {
-    if (naanRunning_.load()) return;
-    if (naanThread_.joinable()) naanThread_.join();
-    naanStop_.store(false);
-    naanSpentThisEpoch_ = 0.0;
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
-        naanState_ = "active";
-    }
-    naanRunning_.store(true);
-    if (!modelPath_.empty()) {
-        std::thread([this]() { ensureLlamaLoaded(); }).detach();
-    }
-    naanThread_ = std::thread(&SynapsedEngine::naanLoop, this);
+    startNaanAgent(kPrimaryNaanId);
 }
 
 void SynapsedEngine::stopNaan() {
-    naanStop_.store(true);
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (naanRunning_.load()) naanState_ = "stopping";
-    else naanState_ = "off";
+    stopNaanAgent(kPrimaryNaanId);
 }
 
 // PoE rejects title < 10 and body < 50. NAAN used to send "NAAN AI" + a headline.
@@ -8427,24 +8799,90 @@ static std::string buildNaanPoeBody(const std::string& topic, const std::string&
 }
 
 void SynapsedEngine::naanLoop() {
-    static std::mt19937 rng(std::random_device{}());
+    naanLoopFor(kPrimaryNaanId);
+}
 
-    loadExploitChain();
+void SynapsedEngine::naanLoopFor(const std::string& agentId) {
+    std::mt19937 rng(std::random_device{}());
+    if (agentId == kPrimaryNaanId) loadExploitChain();
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        auto it = naanAgents_.find(agentId);
+        if (it != naanAgents_.end() && it->second) {
+            const bool own = it->second->modelMode == "own";
+            it->second->log.push_back(NaanLogEntry{nowMillis(),
+                ">> [" + agentId + "] harvest loop on " +
+                (own ? ("own GGUF " + it->second->modelName) : std::string("shared primary GGUF (queued inference)"))});
+            if (it->second->log.size() > 80) it->second->log.erase(it->second->log.begin());
+            if (agentId == kPrimaryNaanId) naanLog_ = it->second->log;
+        }
+    }
 
-    while (!naanStop_.load()) {
+    auto stopped = [&]() {
+        std::lock_guard<std::mutex> lock(mtx_);
+        auto it = naanAgents_.find(agentId);
+        if (it != naanAgents_.end() && it->second) return it->second->stop.load();
+        return agentId == kPrimaryNaanId && naanStop_.load();
+    };
+
+    while (!stopped()) {
+        NaanAgentSlot* slot = nullptr;
         std::string topic;
-        int tickSec;
-        double budgetLeft;
+        int tickSec = 45;
         std::string sources = "tor";
+        std::vector<std::string> topics;
         {
             std::lock_guard<std::mutex> lock(mtx_);
-            if (cfgTopics_.empty()) { naanState_ = "cooldown"; break; }
-            budgetLeft = naanBudgetPerEpoch_ - naanSpentThisEpoch_;
-            if (budgetLeft <= 0) { naanState_ = "budget_exhausted"; break; }
-            std::uniform_int_distribution<size_t> td(0, cfgTopics_.size() - 1);
-            topic = cfgTopics_[td(rng)];
+            auto it = naanAgents_.find(agentId);
+            if (it == naanAgents_.end() || !it->second) break;
+            slot = it->second.get();
+            if (cfgTopics_.empty()) {
+                slot->state = "cooldown";
+                if (agentId == kPrimaryNaanId) naanState_ = "cooldown";
+                break;
+            }
+            if (slot->spent + 1.0 > naanBudgetPerEpoch_) {
+                slot->state = "budget_exhausted";
+                if (agentId == kPrimaryNaanId) naanState_ = "budget_exhausted";
+                break;
+            }
+            topics = cfgTopics_;
             tickSec = naanTickInterval_;
             sources = cfgSources_;
+            if (llamaEngine_ && llamaEngine_->getActiveRequests() > 0)
+                slot->inferenceState = "waiting_for_model";
+            else if (slot->modelMode == "own")
+                slot->inferenceState = slot->inferenceState == "error" ? "error" : "ready";
+            else
+                slot->inferenceState = inferenceReady_ ? "ready" : (modelLoaded_ ? "registered" : "idle");
+        }
+
+        std::shuffle(topics.begin(), topics.end(), rng);
+        for (const auto& cand : topics) {
+            if (naanShare_.claimTopic(agentId, cand)) {
+                topic = cand;
+                break;
+            }
+        }
+        if (topic.empty()) {
+            {
+                std::lock_guard<std::mutex> lock(mtx_);
+                auto it = naanAgents_.find(agentId);
+                if (it != naanAgents_.end() && it->second) {
+                    it->second->currentTask = "waiting for a free topic";
+                    it->second->currentTaskId.clear();
+                    it->second->log.push_back(NaanLogEntry{nowMillis(),
+                        ">> [" + agentId + "] waiting for a free topic"});
+                    if (it->second->log.size() > 80) it->second->log.erase(it->second->log.begin());
+                    if (agentId == kPrimaryNaanId) {
+                        naanCurrentTask_ = it->second->currentTask;
+                        naanLog_ = it->second->log;
+                    }
+                }
+            }
+            for (int w = 0; w < tickSec && !stopped(); w++)
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            continue;
         }
 
         std::string url = topicToUrl(topic);
@@ -8453,16 +8891,44 @@ void SynapsedEngine::naanLoop() {
             for (char& c : q) if (c == ' ') c = '+';
             url = "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/search/?q=" + q;
         }
+        if (!naanShare_.claimUrl(agentId, url)) {
+            naanShare_.releaseTopic(agentId, topic);
+            continue;
+        }
+
         bool isOnion = url.find(".onion") != std::string::npos;
+        const std::string taskId = agentId + ":" + sha256Hex(url + topic).substr(0, 12);
         {
             std::lock_guard<std::mutex> lock(mtx_);
-            naanCurrentTask_ = "fetching [" + topic + "] via " + (isOnion ? "tor" : "clearnet");
-            NaanLogEntry fetchLog{nowMillis(), ">> fetching [" + topic + "] " + (isOnion ? "onion" : "clearnet")};
-            naanLog_.push_back(fetchLog);
-            if (naanLog_.size() > 80) naanLog_.erase(naanLog_.begin());
+            auto it = naanAgents_.find(agentId);
+            if (it != naanAgents_.end() && it->second) slot = it->second.get();
+            if (slot) {
+                slot->currentTask = "fetching [" + topic + "] via " + (isOnion ? "tor" : "clearnet");
+                slot->currentTaskId = taskId;
+                slot->state = "active";
+                slot->log.push_back(NaanLogEntry{nowMillis(),
+                    ">> [" + agentId + "] fetching [" + topic + "] " + (isOnion ? "onion" : "clearnet")});
+                if (slot->log.size() > 80) slot->log.erase(slot->log.begin());
+                if (agentId == kPrimaryNaanId) {
+                    naanCurrentTask_ = slot->currentTask;
+                    naanLog_ = slot->log;
+                    naanState_ = "active";
+                }
+            }
         }
-        std::string html = fetchWithRetry(url, 3);
-        if (naanStop_.load()) break;
+
+        std::atomic<bool>* stopPtr = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            auto it = naanAgents_.find(agentId);
+            if (it != naanAgents_.end() && it->second) stopPtr = &it->second->stop;
+        }
+        std::string html = fetchWithRetry(url, 3, stopPtr, agentId);
+        if (stopped()) {
+            naanShare_.releaseUrl(agentId, url);
+            naanShare_.releaseTopic(agentId, topic);
+            break;
+        }
 
         BypassReport br;
         {
@@ -8478,15 +8944,6 @@ void SynapsedEngine::naanLoop() {
         std::vector<std::string> titles;
         if (!html.empty()) titles = extractTitles(html);
 
-        {
-            std::lock_guard<std::mutex> lock(mtx_);
-            if (html.empty()) {
-                naanCurrentTask_ = "fetch failed [" + topic + "]";
-            } else {
-                naanCurrentTask_ = "extracted " + std::to_string(titles.size()) + " entries from [" + topic + "]";
-            }
-        }
-
         std::string chosenTitle;
         if (!titles.empty()) {
             std::uniform_int_distribution<size_t> pick(0, titles.size() - 1);
@@ -8496,69 +8953,85 @@ void SynapsedEngine::naanLoop() {
             fetchedVia = "failed";
         }
 
-        std::string payload = topic + "|" + chosenTitle + "|" +
-            br.cveId + "|" + std::to_string(nowMillis());
-        std::string hash = sha256Hex(payload);
-        std::string sig = ed25519Sign(hash);
+        // Dedup is on the page, not on the agent. Agent id and wall clock
+        // must not mint a unique hash for the same URL + title.
+        const std::string hash = sha256Hex(url + "\n" + chosenTitle);
+        const std::string sig = ed25519Sign(hash);
 
-        const bool filed = !html.empty() && !titles.empty();
-        const std::string status = filed ? "draft" : "fetch_failed";
+        bool filed = !html.empty() && !titles.empty();
+        std::string status = filed ? "draft" : "fetch_failed";
+        if (filed && !naanShare_.noteHash(hash)) {
+            filed = false;
+            status = "duplicate";
+        }
 
         {
             std::lock_guard<std::mutex> lock(mtx_);
-
-            if (filed) {
-                if (naanSpentThisEpoch_ + 1.0 > naanBudgetPerEpoch_) {
-                    naanState_ = "budget_exhausted";
-                    break;
+            auto it = naanAgents_.find(agentId);
+            if (it != naanAgents_.end() && it->second) slot = it->second.get();
+            if (slot) {
+                if (html.empty()) slot->currentTask = "fetch failed [" + topic + "]";
+                else if (status == "duplicate") slot->currentTask = "duplicate skip [" + topic + "]";
+                else slot->currentTask = "extracted " + std::to_string(titles.size()) + " entries from [" + topic + "]";
+                slot->currentTaskId = taskId;
+                if (filed) {
+                    if (slot->spent + 1.0 > naanBudgetPerEpoch_) {
+                        slot->state = "budget_exhausted";
+                        if (agentId == kPrimaryNaanId) naanState_ = "budget_exhausted";
+                        naanShare_.releaseUrl(agentId, url);
+                        naanShare_.releaseTopic(agentId, topic);
+                        break;
+                    }
+                    slot->spent += 1.0;
+                    if (agentId == kPrimaryNaanId) naanSpentThisEpoch_ = slot->spent;
                 }
-                naanSpentThisEpoch_ += 1.0;
-            }
-
-            naanSubmissions_++;
-            if (filed) {
-                naanApproved_++;
-            }
-
-            std::string bypassTag;
-            if (!br.cveId.empty() && !html.empty()) {
-                bypassTag = " cve=" + br.cveId +
-                            " prot=" + br.protectionType +
-                            " method=" + br.bypassMethod +
-                            " ttfb=" + std::to_string(static_cast<int64_t>(br.ttfbMs)) + "ms" +
-                            " bytes=" + std::to_string(br.bytes);
-            }
-            NaanLogEntry le{nowMillis(),
-                "[" + topic + "] " + chosenTitle +
-                " sha256=" + hash.substr(0, 12) +
-                " sig=" + sig.substr(0, 16) +
-                " via=" + fetchedVia +
-                bypassTag +
-                " -> " + status};
-            naanLog_.push_back(le);
-            if (naanLog_.size() > 80) naanLog_.erase(naanLog_.begin());
-
-            NaanDraft d{chosenTitle, topic, status, 0.0};
-            naanHist_.push_back(d);
-            if (naanHist_.size() > 25) naanHist_.erase(naanHist_.begin());
-
-            if (filed) persistDraft(d, hash);
-            naanState_ = "active";
-
-            if (!br.cveId.empty() && !html.empty()) {
-                ExploitIntel intel;
-                intel.cveId = br.cveId;
-                intel.protectionType = br.protectionType;
-                intel.bypassMethod = br.bypassMethod;
-                intel.transport = br.transport;
-                intel.confidence = 0.85;
-                intel.discoveredBy = sha256Hex(nodeId_);
-                intel.timestamp = nowMillis();
-                intel.successCount = 1;
-                intel.failCount = 0;
-                intel.signature = sha256Hex(br.cveId + br.bypassMethod +
-                    std::to_string(intel.timestamp));
-                publishExploit(intel);
+                slot->submissions++;
+                if (filed) slot->approved++;
+                std::string bypassTag;
+                if (!br.cveId.empty() && !html.empty()) {
+                    bypassTag = " cve=" + br.cveId +
+                                " prot=" + br.protectionType +
+                                " method=" + br.bypassMethod +
+                                " ttfb=" + std::to_string(static_cast<int64_t>(br.ttfbMs)) + "ms" +
+                                " bytes=" + std::to_string(br.bytes);
+                }
+                slot->log.push_back(NaanLogEntry{nowMillis(),
+                    "[" + agentId + "] [" + topic + "] " + chosenTitle +
+                    " sha256=" + hash.substr(0, 12) +
+                    " sig=" + sig.substr(0, 16) +
+                    " via=" + fetchedVia +
+                    bypassTag +
+                    " task=" + taskId +
+                    " -> " + status});
+                if (slot->log.size() > 80) slot->log.erase(slot->log.begin());
+                NaanDraft d{chosenTitle, topic, status, 0.0};
+                slot->hist.push_back(d);
+                if (slot->hist.size() > 25) slot->hist.erase(slot->hist.begin());
+                if (filed) persistDraft(d, hash);
+                if (slot->state != "budget_exhausted") slot->state = "active";
+                if (agentId == kPrimaryNaanId) {
+                    naanCurrentTask_ = slot->currentTask;
+                    naanLog_ = slot->log;
+                    naanHist_ = slot->hist;
+                    naanSubmissions_ = slot->submissions;
+                    naanApproved_ = slot->approved;
+                    if (slot->state != "budget_exhausted") naanState_ = "active";
+                }
+                if (filed && !br.cveId.empty() && !html.empty()) {
+                    ExploitIntel intel;
+                    intel.cveId = br.cveId;
+                    intel.protectionType = br.protectionType;
+                    intel.bypassMethod = br.bypassMethod;
+                    intel.transport = br.transport;
+                    intel.confidence = 0.85;
+                    intel.discoveredBy = sha256Hex(nodeId_);
+                    intel.timestamp = nowMillis();
+                    intel.successCount = 1;
+                    intel.failCount = 0;
+                    intel.signature = sha256Hex(br.cveId + br.bypassMethod +
+                        std::to_string(intel.timestamp));
+                    publishExploit(intel);
+                }
             }
         }
 
@@ -8566,7 +9039,6 @@ void SynapsedEngine::naanLoop() {
             auto harvest = extractAssets(html, url);
             NaanDraft hd{chosenTitle, topic, status, 0.0};
             persistHarvest(hd, hash, harvest);
-            // Submit outside mtx_: PoW + onion gossip must not freeze RPC.
             const std::string poeTitle = buildNaanPoeTitle(topic);
             const std::string poeBody = buildNaanPoeBody(topic, url, chosenTitle, hash,
                                                         fetchedVia, harvest.text);
@@ -8574,6 +9046,8 @@ void SynapsedEngine::naanLoop() {
                 poeTitle, poeBody, synapse::core::poe_v1::ContentType::TEXT);
             {
                 std::lock_guard<std::mutex> lock(mtx_);
+                auto it = naanAgents_.find(agentId);
+                if (it != naanAgents_.end() && it->second) slot = it->second.get();
                 std::string note = "poe submit ok";
                 nlohmann::json jr = nlohmann::json::parse(poeRes, nullptr, false);
                 if (!jr.is_discarded() && jr.is_object()) {
@@ -8587,19 +9061,47 @@ void SynapsedEngine::naanLoop() {
                 } else {
                     note = "poe submit: " + poeRes.substr(0, 80);
                 }
-                naanLog_.push_back(NaanLogEntry{nowMillis(), note});
-                if (naanLog_.size() > 80) naanLog_.erase(naanLog_.begin());
+                if (slot) {
+                    slot->log.push_back(NaanLogEntry{nowMillis(), "[" + agentId + "] " + note});
+                    if (slot->log.size() > 80) slot->log.erase(slot->log.begin());
+                    if (agentId == kPrimaryNaanId) naanLog_ = slot->log;
+                }
             }
         }
 
-        for (int w = 0; w < tickSec && !naanStop_.load(); w++) {
+        naanShare_.releaseUrl(agentId, url);
+        naanShare_.releaseTopic(agentId, topic);
+
+        for (int w = 0; w < tickSec && !stopped(); w++) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     }
 
-    std::lock_guard<std::mutex> lock(mtx_);
-    naanState_ = "off";
-    naanRunning_.store(false);
+    bool unloadOwn = false;
+    std::string ownMid;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        auto it = naanAgents_.find(agentId);
+        if (it != naanAgents_.end() && it->second) {
+            it->second->state = "off";
+            it->second->running.store(false);
+            it->second->currentTask.clear();
+            it->second->currentTaskId.clear();
+            if (it->second->modelMode == "own") {
+                unloadOwn = true;
+                ownMid = "naan-" + agentId;
+            }
+        }
+        if (agentId == kPrimaryNaanId) {
+            naanState_ = "off";
+            naanRunning_.store(false);
+        }
+    }
+    if (unloadOwn) {
+        std::lock_guard<std::mutex> llama(llamaMtx_);
+        if (llamaEngine_ && llamaEngine_->isModelLoaded(ownMid))
+            llamaEngine_->unloadModel(ownMid);
+    }
 }
 
 void SynapsedEngine::applyDesktopConfig() {

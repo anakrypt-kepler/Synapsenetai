@@ -80,7 +80,8 @@ export async function harvestGet(sha256: string): Promise<string> {
   return rpcCall("harvest.get", JSON.stringify({ sha256 }));
 }
 
-export async function naanControl(action: string): Promise<string> {
+export async function naanControl(action: string, agentId?: string): Promise<string> {
+  if (agentId) return invoke<string>("naan_control", { action, agentId });
   return invoke<string>("naan_control", { action });
 }
 

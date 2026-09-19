@@ -1,6 +1,7 @@
-// Orbit sky behind the harvest map. Dense colored starfield plus pinned
-// planet discs (Earth-like left, ice moon right). Bodies do not wrap.
-// Stars still wrap. No accretion disc.
+// Orbit sky behind the harvest map. Starfield wraps. The only body is a
+// cropped black hole (horizon + photon ring + inclined accretion disk).
+// Never blit a full-sky ImageData of unused zeros — WebKitGTK paints those
+// as 16x16 opaque tiles.
 
 const SEED = 0x57A2BE7;
 const BASE = "#010103";
@@ -103,170 +104,181 @@ function quant(c: RGB, dither: number): RGB {
   ];
 }
 
-type PlanetKind = "terra" | "moon";
-
 function smoothstep(a: number, b: number, t: number): number {
   const x = Math.max(0, Math.min(1, (t - a) / (b - a)));
   return x * x * (3 - 2 * x);
 }
 
-function fbmCloud(x: number, y: number, seed: number): number {
-  return (
-    valueNoise(x * 1.3, y * 1.3, seed) * 0.38 +
-    valueNoise(x * 2.8, y * 2.8, seed + 13) * 0.26 +
-    valueNoise(x * 5.9, y * 5.9, seed + 31) * 0.18 +
-    valueNoise(x * 12.1, y * 12.1, seed + 53) * 0.10 +
-    valueNoise(x * 24.0, y * 24.0, seed + 71) * 0.08
-  );
-}
+type Blit = { cv: HTMLCanvasElement; x: number; y: number };
 
-type PlanetBlit = { cv: HTMLCanvasElement; x: number; y: number };
-
-// Crop to the disc. A full-sky ImageData upload leaves 16x16 GPU tiles in empty
-// sky on WebKitGTK when the unused pixels stay 0,0,0,0. The disc crop alone
-// leaves all-zero corner tiles inside the padded square, which still render as
-// opaque black squares — so the bake context stays on a software buffer and
-// unused pixels get a near-invisible non-zero fill.
-function bakePlanet(
-  cx: number,
-  cy: number,
-  radius: number,
-  kind: PlanetKind,
-  seed: number,
-): PlanetBlit {
-  const atmosThick = kind === "terra" ? 0.12 : 0.04;
-  const pad = Math.max(4, Math.ceil(radius * (1 + atmosThick) + 2));
-  const size = pad * 2;
-  const originX = Math.round(cx) - pad;
-  const originY = Math.round(cy) - pad;
+function makeSoftCanvas(size: number): { cv: HTMLCanvasElement; c: CanvasRenderingContext2D; img: ImageData; D: Uint8ClampedArray } | null {
   const cv = document.createElement("canvas");
   cv.width = size;
   cv.height = size;
   const c = cv.getContext("2d", { alpha: true, willReadFrequently: true });
-  if (!c) return { cv, x: originX, y: originY };
+  if (!c) return null;
   c.clearRect(0, 0, size, size);
   const img = c.createImageData(size, size);
   const D = img.data;
-  // Faint non-zero fill (alpha 2/255 is invisible over the starfield) so no
-  // 16x16 GPU tile is ever fully transparent black.
+  // Ghost fill so no 16x16 GPU tile is fully transparent black.
   for (let i = 0; i < D.length; i += 4) {
     D[i] = 8;
     D[i + 1] = 10;
     D[i + 2] = 16;
     D[i + 3] = 2;
   }
-  const lx = 0.58;
-  const ly = -0.32;
-  const lz = 0.74;
-  const llen = Math.hypot(lx, ly, lz);
-  const Lx = lx / llen;
-  const Ly = ly / llen;
-  const Lz = lz / llen;
-  const pxCx = cx - originX;
-  const pxCy = cy - originY;
+  return { cv, c, img, D };
+}
+
+// Face-on ring. paintVoid squashes Y and rotates it to look like an inclined disk.
+function bakeDisk(radius: number, seed: number): HTMLCanvasElement {
+  const pad = 2;
+  const size = Math.max(8, Math.ceil(radius * 2 + pad * 2));
+  const baked = makeSoftCanvas(size);
+  const cv = document.createElement("canvas");
+  cv.width = size;
+  cv.height = size;
+  if (!baked) return cv;
+  const { c, img, D } = baked;
+  const cx = size / 2;
+  const cy = size / 2;
+  const inner = radius * 0.36;
+  const outer = radius;
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const nx = (x - pxCx) / radius;
-      const ny = (y - pxCy) / radius;
-      const rr = nx * nx + ny * ny;
-      if (rr > (1 + atmosThick) * (1 + atmosThick)) continue;
+      const dx = x + 0.5 - cx;
+      const dy = y + 0.5 - cy;
+      const r = Math.hypot(dx, dy);
+      if (r < inner || r > outer) continue;
       const p = (y * size + x) * 4;
-      const dither = (hash2(x, y, seed) - 0.5) * 10;
-
-      if (rr > 1) {
-        // atmosphere rim glow
-        const dist = Math.sqrt(rr) - 1;
-        const fall = 1 - dist / atmosThick;
-        if (fall <= 0) continue;
-        const curve = fall * fall;
-        if (kind === "terra") {
-          const rimR = Math.round(mix([50, 130, 220], [90, 180, 255], curve)[0]);
-          const rimG = Math.round(mix([50, 130, 220], [90, 180, 255], curve)[1]);
-          const rimB = Math.round(mix([50, 130, 220], [90, 180, 255], curve)[2]);
-          D[p] = rimR;
-          D[p + 1] = rimG;
-          D[p + 2] = rimB;
-          D[p + 3] = Math.round(140 * curve);
-        } else {
-          D[p] = 140;
-          D[p + 1] = 135;
-          D[p + 2] = 128;
-          D[p + 3] = Math.round(40 * curve);
-        }
-        continue;
-      }
-
-      const nz = Math.sqrt(Math.max(0, 1 - rr));
-      const ndl = Math.max(0, nx * Lx + ny * Ly + nz * Lz);
-      const limb = Math.pow(nz, 0.38);
-      const lon = Math.atan2(nx, nz);
-      const lat = Math.asin(Math.max(-1, Math.min(1, ny)));
-      const u = (lon / Math.PI + 1) * 2.8;
-      const v = (lat / Math.PI + 0.5) * 3.6;
-      const n1 = fbm(u, v, seed);
-      const n2 = fbm(u * 1.7 + 4, v * 1.7, seed + 7);
-
-      let col: RGB;
-      if (kind === "terra") {
-        const iceLat = Math.abs(lat);
-        const ice = iceLat > 1.05 || (iceLat > 0.78 && n1 > 0.38);
-        const coastLine = smoothstep(0.44, 0.52, n1);
-        const land = n1 > 0.48;
-        if (ice) {
-          col = mix([178, 198, 222], [238, 244, 252], n2 * 0.6 + n1 * 0.4);
-        } else if (land) {
-          const elev = smoothstep(0.48, 0.72, n1);
-          const moisture = n2;
-          const desert: RGB = mix([148, 128, 78], [178, 158, 98], n1);
-          const forest: RGB = mix([28, 82, 38], [68, 118, 48], n1);
-          const highland: RGB = mix([108, 98, 78], [148, 138, 108], n1);
-          const base = moisture > 0.52 ? mix(forest, highland, elev) : mix(desert, highland, elev);
-          col = mix(base, [218, 210, 195], elev * 0.25);
-        } else {
-          const depth = smoothstep(0.48, 0.2, n1);
-          const shallow: RGB = [18, 78, 138];
-          const deep: RGB = [6, 28, 72];
-          col = mix(shallow, deep, depth);
-          const shore = smoothstep(0.44, 0.48, n1);
-          col = mix(col, [42, 128, 168], shore * 0.3);
-        }
-        // Clouds: separate noise, semi-transparent whites
-        const cn = fbmCloud(u + 2.5, v + 1.2, seed + 200);
-        const cloudAlpha = smoothstep(0.42, 0.68, cn);
-        if (cloudAlpha > 0 && !ice) {
-          const cloudBright: RGB = [235, 240, 248];
-          const cloudShadow: RGB = [195, 205, 218];
-          const cloudCol = mix(cloudShadow, cloudBright, ndl * 0.7 + 0.3);
-          col = mix(col, cloudCol, cloudAlpha * 0.65);
-        }
-        // Day/night with softer terminator
-        const terminator = smoothstep(-0.08, 0.22, ndl);
-        const night: RGB = mix([3, 6, 14], [12, 20, 38], n1 * 0.3);
-        const day = mix(col, [255, 242, 210], ndl * 0.08);
-        col = mix(night, day, terminator);
-        // Limb darkening + blue atmosphere at edges
-        if (limb < 0.35) col = mix(col, [60, 140, 210], (0.35 - limb) * 1.2);
-        col = mix(col, [0, 0, 0] as RGB, (1 - limb) * 0.15);
-      } else {
-        // Moon: more cratered, varied regolith
-        const craterN = fbm(u * 2.2, v * 2.2, seed + 100);
-        const crater = smoothstep(0.56, 0.64, craterN) * 0.25;
-        const dust: RGB = mix([52, 48, 52], [138, 128, 112], n1);
-        const highlight = mix(dust, [188, 178, 162], n1 * 0.2);
-        const lit = mix(highlight, [200, 192, 178], ndl * 0.5);
-        const terminator = smoothstep(-0.04, 0.18, ndl);
-        col = mix([10, 8, 12], lit, terminator);
-        col = mix(col, [5, 4, 6] as RGB, crater);
-        if (limb < 0.2) col = mix(col, [150, 140, 128], (0.2 - limb) * 0.6);
-        col = mix(col, [0, 0, 0] as RGB, (1 - limb) * 0.1);
-      }
-
-      col = quant(col, dither);
+      const u = (r - inner) / (outer - inner);
+      const ang = Math.atan2(dy, dx);
+      const turb = fbm(Math.cos(ang) * 2.4 + u * 3.1, Math.sin(ang) * 2.4, seed);
+      const lanes = 0.55 + 0.45 * Math.sin(u * 18 + turb * 6);
+      const doppler = 0.42 + 0.58 * (0.5 + 0.5 * Math.cos(ang));
+      const heat = Math.pow(1 - u, 1.15) * lanes;
+      const innerHot: RGB = [255, 210, 140];
+      const mid: RGB = [220, 92, 28];
+      const outerCool: RGB = [70, 18, 12];
+      let col = mix(innerHot, mid, smoothstep(0.0, 0.38, u));
+      col = mix(col, outerCool, smoothstep(0.38, 1, u));
+      col = mix(col, [255, 236, 190], heat * doppler * 0.35);
+      col = quant(col, (hash2(x, y, seed) - 0.5) * 8);
+      const a = Math.round(210 * doppler * (0.55 + 0.45 * heat) * (1 - smoothstep(0.88, 1, u)));
       D[p] = col[0];
       D[p + 1] = col[1];
       D[p + 2] = col[2];
-      D[p + 3] = 255;
+      D[p + 3] = Math.max(3, Math.min(230, a));
+    }
+  }
+  c.putImageData(img, 0, 0);
+  return baked.cv;
+}
+
+// Horizon, photon ring, and a little gravitational glow. Cropped blit.
+function bakeHole(cx: number, cy: number, rs: number): Blit {
+  const glow = rs * 1.85;
+  const pad = Math.max(4, Math.ceil(glow + 2));
+  const size = pad * 2;
+  const originX = Math.round(cx) - pad;
+  const originY = Math.round(cy) - pad;
+  const baked = makeSoftCanvas(size);
+  if (!baked) {
+    const cv = document.createElement("canvas");
+    cv.width = size;
+    cv.height = size;
+    return { cv, x: originX, y: originY };
+  }
+  const { cv, c, img, D } = baked;
+  const px = cx - originX;
+  const py = cy - originY;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x + 0.5 - px;
+      const dy = y + 0.5 - py;
+      const r = Math.hypot(dx, dy) / rs;
+      if (r > 1.85) continue;
+      const p = (y * size + x) * 4;
+      const dither = (hash2(x, y, 0xB10C) - 0.5) * 6;
+
+      if (r < 1.0) {
+        // Event horizon — readable silhouette, not a soft blob.
+        D[p] = 1;
+        D[p + 1] = 1;
+        D[p + 2] = 2;
+        D[p + 3] = 255;
+        continue;
+      }
+
+      const ring = 1 - Math.abs(r - 1.22) / 0.055;
+      if (ring > 0) {
+        const glowCol = mix([255, 232, 176], [255, 252, 236], ring);
+        const col = quant(glowCol, dither);
+        D[p] = col[0];
+        D[p + 1] = col[1];
+        D[p + 2] = col[2];
+        D[p + 3] = Math.round(235 * ring * ring);
+        continue;
+      }
+
+      // Lensed light: thin blue-white falloff, kept dim so labels stay readable.
+      const lens = 1 - (r - 1.02) / 0.78;
+      if (lens > 0) {
+        const k = lens * lens * 0.85;
+        const n = fbm(dx * 0.08, dy * 0.08, 0x51A7);
+        const col = mix([18, 24, 48], [70, 110, 170], n * 0.35);
+        D[p] = col[0];
+        D[p + 1] = col[1];
+        D[p + 2] = col[2];
+        D[p + 3] = Math.round(58 * k);
+      }
+    }
+  }
+  c.putImageData(img, 0, 0);
+  return { cv, x: originX, y: originY };
+}
+
+// Far side of the disk, warped over the top and bottom of the hole.
+function bakeWarp(cx: number, cy: number, rs: number, seed: number): Blit {
+  const pad = Math.max(6, Math.ceil(rs * 2.05));
+  const size = pad * 2;
+  const originX = Math.round(cx) - pad;
+  const originY = Math.round(cy) - pad;
+  const baked = makeSoftCanvas(size);
+  if (!baked) {
+    const cv = document.createElement("canvas");
+    cv.width = size;
+    cv.height = size;
+    return { cv, x: originX, y: originY };
+  }
+  const { cv, c, img, D } = baked;
+  const px = cx - originX;
+  const py = cy - originY;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x + 0.5 - px;
+      const dy = y + 0.5 - py;
+      const r = Math.hypot(dx, dy) / rs;
+      if (r < 1.04 || r > 1.72) continue;
+      const ang = Math.atan2(dy, dx);
+      // Poles of the inclined disk: the far side wraps over the hole.
+      const pole = Math.pow(Math.abs(Math.sin(ang)), 1.65);
+      const band = 1 - Math.abs(r - 1.34) / 0.26;
+      if (band <= 0) continue;
+      const heat = band * band * (0.18 + 0.82 * pole);
+      if (heat < 0.08) continue;
+      const p = (y * size + x) * 4;
+      const turb = fbm(Math.cos(ang) * 2.2, r * 3.1, seed);
+      const innerHot: RGB = [255, 224, 168];
+      const mid: RGB = [232, 96, 32];
+      const col = quant(mix(mid, innerHot, heat * (0.55 + 0.45 * turb)), (hash2(x, y, seed) - 0.5) * 8);
+      D[p] = col[0];
+      D[p + 1] = col[1];
+      D[p + 2] = col[2];
+      D[p + 3] = Math.max(4, Math.min(210, Math.round(200 * heat)));
     }
   }
   c.putImageData(img, 0, 0);
@@ -283,8 +295,12 @@ type Sky = {
   spark: Star[];
   mid: Star[];
   near: Star[];
-  terra: PlanetBlit;
-  moon: PlanetBlit;
+  hole: Blit;
+  warp: Blit;
+  disk: HTMLCanvasElement;
+  hx: number;
+  hy: number;
+  diskR: number;
 };
 
 let sky: Sky | null = null;
@@ -376,10 +392,15 @@ function rebuild(w: number, h: number) {
     });
   }
 
-  const terra = bakePlanet(w * 0.16, h * 0.44, Math.max(48, h * 0.28), "terra", 0x51A7);
-  const moon = bakePlanet(w * 0.86, h * 0.20, Math.max(18, h * 0.085), "moon", 0xC0DE);
+  const hx = w * 0.22;
+  const hy = h * 0.42;
+  const rs = Math.max(32, h * 0.12);
+  const diskR = Math.max(72, rs * 2.85);
+  const hole = bakeHole(hx, hy, rs);
+  const warp = bakeWarp(hx, hy, rs, 0xD15C);
+  const disk = bakeDisk(diskR, 0xA11CE);
 
-  sky = { w, h, neb, dust, spark, mid, near, terra, moon };
+  sky = { w, h, neb, dust, spark, mid, near, hole, warp, disk, hx, hy, diskR };
 }
 
 function wrapX(x: number, w: number): number {
@@ -416,9 +437,9 @@ export function paintVoid(
   ctx.fillRect(0, 0, w, h);
   const t = reduceMotion ? 0 : now / 1000;
   const sway = reduceMotion ? 0 : Math.round(5 * Math.sin((t / 41) * Math.PI * 2));
-  ctx.globalAlpha = 0.9 + 0.1 * Math.sin(now / 7000);
+  ctx.globalAlpha = 0.94;
   blitWrap(ctx, sky.neb, t * SPD.neb, sway, w, h);
-  ctx.globalAlpha = 0.92 + 0.08 * Math.sin(now / 4100);
+  ctx.globalAlpha = 0.9;
   blitWrap(ctx, sky.dust, t * SPD.dust, 0, w, h);
   ctx.globalAlpha = 1;
   if (!reduceMotion) {
@@ -446,8 +467,19 @@ export function paintVoid(
       }
     }
   }
-  const bx = reduceMotion ? 0 : Math.round(3 * Math.sin((t / 18) * Math.PI * 2));
-  const by = reduceMotion ? 0 : Math.round(2 * Math.sin((t / 23) * Math.PI * 2));
-  ctx.drawImage(sky.terra.cv, sky.terra.x + bx, sky.terra.y + by);
-  ctx.drawImage(sky.moon.cv, sky.moon.x - bx, sky.moon.y + by);
+
+  const bx = reduceMotion ? 0 : Math.round(2 * Math.sin((t / 22) * Math.PI * 2));
+  const by = reduceMotion ? 0 : Math.round(1 * Math.sin((t / 29) * Math.PI * 2));
+  const hx = sky.hx + bx;
+  const hy = sky.hy + by;
+  const ang = reduceMotion ? 0.42 : 0.42 + t * 0.09;
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.translate(hx, hy);
+  ctx.scale(1, 0.32);
+  ctx.rotate(ang);
+  ctx.drawImage(sky.disk, -sky.diskR - 2, -sky.diskR - 2);
+  ctx.restore();
+  ctx.drawImage(sky.hole.cv, sky.hole.x + bx, sky.hole.y + by);
+  ctx.drawImage(sky.warp.cv, sky.warp.x + bx, sky.warp.y + by);
 }

@@ -7,6 +7,7 @@
 // are private methods on this class — see synapsed_engine.cpp.
 
 #include "core/poe_v1_engine.h"
+#include "core/naan_task_share.h"
 #include "crypto/crypto.h"
 #include <array>
 #include <atomic>
@@ -43,6 +44,26 @@ struct NaanDraft {
     double ngt;
 };
 
+struct NaanAgentSlot {
+    std::string id;
+    std::atomic<bool> running{false};
+    std::atomic<bool> stop{true};
+    std::thread thread;
+    std::string state = "off";
+    std::string error;
+    std::string currentTask;
+    std::string currentTaskId;
+    std::string modelMode = "primary";
+    std::string modelPath;
+    std::string modelName;
+    std::string inferenceState = "idle";
+    std::vector<NaanLogEntry> log;
+    std::vector<NaanDraft> hist;
+    int submissions = 0;
+    int approved = 0;
+    double spent = 0.0;
+};
+
 class SynapsedEngine {
 public:
     static SynapsedEngine& instance();
@@ -73,6 +94,7 @@ private:
     };
     TorInfo queryTorControl() const;
     std::string fetchViaTor(const std::string& url) const;
+    std::string fetchViaTor(const std::string& url, const std::string& cookieTag) const;
     bool isUrlSafe(const std::string& url) const;
     void generateTorrc() const;
 
@@ -80,8 +102,15 @@ private:
     void stopNaan();
     void compactLocalPoeChain();
     void naanLoop();
+    void naanLoopFor(const std::string& agentId);
     std::string naanStatus() const;
     std::string naanControl(const std::string& paramsJson);
+    std::string startNaanAgent(const std::string& agentId);
+    std::string stopNaanAgent(const std::string& agentId);
+    void stopAllNaanAgents();
+    bool isKnownNaanAgent(const std::string& agentId) const;
+    void applyCrewModelSettings(const std::string& agentId);
+    std::string formatNaanAgentJson(const std::string& agentId) const;
     std::vector<std::string> extractTitles(const std::string& html) const;
     std::string topicToUrl(const std::string& topic) const;
     std::string sha256Hex(const std::string& data) const;
@@ -130,6 +159,9 @@ private:
         const std::string& pageUrl) const;
     std::string randomUserAgent() const;
     std::string fetchWithRetry(const std::string& url, int maxRetries) const;
+    std::string fetchWithRetry(const std::string& url, int maxRetries,
+                               const std::atomic<bool>* stopFlag,
+                               const std::string& cookieTag) const;
 
     struct EndGameV3Challenge {
         bool detected = false;
@@ -421,6 +453,9 @@ private:
     std::atomic<bool> naanRunning_{false};
     std::atomic<bool> naanStop_{false};
     std::thread naanThread_;
+    std::map<std::string, std::unique_ptr<NaanAgentSlot>> naanAgents_;
+    std::mutex naanStartMtx_;
+    synapse::core::NaanTaskShare naanShare_;
     std::string naanState_ = "off";
     mutable std::string naanCurrentTask_;
     int naanTickInterval_ = 45;

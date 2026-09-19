@@ -16,6 +16,8 @@
     removeCrewMember,
     toggleCrewRoom,
     setCrewSkin,
+    setCrewPrimaryModel,
+    setCrewOwnModel,
     loadNaanDeckFromSettings,
   } from "../../lib/naanCrew";
   import { stationCatalog, findAgent, agentPortraitSrc, stationLook } from "../../lib/stationSkins";
@@ -38,6 +40,23 @@
   let inferenceReady = false;
   let focusedId = PRIMARY_NAAN_ID;
   let nowLine = "";
+  type EngineAgent = {
+    id: string;
+    state: string;
+    error: string;
+    current_task: string;
+    task_id: string;
+    model_mode: string;
+    model_name: string;
+    model_path: string;
+    model_ready: boolean;
+    inference_state: string;
+    submissions: number;
+    approved: number;
+    log: { ts: number; msg: string }[];
+    history: { title: string; result: string; ngt_earned: string }[];
+  };
+  let engineAgents: Record<string, EngineAgent> = {};
 
   let topicPreferences = "";
   let researchSources = "tor";
@@ -63,8 +82,8 @@
   onDestroy(() => { if (pollHandle) clearInterval(pollHandle); });
 
   afterUpdate(() => {
-    if (!logBox || agentLog.length === prevLogLen) return;
-    prevLogLen = agentLog.length;
+    if (!logBox || focusLog.length === prevLogLen) return;
+    prevLogLen = focusLog.length;
     logBox.scrollTop = logBox.scrollHeight;
   });
 
@@ -155,6 +174,57 @@
       agentLog = Array.isArray(parsed.log)
         ? parsed.log.map((e: any) => ({ ts: Number(e?.ts) || 0, msg: e?.text || e?.msg || "" }))
         : [];
+      const nextAgents: Record<string, EngineAgent> = {};
+      if (Array.isArray(parsed.agents)) {
+        for (const row of parsed.agents) {
+          if (!row || typeof row !== "object") continue;
+          const id = String(row.id || "");
+          if (!id) continue;
+          nextAgents[id] = {
+            id,
+            state: String(row.state || "off").toUpperCase(),
+            error: String(row.error || ""),
+            current_task: String(row.current_task || ""),
+            task_id: String(row.task_id || ""),
+            model_mode: String(row.model_mode || "primary"),
+            model_name: String(row.model_name || ""),
+            model_path: String(row.model_path || ""),
+            model_ready: row.model_ready === true,
+            inference_state: String(row.inference_state || "idle"),
+            submissions: Number(row.submissions) || 0,
+            approved: Number(row.approved) || 0,
+            log: Array.isArray(row.log)
+              ? row.log.map((e: any) => ({ ts: Number(e?.ts) || 0, msg: e?.text || e?.msg || "" }))
+              : [],
+            history: Array.isArray(row.history)
+              ? row.history.map((h: any) => ({
+                  title: h?.title || "",
+                  result: h?.status || h?.result || "",
+                  ngt_earned: fmtNgt(h?.ngt ?? h?.ngt_earned),
+                }))
+              : [],
+          };
+        }
+      }
+      if (!nextAgents[PRIMARY_NAAN_ID]) {
+        nextAgents[PRIMARY_NAAN_ID] = {
+          id: PRIMARY_NAAN_ID,
+          state: agentStatus,
+          error: "",
+          current_task: currentTask,
+          task_id: "",
+          model_mode: "primary",
+          model_name: modelName,
+          model_path: "",
+          model_ready: inferenceReady,
+          inference_state: inferenceReady ? "ready" : "idle",
+          submissions: agentScore.submissions,
+          approved,
+          log: agentLog,
+          history: submissionHistory,
+        };
+      }
+      engineAgents = nextAgents;
       if (!configDirty && parsed.config && typeof parsed.config === "object") {
         applyConfigFromStatus(parsed.config);
       }
@@ -180,7 +250,7 @@
     return true;
   }
 
-  async function startAgent() {
+  async function startAgent(id: string = PRIMARY_NAAN_ID) {
     if (busy) return;
     actionError = "";
     configMsg = "";
@@ -191,7 +261,7 @@
     busy = true;
     try {
       await persistConfig();
-      const raw = await naanControl("start");
+      const raw = await naanControl("start", id);
       const parsed = readRpcJson(raw);
       if (parsed.error) {
         actionError = String(parsed.error).toUpperCase();
@@ -205,20 +275,18 @@
     }
   }
 
-  async function stopAgent() {
+  async function stopAgent(id: string = PRIMARY_NAAN_ID) {
     if (busy) return;
     actionError = "";
     configMsg = "";
     busy = true;
-    agentStatus = "STOPPING";
     try {
-      const raw = await naanControl("stop");
+      const raw = await naanControl("stop", id);
       const parsed = readRpcJson(raw);
       if (parsed.error) {
         actionError = String(parsed.error).toUpperCase();
         return;
       }
-      agentStatus = String(parsed.state || "stopping").toUpperCase();
       await loadAgentState();
     } catch (e) {
       actionError = fmtErr(e, "STOP FAILED");
@@ -249,49 +317,66 @@
   }
 
   $: bypassList = Object.entries(bypassCounters).sort((a, b) => b[1] - a[1]);
-  $: statusWarn = agentStatus === "COOLDOWN" || agentStatus === "BUDGET_EXHAUSTED";
-  $: stopping = agentStatus === "STOPPING";
-  $: lastLog = agentLog.length ? agentLog[agentLog.length - 1].msg : "";
-  $: xp = harvestLevel({ submissions: agentScore.submissions, ngt: totalNgt });
+  $: focusAgent = engineAgents[focusedId];
+  $: focusState = (focusAgent?.state || (focusedId === PRIMARY_NAAN_ID ? agentStatus : "OFF")).toUpperCase();
+  $: statusWarn = focusState === "COOLDOWN" || focusState === "BUDGET_EXHAUSTED";
+  $: stopping = focusState === "STOPPING";
+  $: focusLog = focusAgent?.log?.length ? focusAgent.log : (focusedId === PRIMARY_NAAN_ID ? agentLog : []);
+  $: lastLog = focusLog.length ? focusLog[focusLog.length - 1].msg : "";
+  $: xp = harvestLevel({
+    submissions: focusAgent?.submissions ?? (focusedId === PRIMARY_NAAN_ID ? agentScore.submissions : 0),
+    ngt: focusedId === PRIMARY_NAAN_ID ? totalNgt : 0,
+  });
   $: harvestFocus = focusedId === PRIMARY_NAAN_ID;
   $: focusSkin = harvestFocus
     ? $stationLook.agent
     : ($naanCrew.find((c) => c.id === focusedId)?.skin || $stationLook.agent);
+  $: agentActiveMap = Object.fromEntries(
+    Object.values(engineAgents).map((a) => [a.id, a.state === "ACTIVE"]),
+  );
   $: roster = [
     {
       id: PRIMARY_NAAN_ID,
       name: findAgent($stationLook.agent).label,
       portrait: agentPortraitSrc($stationLook.agent),
-      level: xp.level,
-      working: agentStatus === "ACTIVE",
+      level: harvestLevel({ submissions: engineAgents[PRIMARY_NAAN_ID]?.submissions ?? agentScore.submissions, ngt: totalNgt }).level,
+      working: (engineAgents[PRIMARY_NAAN_ID]?.state || agentStatus) === "ACTIVE",
       harvest: true,
     },
-    ...$naanCrew.map((c) => ({
-      id: c.id,
-      name: findAgent(c.skin).label,
-      portrait: agentPortraitSrc(c.skin),
-      level: 1,
-      working: false,
-      harvest: false,
-    })),
+    ...$naanCrew.map((c) => {
+      const ea = engineAgents[c.id];
+      const sub = ea?.submissions ?? 0;
+      return {
+        id: c.id,
+        name: findAgent(c.skin).label,
+        portrait: agentPortraitSrc(c.skin),
+        level: harvestLevel({ submissions: sub, ngt: 0 }).level,
+        working: ea?.state === "ACTIVE",
+        harvest: true,
+      };
+    }),
   ];
   let hudKind: "down" | "working" | "on" = "on";
-  $: hudKind = pollError || agentStatus === "QUARANTINE"
+  $: hudKind = pollError || focusState === "QUARANTINE"
     ? "down"
-    : harvestFocus && (agentStatus === "ACTIVE" || stopping)
+    : (focusState === "ACTIVE" || stopping)
       ? "working"
       : "on";
-  $: hudStatus = pollError || agentStatus === "QUARANTINE"
+  $: hudStatus = pollError || focusState === "QUARANTINE"
     ? "OFFLINE"
-    : harvestFocus && (agentStatus === "ACTIVE" || stopping)
-      ? "WORKING"
-      : harvestFocus
-        ? "ONLINE"
-        : "IDLE";
-  $: doneRows = harvestFocus ? submissionHistory.slice(-4).reverse() : [];
-  $: logTail = harvestFocus
-    ? agentLog.slice(-4).map((e) => ({ ts: fmtTime(e.ts), msg: e.msg }))
-    : [];
+    : focusState === "WAITING_FOR_MODEL" || focusAgent?.inference_state === "waiting_for_model"
+      ? "WAITING FOR MODEL"
+      : focusState === "LOADING" || focusAgent?.inference_state === "loading"
+        ? "LOADING MODEL"
+        : (focusState === "ACTIVE" || stopping)
+          ? "WORKING"
+          : focusState === "ERROR"
+            ? "ERROR"
+            : focusState === "OFF"
+              ? "IDLE"
+              : focusState;
+  $: doneRows = (focusAgent?.history || (harvestFocus ? submissionHistory : [])).slice(-4).reverse();
+  $: logTail = focusLog.slice(-4).map((e) => ({ ts: fmtTime(e.ts), msg: e.msg }));
   $: if (focusedId !== PRIMARY_NAAN_ID && !$naanCrew.some((c) => c.id === focusedId)) {
     focusedId = PRIMARY_NAAN_ID;
   }
@@ -299,6 +384,26 @@
   function onCrewSkin(id: string, ev: Event) {
     const el = ev.currentTarget;
     if (el instanceof HTMLSelectElement) void setCrewSkin(id, el.value);
+  }
+
+  async function usePrimaryModel(id: string) {
+    actionError = "";
+    const err = await setCrewPrimaryModel(id);
+    if (err) actionError = err.toUpperCase();
+  }
+
+  async function selectOwnModel(id: string) {
+    actionError = "";
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({ filters: [{ name: "GGUF", extensions: ["gguf"] }], multiple: false });
+      if (!selected) return;
+      const path = typeof selected === "string" ? selected : (selected as { path?: string }).path || "";
+      const err = await setCrewOwnModel(id, path);
+      if (err) actionError = err.toUpperCase();
+    } catch (e) {
+      actionError = fmtErr(e, "SELECT MODEL FAILED");
+    }
   }
 </script>
 
@@ -314,9 +419,10 @@
   <SynapseHoloLogo />
   <NaanStation
     status={agentStatus}
-    task={currentTask}
+    agentActive={agentActiveMap}
+    task={focusAgent?.current_task || currentTask}
     lastLog={lastLog}
-    submissions={agentScore.submissions}
+    submissions={focusAgent?.submissions ?? agentScore.submissions}
     ngt={totalNgt}
     bind:focusedId
     bind:nowLine
@@ -328,13 +434,15 @@
       <NaanAgentHud
         name={findAgent(focusSkin).label}
         portrait={agentPortraitSrc(focusSkin)}
-        harvest={harvestFocus}
+        harvest={true}
         statusKind={hudKind}
         statusText={hudStatus}
-        model={modelName}
-        runs={harvestFocus ? agentScore.submissions : null}
-        level={harvestFocus ? xp.level : null}
-        kudos={harvestFocus ? approved : null}
+        model={focusAgent?.inference_state === "waiting_for_model"
+          ? "WAITING FOR MODEL"
+          : (focusAgent?.model_name || modelName)}
+        runs={focusAgent?.submissions ?? (harvestFocus ? agentScore.submissions : 0)}
+        level={xp.level}
+        kudos={focusAgent?.approved ?? (harvestFocus ? approved : 0)}
         {nowLine}
         purpose={topicPreferences}
         done={doneRows}
@@ -348,37 +456,52 @@
       <div class="card-header">STATUS</div>
       <div
         class="card-value status-lbl"
-        class:active={agentStatus === "ACTIVE"}
+        class:active={focusState === "ACTIVE"}
         class:cooldown={statusWarn}
-        class:quarantine={agentStatus === "QUARANTINE"}
+        class:quarantine={focusState === "QUARANTINE"}
       >
-        {agentStatus}
+        {focusState}
       </div>
     </div>
     <div class="card">
       <div class="card-header">CONTROL</div>
       <div class="ctrl-actions">
-        {#if agentStatus === "ACTIVE" || stopping}
-          <button class="btn-secondary" type="button" disabled={busy || stopping} on:click={stopAgent}>
+        {#if focusedId !== PRIMARY_NAAN_ID}
+          <button class="btn-secondary" type="button" disabled={busy} on:click={() => selectOwnModel(focusedId)}>
+            SELECT MODEL
+          </button>
+          <button class="btn-secondary" type="button" disabled={busy} on:click={() => usePrimaryModel(focusedId)}>
+            USE PRIMARY MODEL
+          </button>
+        {/if}
+        {#if focusState === "ACTIVE" || stopping}
+          <button class="btn-secondary" type="button" disabled={busy || stopping} on:click={() => stopAgent(focusedId)}>
             {#if stopping || busy}
               <span class="ks-busy"><span class="ks-spinner"></span> STOPPING</span>
             {:else}
-              STOP
+              STOP AGENT
             {/if}
           </button>
         {:else}
-          <button class="btn-primary" type="button" disabled={busy} on:click={startAgent}>
+          <button class="btn-primary" type="button" disabled={busy || !topicPreferences.trim()} on:click={() => startAgent(focusedId)}>
             {#if busy}
               <span class="ks-busy"><span class="ks-spinner"></span> START</span>
             {:else}
-              START
+              START AGENT
             {/if}
           </button>
         {/if}
-        {#if inferenceReady}
-          <p class="ok-line">LLM {modelName || "GGUF"} is in RAM. Harvest, hard captchas, and IDE chat share it.</p>
+        {#if focusAgent?.error}
+          <p class="warn-text">{focusAgent.error.toUpperCase()}</p>
+        {/if}
+        {#if focusAgent?.inference_state === "waiting_for_model"}
+          <p class="warn-text">Waiting for Model. One llama.cpp worker; harvest fetch still runs in parallel.</p>
+        {:else if focusedId !== PRIMARY_NAAN_ID && ($naanCrew.find((c) => c.id === focusedId)?.modelMode === "own")}
+          <p class="ok-line">Own GGUF {$naanCrew.find((c) => c.id === focusedId)?.modelPath.split("/").pop() || ""}. Inference is queued, not parallel.</p>
+        {:else if inferenceReady}
+          <p class="ok-line">LLM {modelName || "GGUF"} is in RAM. Extra agents share it (queued inference, parallel fetch).</p>
         {:else if modelLoaded}
-          <p class="warn-text">GGUF {modelName || "on disk"} is registered. START loads it for hard captchas and chat.</p>
+          <p class="warn-text">GGUF {modelName || "on disk"} is registered. START AGENT loads it for hard captchas and chat.</p>
         {:else}
           <p class="warn-text">No GGUF yet. Harvest still runs. Load a model in SET for hard captchas and IDE chat.</p>
         {/if}
@@ -406,7 +529,7 @@
         </button>
       {/each}
     </div>
-    <p class="hint">Square toggles add or remove rooms and their props. At least one block stays so the walker can stand. Engine harvest is unchanged.</p>
+    <p class="hint">Square toggles add or remove rooms and their props. At least one block stays so the walker can stand. Layout only — harvest still needs Start Agent.</p>
   </div>
 
   <div class="card">
@@ -437,6 +560,18 @@
             void removeCrewMember(c.id);
           }}>[ REMOVE ]</button>
         </div>
+        <p class="hint">
+          {c.modelMode === "own" && c.modelPath
+            ? "Model: " + (c.modelPath.split("/").pop() || c.modelPath)
+            : "Model: primary (shared weights, queued inference)"}
+          {#if engineAgents[c.id]?.task_id}
+            · task {engineAgents[c.id].task_id}
+          {/if}
+          {#if engineAgents[c.id]?.state}
+            · {engineAgents[c.id].state}
+          {/if}
+        </p>
+        <p class="hint">Crew rooms are station layout only. They do not split the harvest job.</p>
         <div class="blk-row">
           {#each ROOM_META as r}
             <button
@@ -450,9 +585,18 @@
             </button>
           {/each}
         </div>
+        <div class="crew-actions">
+          <button class="btn-secondary" type="button" disabled={busy} on:click={() => selectOwnModel(c.id)}>SELECT MODEL</button>
+          <button class="btn-secondary" type="button" disabled={busy} on:click={() => usePrimaryModel(c.id)}>USE PRIMARY MODEL</button>
+          {#if engineAgents[c.id]?.state === "ACTIVE" || engineAgents[c.id]?.state === "STOPPING"}
+            <button class="btn-secondary" type="button" disabled={busy || engineAgents[c.id]?.state === "STOPPING"} on:click={() => { focusedId = c.id; void stopAgent(c.id); }}>STOP AGENT</button>
+          {:else}
+            <button class="btn-primary" type="button" disabled={busy || !topicPreferences.trim()} on:click={() => { focusedId = c.id; void startAgent(c.id); }}>START AGENT</button>
+          {/if}
+        </div>
       </div>
     {:else}
-      <p class="hint">No extra NAAN on this station. + AGENT adds an east wing, its own skin, and its own walker.</p>
+      <p class="hint">No extra NAAN on this station. + AGENT adds a body, then Use Primary Model or Select Model, then Start Agent. Extra agents do not autostart.</p>
     {/each}
   </div>
 
@@ -483,7 +627,7 @@
 
   <div class="section-title">AGENT LOG</div>
   <div class="chat-box" bind:this={logBox}>
-    {#each agentLog as entry}
+    {#each focusLog as entry}
       <div class="chat-line">
         <span class="chat-ts">[{fmtTime(entry.ts)}]</span>
         <span class="chat-msg">{entry.msg}</span>

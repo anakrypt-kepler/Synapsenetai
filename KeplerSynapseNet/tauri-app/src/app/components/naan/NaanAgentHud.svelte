@@ -1,6 +1,5 @@
 <script lang="ts">
   // Dump ag-hero wells: portrait + RUNS/LEVEL/KUDOS + NOW/DONE.
-  // Extra crew bodies do not harvest; their wells stay dashes.
 
   export let name: string = "";
   export let portrait: string = "";

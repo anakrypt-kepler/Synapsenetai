@@ -1,9 +1,9 @@
 import { writable, get } from "svelte/store";
-import { rpcCall } from "./rpc";
+import { rpcCall, naanControl } from "./rpc";
 import { findAgent, stationCatalog, stationLook, type HarvestRoomId } from "./stationSkins";
 
-// Command-block rooms + extra NAAN bodies. Persisted through settings.update
-// like station skins. Does not change harvest RPC.
+  // Command-block rooms + extra NAAN bodies. Crew ids persist through
+  // settings.update. Start Agent / Stop Agent talk to naan.control.
 
 export const PRIMARY_ROOM_IDS: HarvestRoomId[] = ["bed", "tor", "lymph", "recipe", "poe"];
 
@@ -23,6 +23,8 @@ export type NaanCrewMember = {
   id: string;
   skin: string;
   rooms: HarvestRoomId[];
+  modelMode: "primary" | "own";
+  modelPath: string;
 };
 
 export const naanRooms = writable<HarvestRoomId[]>([...DEFAULT_ROOMS]);
@@ -67,13 +69,19 @@ function parseCrew(raw: unknown): NaanCrewMember[] {
     if (!item || typeof item !== "object") continue;
     const rec = item as Record<string, unknown>;
     const id = typeof rec.id === "string" && rec.id.trim() ? rec.id.trim() : "";
-    if (!id || seen.has(id)) continue;
+    if (!id || id === "primary" || seen.has(id)) continue;
     seen.add(id);
     const skin = findAgent(typeof rec.skin === "string" ? rec.skin : "").id;
+    const modelMode = rec.model_mode === "own" || rec.modelMode === "own" ? "own" : "primary";
+    const modelPath =
+      typeof rec.model_path === "string" ? rec.model_path :
+      typeof rec.modelPath === "string" ? rec.modelPath : "";
     out.push({
       id,
       skin,
       rooms: parseRooms(rec.rooms, DEFAULT_CREW_ROOMS),
+      modelMode,
+      modelPath: modelMode === "own" ? modelPath : "",
     });
   }
   return out.slice(0, MAX_CREW);
@@ -122,7 +130,13 @@ export async function persistNaanDeck(): Promise<string> {
       "settings.update",
       JSON.stringify({
         naan_rooms: get(naanRooms),
-        naan_crew: get(naanCrew),
+        naan_crew: get(naanCrew).map((c) => ({
+          id: c.id,
+          skin: c.skin,
+          rooms: c.rooms,
+          model_mode: c.modelMode,
+          model_path: c.modelPath,
+        })),
       }),
     );
     const parsed = JSON.parse(raw);
@@ -154,12 +168,17 @@ export async function addCrewMember(): Promise<string> {
   const skin = pickCrewSkin([primary, ...crew.map((c) => c.skin)]);
   naanCrew.set([
     ...crew,
-    { id: newCrewId(), skin, rooms: [...DEFAULT_CREW_ROOMS] },
+    { id: newCrewId(), skin, rooms: [...DEFAULT_CREW_ROOMS], modelMode: "primary", modelPath: "" },
   ]);
   return persistNaanDeck();
 }
 
 export async function removeCrewMember(id: string): Promise<string> {
+  try {
+    await naanControl("stop", id);
+  } catch {
+    // Persist the roster even if the engine is already off.
+  }
   naanCrew.set(get(naanCrew).filter((c) => c.id !== id));
   return persistNaanDeck();
 }
@@ -187,6 +206,24 @@ export async function setCrewSkin(id: string, skin: string): Promise<string> {
   const resolved = findAgent(skin).id;
   naanCrew.set(
     get(naanCrew).map((c) => (c.id === id ? { ...c, skin: resolved } : c)),
+  );
+  return persistNaanDeck();
+}
+
+export async function setCrewPrimaryModel(id: string): Promise<string> {
+  naanCrew.set(
+    get(naanCrew).map((c) => (c.id === id ? { ...c, modelMode: "primary", modelPath: "" } : c)),
+  );
+  return persistNaanDeck();
+}
+
+export async function setCrewOwnModel(id: string, path: string): Promise<string> {
+  const modelPath = path.trim();
+  if (!modelPath) return "NO PATH SELECTED";
+  naanCrew.set(
+    get(naanCrew).map((c) =>
+      c.id === id ? { ...c, modelMode: "own", modelPath } : c,
+    ),
   );
   return persistNaanDeck();
 }

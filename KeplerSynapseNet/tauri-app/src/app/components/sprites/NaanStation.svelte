@@ -33,6 +33,7 @@
   import AgentLevelChip from "./AgentLevelChip.svelte";
 
   export let status: string = "OFF";
+  export let agentActive: Record<string, boolean> = {};
   export let task: string = "";
   export let lastLog: string = "";
   export let submissions: number = 0;
@@ -421,6 +422,10 @@
   $: inferred = inferHarvestRoom(status, task, lastLog);
   $: xp = harvestLevel({ submissions, ngt });
   $: active = (status || "").toUpperCase() === "ACTIVE";
+  function harvestOn(owner: string): boolean {
+    if (owner === PRIMARY_NAAN_ID || owner === "primary") return active;
+    return !!agentActive[owner];
+  }
 
   let liveRooms: Room[] = [{ ...BASE.bed }, { ...BASE.tor }, { ...BASE.lymph }, { ...BASE.recipe }, { ...BASE.poe }];
   let liveHalls: Hall[] = PRIMARY_HALLS.map((h) => ({ ...h }));
@@ -705,8 +710,8 @@
     w.sitting = true;
     w.working = false;
     w.path = [];
-    w.settleLeft = seat.work && active ? SETTLE : 0;
-    if (reduceMotion && seat.work && active) {
+    w.settleLeft = seat.work && harvestOn(w.owner) ? SETTLE : 0;
+    if (reduceMotion && seat.work && harvestOn(w.owner)) {
       w.working = true;
       w.settleLeft = 0;
     }
@@ -800,10 +805,10 @@
     if (w.settleLeft > 0) {
       w.settleLeft -= dt;
       w.working = false;
-      if (w.settleLeft <= 0) w.working = seat.work && active;
+      if (w.settleLeft <= 0) w.working = seat.work && harvestOn(w.owner);
       return;
     }
-    w.working = seat.work && active;
+    w.working = seat.work && harvestOn(w.owner);
   }
 
   function walkerSrc(w: Walker): string {
@@ -1483,6 +1488,11 @@
 
   .station:active {
     cursor: grabbing;
+  }
+
+  .void {
+    z-index: 0;
+    pointer-events: none;
   }
 
   .void,
