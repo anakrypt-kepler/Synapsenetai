@@ -70,23 +70,21 @@ class RenderTests(unittest.TestCase):
 
     def test_portrait_uses_kepler_red_face_photo(self):
         body = (ART / "portrait-dark.svg").read_text(encoding="utf-8")
-        match = re.search(r"data:image/gif;base64,([A-Za-z0-9+/=]+)", body)
+        match = re.search(r"data:image/jpeg;base64,([A-Za-z0-9+/=]+)", body)
         self.assertIsNotNone(match)
-        with Image.open(BytesIO(base64.b64decode(match.group(1)))) as image:
-            frame = image.convert("RGB")
-            left, top, right, bottom = (
-                int(frame.width * 0.38),
-                int(frame.height * 0.28),
-                int(frame.width * 0.62),
-                int(frame.height * 0.55),
-            )
-            crop = frame.crop((left, top, right, bottom))
-            bright = [pixel for pixel in crop.getdata() if pixel[0] + pixel[1] + pixel[2] > 90]
-            self.assertGreater(len(bright), 80)
-            red = sum(pixel[0] for pixel in bright) / len(bright)
-            green = sum(pixel[1] for pixel in bright) / len(bright)
-            self.assertGreater(red, green + 20)
-            self.assertGreater(getattr(image, "n_frames", 1), 20)
+        image = Image.open(BytesIO(base64.b64decode(match.group(1)))).convert("RGB")
+        left, top, right, bottom = (
+            int(image.width * 0.38),
+            int(image.height * 0.28),
+            int(image.width * 0.62),
+            int(image.height * 0.55),
+        )
+        crop = image.crop((left, top, right, bottom))
+        bright = [pixel for pixel in crop.getdata() if pixel[0] + pixel[1] + pixel[2] > 90]
+        self.assertGreater(len(bright), 80)
+        red = sum(pixel[0] for pixel in bright) / len(bright)
+        green = sum(pixel[1] for pixel in bright) / len(bright)
+        self.assertGreater(red, green + 20)
 
     def test_install_keeps_clone_path(self):
         body = (ART / "install-dark.svg").read_text(encoding="utf-8")
@@ -130,20 +128,6 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("pictures/cell-station.png", text)
         self.assertNotIn("pictures/header.gif", text)
         self.assertIn("pictures/art/portrait-dark.svg", text)
-        self.assertNotIn('<img src="pictures/kepler.gif"', text)
+        self.assertNotIn("pictures/kepler.gif", text)
         self.assertNotIn("┌", text)
         self.assertNotIn("synapsenet-app Tauri", text)
-
-    def test_kepler_clip_is_renamed_and_stripped(self):
-        gif = ROOT / "pictures" / "kepler.gif"
-        mp4 = ROOT / "pictures" / "kepler.mp4"
-        self.assertTrue(gif.is_file(), gif)
-        self.assertTrue(mp4.is_file(), mp4)
-        with Image.open(gif) as image:
-            self.assertEqual(image.format, "GIF")
-            self.assertGreater(image.n_frames, 20)
-            self.assertEqual(image.info.get("loop"), 0)
-        blob = mp4.read_bytes()
-        self.assertNotIn(b"creation_time", blob)
-        self.assertNotIn(b"Core Media", blob)
-        self.assertNotIn(b"iPhone", blob)

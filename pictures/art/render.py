@@ -7,14 +7,16 @@ import argparse
 import base64
 from functools import lru_cache
 from html import escape
+from io import BytesIO
 import math
 from pathlib import Path
 import re
 
+from PIL import Image, ImageOps
+
 ROOT = Path(__file__).resolve().parents[2]
 ART = Path(__file__).resolve().parent
 PORTRAIT = ROOT / "pictures" / "kepler.jpg"
-PORTRAIT_GIF = ROOT / "pictures" / "kepler.gif"
 LOGIN = "anakrypt-kepler"
 ACCENT = "#FF4D0D"
 MAP_WIDTH = 840
@@ -69,7 +71,12 @@ def font_style():
 
 @lru_cache(maxsize=1)
 def portrait_data():
-    return base64.b64encode(PORTRAIT_GIF.read_bytes()).decode()
+    with Image.open(PORTRAIT) as original:
+        portrait = ImageOps.exif_transpose(original).convert("RGB")
+        portrait.thumbnail((600, 600), Image.Resampling.LANCZOS)
+        buffer = BytesIO()
+        portrait.save(buffer, format="JPEG", quality=95)
+    return base64.b64encode(buffer.getvalue()).decode()
 
 
 def node_slug(name):
@@ -648,7 +655,7 @@ def portrait(theme):
     svg = SVG(325, theme, "Kepler — independent builder of SynapseNet")
     svg.section("Kepler / SynapseNet", "independent builder")
     svg.rect(22, 58, 206, 250, svg.colors["card"], rx=6, stroke=svg.colors["edge"])
-    svg.raw(f'<image x="25" y="72" width="200" height="220" href="data:image/gif;base64,{portrait_data()}" preserveAspectRatio="xMidYMid meet"/>')
+    svg.raw(f'<image x="25" y="72" width="200" height="220" href="data:image/jpeg;base64,{portrait_data()}" preserveAspectRatio="xMidYMid meet"/>')
     rows = [
         ("SynapseNet", "Decentralized intelligence, built in the open."),
         ("Local AI + NAAN", "Local models and knowledge contributions."),
@@ -678,8 +685,8 @@ def footer(theme):
 def render():
     if not (ART / "JetBrainsMono.woff2").is_file():
         raise FileNotFoundError("pictures/art/JetBrainsMono.woff2 is required")
-    if not PORTRAIT_GIF.is_file():
-        raise FileNotFoundError("pictures/kepler.gif is required")
+    if not PORTRAIT.is_file():
+        raise FileNotFoundError("pictures/kepler.jpg is required")
     graphics = {
         "hero": hero,
         "tiles": tiles,
