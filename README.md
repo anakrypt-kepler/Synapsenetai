@@ -5,7 +5,10 @@
   </picture>
 </p>
 <p align="center">
-  <img src="pictures/kepler.gif" alt="Kepler — independent builder of SynapseNet" width="480">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/portrait-light.svg">
+    <img src="pictures/art/portrait-dark.svg" alt="Kepler — independent builder of SynapseNet" width="100%">
+  </picture>
 </p>
 <p align="center">
   <picture>

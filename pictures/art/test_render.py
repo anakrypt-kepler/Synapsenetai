@@ -70,21 +70,23 @@ class RenderTests(unittest.TestCase):
 
     def test_portrait_uses_kepler_red_face_photo(self):
         body = (ART / "portrait-dark.svg").read_text(encoding="utf-8")
-        match = re.search(r"data:image/jpeg;base64,([A-Za-z0-9+/=]+)", body)
+        match = re.search(r"data:image/gif;base64,([A-Za-z0-9+/=]+)", body)
         self.assertIsNotNone(match)
-        image = Image.open(BytesIO(base64.b64decode(match.group(1)))).convert("RGB")
-        left, top, right, bottom = (
-            int(image.width * 0.38),
-            int(image.height * 0.28),
-            int(image.width * 0.62),
-            int(image.height * 0.55),
-        )
-        crop = image.crop((left, top, right, bottom))
-        bright = [pixel for pixel in crop.getdata() if pixel[0] + pixel[1] + pixel[2] > 90]
-        self.assertGreater(len(bright), 80)
-        red = sum(pixel[0] for pixel in bright) / len(bright)
-        green = sum(pixel[1] for pixel in bright) / len(bright)
-        self.assertGreater(red, green + 20)
+        with Image.open(BytesIO(base64.b64decode(match.group(1)))) as image:
+            frame = image.convert("RGB")
+            left, top, right, bottom = (
+                int(frame.width * 0.38),
+                int(frame.height * 0.28),
+                int(frame.width * 0.62),
+                int(frame.height * 0.55),
+            )
+            crop = frame.crop((left, top, right, bottom))
+            bright = [pixel for pixel in crop.getdata() if pixel[0] + pixel[1] + pixel[2] > 90]
+            self.assertGreater(len(bright), 80)
+            red = sum(pixel[0] for pixel in bright) / len(bright)
+            green = sum(pixel[1] for pixel in bright) / len(bright)
+            self.assertGreater(red, green + 20)
+            self.assertGreater(getattr(image, "n_frames", 1), 20)
 
     def test_install_keeps_clone_path(self):
         body = (ART / "install-dark.svg").read_text(encoding="utf-8")
@@ -96,7 +98,7 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(text.count("pictures/art/mesh-dark.svg"), 1)
         self.assertEqual(text.count("pictures/art/mesh-light.svg"), 1)
         self.assertGreater(text.find("pictures/art/mesh-dark.svg"), text.find("This is alpha."))
-        shown = ("hero", "mesh", "footer") + FLOWS + (
+        shown = ("hero", "mesh", "portrait", "footer") + FLOWS + (
             "hd-what",
             "hd-not",
             "hd-why",
@@ -127,8 +129,8 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("pictures/cell-main.png", text)
         self.assertNotIn("pictures/cell-station.png", text)
         self.assertNotIn("pictures/header.gif", text)
-        self.assertIn("pictures/kepler.gif", text)
-        self.assertNotIn("pictures/art/portrait-dark.svg", text)
+        self.assertIn("pictures/art/portrait-dark.svg", text)
+        self.assertNotIn('<img src="pictures/kepler.gif"', text)
         self.assertNotIn("┌", text)
         self.assertNotIn("synapsenet-app Tauri", text)
 
