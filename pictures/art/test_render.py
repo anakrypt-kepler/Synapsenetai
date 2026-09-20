@@ -95,10 +95,28 @@ class RenderTests(unittest.TestCase):
         text = README.read_text(encoding="utf-8")
         self.assertGreaterEqual(text.count("pictures/art/mesh-dark.svg"), 2)
         self.assertGreaterEqual(text.count("pictures/art/mesh-light.svg"), 2)
-        shown = ("hero", "tiles", "mesh", "portrait", "footer") + FLOWS + STRIPS
+        shown = ("hero", "mesh", "portrait", "footer") + FLOWS + (
+            "hd-what",
+            "hd-not",
+            "hd-why",
+            "hd-mine",
+            "hd-now",
+            "hd-gates",
+            "hd-skeptic",
+            "hd-change",
+            "hd-later",
+            "hd-boot",
+            "hd-set",
+            "hd-support",
+            "hd-license",
+        )
         for name in shown:
             self.assertIn(f"pictures/art/{name}-dark.svg", text, name)
             self.assertIn(f"pictures/art/{name}-light.svg", text, name)
+        self.assertNotIn("pictures/art/tiles-dark.svg", text)
+        self.assertIsNone(re.search(r"^## ", text, flags=re.M))
+        for name in ("hd-naan", "hd-skin", "hd-linux", "hd-wizard", "hd-tabs", "hd-docker"):
+            self.assertNotIn(f"pictures/art/{name}-dark.svg", text, name)
         self.assertIn("<picture>", text)
         self.assertIn("git clone https://github.com/anakrypt-kepler/Synapsenetai.git", text)
         self.assertIn("./KeplerSynapseNet/scripts/lego-linux.sh", text)

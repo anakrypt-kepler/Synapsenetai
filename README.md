@@ -6,12 +6,6 @@
 </p>
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: light)" srcset="pictures/art/tiles-light.svg">
-    <img src="pictures/art/tiles-dark.svg" alt="SynapseNet status tiles" width="100%">
-  </picture>
-</p>
-<p align="center">
-  <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/hero-light.svg">
     <img src="pictures/art/hero-dark.svg" alt="SynapseNet — intelligence belongs to everyone" width="100%">
   </picture>
@@ -73,8 +67,6 @@ This is alpha. Expect bugs. Read the holes before you trust the skin.
 
 Hover a node. Filled is YOU. Outlined is the rest of the cell: Desktop, libsynapsed, Tor, PoE, NAAN, harvest, votes, KNOW, RingCT, the VPS mailbox.
 
-## What this is
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-what-light.svg">
@@ -102,8 +94,6 @@ PoE is deterministic on purpose. Different GPUs, different quants, different flo
 
 ---
 
-## What this is not
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-not-light.svg">
@@ -117,8 +107,6 @@ PoE is deterministic on purpose. Different GPUs, different quants, different flo
 - **Not a pentest framework, not a scrape kit, not a botnet.** HARVEST and INTEL are how the miner walks public doors and how the organism remembers a door it already opened. If a model names this repo by those tabs alone, the model did not read the room. Fork this into a scanner and it is not SynapseNet.
 
 ---
-
-## Why it exists
 
 <p align="center">
   <picture>
@@ -134,8 +122,6 @@ I wanted intelligence that lives on iron I own. No API key. No California office
 That is the help: a common organism grown by people, not a rented brain.
 
 ---
-
-## Mine intelligence
 
 <p align="center">
   <picture>
@@ -156,8 +142,6 @@ Hash-mining burns a planet for a nonce. Here the work is a knowledge entry that 
 
 ---
 
-## What you can do now (alpha)
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-now-light.svg">
@@ -169,14 +153,6 @@ Run a cell. Talk to a GGUF you own. Hold a wallet. SEND private. MSG sealed. Sit
 
 ---
 
-## NAAN is the miner
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-naan-light.svg">
-    <img src="pictures/art/hd-naan-dark.svg" alt="NAAN is the miner" width="100%">
-  </picture>
-</p>
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/naan-light.svg">
@@ -192,8 +168,6 @@ If a hundred people run nodes, a hundred miners come online. That is how the org
 
 ---
 
-## Why gates exist in the tree
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-gates-light.svg">
@@ -208,8 +182,6 @@ Local solver + OCR/LLM fallback is how NAAN walks a public door. When a cell fin
 I extract knowledge, not identity. Not logins. Not session cookies. Not private mail.
 
 ---
-
-## For the skeptic
 
 <p align="center">
   <picture>
@@ -230,8 +202,6 @@ If you want a scanner, write a scanner. Do not put my name on it.
 
 ---
 
-## What this can change in principle
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-change-light.svg">
@@ -250,8 +220,6 @@ Privacy as the default for a class of software that currently snitches by design
 Later: anyone mines. Even from a phone. That is the usable kernel I have not finished.
 
 ---
-
-## Later
 
 <p align="center">
   <picture>
@@ -272,14 +240,6 @@ Creator rules sit in `interfaces txt/`. Meaning and purpose are immutable. A for
 
 ---
 
-## Confidentiality (no fairy tale)
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-skin-light.svg">
-    <img src="pictures/art/hd-skin-dark.svg" alt="Confidentiality" width="100%">
-  </picture>
-</p>
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/skin-light.svg">
@@ -301,8 +261,6 @@ Layered. Named. Holes left in.
 
 ---
 
-## What you do after it boots
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-boot-light.svg">
@@ -322,14 +280,6 @@ Kill the GUI by its PID. Never `pkill -f synapsenet-app` in the same command tha
 
 ---
 
-## Linux
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-linux-light.svg">
-    <img src="pictures/art/hd-linux-dark.svg" alt="Linux" width="100%">
-  </picture>
-</p>
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/install-light.svg">
@@ -385,14 +335,6 @@ Already have a config with an empty `network.seed_nodes=`? Paste that line. Extr
 
 ---
 
-## First-run wizard
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-wizard-light.svg">
-    <img src="pictures/art/hd-wizard-dark.svg" alt="First-run wizard" width="100%">
-  </picture>
-</p>
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/wizard-light.svg">
@@ -410,14 +352,6 @@ Five steps. Do them in order.
 
 ---
 
-## Tabs
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-tabs-light.svg">
-    <img src="pictures/art/hd-tabs-dark.svg" alt="Tabs" width="100%">
-  </picture>
-</p>
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/tabs-light.svg">
@@ -443,8 +377,6 @@ Five steps. Do them in order.
 
 ---
 
-## SET — values that matter
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-set-light.svg">
@@ -468,14 +400,6 @@ Five steps. Do them in order.
 
 ---
 
-## Docker
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-docker-light.svg">
-    <img src="pictures/art/hd-docker-dark.svg" alt="Docker" width="100%">
-  </picture>
-</p>
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/docker-light.svg">
@@ -527,8 +451,6 @@ Native Windows notes live in `KeplerSynapseNet/docker/windows/KEPLER_WRITE_THIS.
 
 ---
 
-## Support
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-support-light.svg">
@@ -550,8 +472,6 @@ If this is worth keeping online — VPS, builds, time — you can send coin. Tha
 XMR here is a donation address. It is not a claim that NGT is Monero.
 
 ---
-
-## License
 
 <p align="center">
   <picture>
