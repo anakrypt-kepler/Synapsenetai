@@ -1,10 +1,42 @@
 <p align="center">
-  <img src="pictures/kepler.jpg" width="480" alt="Kepler, SynapseNet" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="pictures/art/hero-dark.svg">
+    <img src="pictures/art/hero-light.svg" alt="SynapseNet — intelligence belongs to everyone" width="840">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="pictures/art/tiles-dark.svg">
+    <img src="pictures/art/tiles-light.svg" alt="SynapseNet status tiles" width="840">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="pictures/art/map-dark.svg">
+    <img src="pictures/art/map-light.svg" alt="SynapseNet map — the cell around YOU" width="840">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="pictures/art/portrait-dark.svg">
+    <img src="pictures/art/portrait-light.svg" alt="Kepler — independent builder of SynapseNet" width="840">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="pictures/art/footer-dark.svg">
+    <img src="pictures/art/footer-light.svg" alt="Local models. Shared knowledge. Open infrastructure." width="840">
+  </picture>
+</p>
+<p align="center">
+  <a href="https://github.com/anakrypt-kepler">GitHub</a>
+  ·
+  <a href="https://github.com/anakrypt-kepler/anakrypt-kepler">Profile</a>
+  ·
+  <a href="https://github.com/anakrypt-kepler/Synapsenetai/issues">Issues</a>
 </p>
 
 <p align="center"><small>Fuck the corps.</small></p>
-
-<h1 align="center">SynapseNet</h1>
 
 <p align="center">
   <em>"Satoshi gave us money without banks. I will give you brains without corporations."</em> — Kepler
@@ -18,23 +50,7 @@
 
 ---
 
-<p align="center">
-  <img src="pictures/header.gif" width="420" alt="SynapseNet" />
-</p>
-
-<h2 align="center">The cell</h2>
-
-<p align="center">
-  <img src="pictures/cell-naan.png" width="900" alt="NAAN crew, harvest log, and agent HUD" />
-</p>
-
-<p align="center">
-  <img src="pictures/cell-main.png" width="900" alt="MAIN: balance, Tor, peers, and chain height" />
-</p>
-
-<p align="center">
-  <img src="pictures/cell-station.png" width="900" alt="NAAN station in orbit with crew on the deck" />
-</p>
+Desktop screenshots come next. The map stays here.
 
 I built this. One person. C++, crypto, Tor, a local model. Not a company. Not a committee.
 

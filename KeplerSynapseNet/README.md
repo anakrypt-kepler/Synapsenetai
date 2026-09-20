@@ -1,5 +1,4 @@
-![KeplerSynapseNet](pictures/synapsenet_ai_agent.png)
-</div>
+# KeplerSynapseNet
 
 - https://github.com/anakrypt-kepler/Synapsenetai
 
