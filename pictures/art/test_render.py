@@ -96,7 +96,7 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(text.count("pictures/art/mesh-dark.svg"), 1)
         self.assertEqual(text.count("pictures/art/mesh-light.svg"), 1)
         self.assertGreater(text.find("pictures/art/mesh-dark.svg"), text.find("This is alpha."))
-        shown = ("hero", "mesh", "portrait", "footer") + FLOWS + (
+        shown = ("hero", "mesh", "footer") + FLOWS + (
             "hd-what",
             "hd-not",
             "hd-why",
@@ -127,5 +127,21 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("pictures/cell-main.png", text)
         self.assertNotIn("pictures/cell-station.png", text)
         self.assertNotIn("pictures/header.gif", text)
+        self.assertIn("pictures/kepler.gif", text)
+        self.assertNotIn("pictures/art/portrait-dark.svg", text)
         self.assertNotIn("┌", text)
         self.assertNotIn("synapsenet-app Tauri", text)
+
+    def test_kepler_clip_is_renamed_and_stripped(self):
+        gif = ROOT / "pictures" / "kepler.gif"
+        mp4 = ROOT / "pictures" / "kepler.mp4"
+        self.assertTrue(gif.is_file(), gif)
+        self.assertTrue(mp4.is_file(), mp4)
+        with Image.open(gif) as image:
+            self.assertEqual(image.format, "GIF")
+            self.assertGreater(image.n_frames, 20)
+            self.assertEqual(image.info.get("loop"), 0)
+        blob = mp4.read_bytes()
+        self.assertNotIn(b"creation_time", blob)
+        self.assertNotIn(b"Core Media", blob)
+        self.assertNotIn(b"iPhone", blob)
