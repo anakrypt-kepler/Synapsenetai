@@ -1,31 +1,31 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="pictures/art/hero-dark.svg">
-    <img src="pictures/art/hero-light.svg" alt="SynapseNet — intelligence belongs to everyone" width="840">
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/map-light.svg">
+    <img src="pictures/art/map-dark.svg" alt="SynapseNet map — the cell, the mesh, the ledger. Filled node is YOU. Outlined nodes are the rest of the cell." width="100%">
   </picture>
 </p>
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="pictures/art/tiles-dark.svg">
-    <img src="pictures/art/tiles-light.svg" alt="SynapseNet status tiles" width="840">
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hero-light.svg">
+    <img src="pictures/art/hero-dark.svg" alt="SynapseNet — intelligence belongs to everyone" width="100%">
   </picture>
 </p>
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="pictures/art/map-dark.svg">
-    <img src="pictures/art/map-light.svg" alt="SynapseNet map — the cell around YOU" width="840">
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/tiles-light.svg">
+    <img src="pictures/art/tiles-dark.svg" alt="SynapseNet status tiles" width="100%">
   </picture>
 </p>
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="pictures/art/portrait-dark.svg">
-    <img src="pictures/art/portrait-light.svg" alt="Kepler — independent builder of SynapseNet" width="840">
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/portrait-light.svg">
+    <img src="pictures/art/portrait-dark.svg" alt="Kepler — independent builder of SynapseNet" width="100%">
   </picture>
 </p>
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="pictures/art/footer-dark.svg">
-    <img src="pictures/art/footer-light.svg" alt="Local models. Shared knowledge. Open infrastructure." width="840">
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/footer-light.svg">
+    <img src="pictures/art/footer-dark.svg" alt="Local models. Shared knowledge. Open infrastructure." width="100%">
   </picture>
 </p>
 <p align="center">
@@ -64,182 +64,14 @@ A full cell is peer + miner + validator. PoE is votes, not a roll call of every 
 
 This is alpha. Expect bugs. Read the holes before you trust the skin.
 
-```
-                    you
-                    │
-                    ▼
-        ┌──────────────────────────────────────┐
-        │         synapsenet-app Tauri         │
-        │  MAIN WALLET SEND BLOCKS KNOW NAAN   │
-        │  HARVEST INTEL MSG IDE NET RENT SET  │
-        └──────────────────┬───────────────────┘
-                           │ JSON RPC same process
-                           ▼
-        ┌──────────────────────────────────────────────────────────┐
-        │                    libsynapsed.so                        │
-        │                                                          │
-        │   session Tor          PoE v1            Transfer        │
-        │   ADD_ONION NEW        poe.db            wallet.dat      │
-        │   DiscardPK            entries votes     stealth SEND    │
-        │   ephemeral v3         finalize          RingCT coinbase │
-        │                                                          │
-        │   NAAN harvest         GGUF mouth        MSG sealed      │
-        │   lymph then recipe    not the judge     NET map YOU     │
-        │   scar of a door       two clocks        seniority ring  │
-        └────────┬───────────────────┬──────────────────┬──────────┘
-                 │                   │                  │
-                 │ SOCKS             │ POE_ENTRY        │ stealth tx
-                 │                   │ POE_VOTE         │
-                 │                   │ POE_RECIPE       │
-                 │                   │ POE_RECIPE_REPLAY│
-                 ▼                   ▼                  ▼
-        ┌──────────────────────────────────────────────────────────┐
-        │                      Tor mesh                            │
-        │              onion :8333   fail closed                   │
-        │         seed only from synapsenet.conf                   │
-        └────────────┬─────────────────────┬───────────────────────┘
-                     │                     │
-          ┌──────────┘                     └──────────┐
-          ▼                                           ▼
- ┌─────────────────────┐                   ┌─────────────────────┐
- │  desktop cell       │                   │  VPS mesh-peer.py   │
- │  poe_pk             │◄──── PEX onions ─►│  stable onion       │
- │  miner + validator  │                   │  mailbox            │
- │  NAAN               │                   │  synapsed-poe-mesh  │
- │  stealth wallet     │                   │  votes if poe_pk    │
- └──────────┬──────────┘                   │  no stealth NGT     │
-            │                              └──────────┬──────────┘
-            │                                         │
-            └──────────── 2 of 2 / majority ──────────┘
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/map-light.svg">
+    <img src="pictures/art/map-dark.svg" alt="SynapseNet map — YOU in the cell, Tor mesh, PoE, NAAN, KNOW, RingCT, desktop cell and VPS mesh-peer." width="100%">
+  </picture>
+</p>
 
-
- ~/.synapsenet
-    synapsenet.conf
-    wallet.dat
-    wallet.key          PoE key
-    poe/poe.db
-    lib/libsynapsed.so
-    models/*.gguf
-
-
- knowledge
-
-    IDE CODE / TEXT                    NAAN / harvest
-            │                                │
-            │  title + body                  ▼
-            │  PoW 12  ≤ 64 KiB         lymph (same machine)
-            ▼                                │
-       POE_ENTRY                             ├─ hash mismatch  die here
-            │                                └─ hash match
-            │                                      │
-            │                                      ▼
-            │                              RECIPE  locator + selector + body hash
-            │                              page bytes never leave
-            │                                      │
-            │                                      ▼
-            │                              POE_RECIPE
-            │                              POE_RECIPE_REPLAY
-            │                                      │
-            └──────────────────┬───────────────────┘
-                               │
-                               ▼
-                          mouth isolation
-                          GGUF / prompt / score from model
-                          cannot vote or finalize
-                               │
-                               ▼
-                          POE_VOTE
-                               │
-                               ▼
-                          two clocks
-                          cite DAG orders recipes
-                          Tor arrival time does not vote
-                               │
-                               ▼
-                          FINALIZED
-                               │
-            ┌──────────────────┼──────────────────┐
-            ▼                  ▼                  ▼
-          KNOW              RingCT             scar
-          author            coinbase           gate class
-          amount            0.10 stealth       UTC day
-          rewardId          unique submitId    method class
-          public            recipe needs       no cookie
-                            matching replay    no session
-
-          KNOW status
-            ACTIVE     witness inside window (30 days default)
-            SLEEPING   window expired, chain not rewritten, no extra NGT
-            RETRACTED  author retract, remainder unreclaimable, no stealth burn
-
-          quorum of absence
-            same recipe, no contradicting hash
-            finalizes as not seen
-            never as false
-
-          seniority ring (optional)
-            prove at least N accepted
-            not which N
-            KNOW card stays public
-
-
- NGT
-
-    mint                               spend
-    PoE RingCT coinbase                SEND stealth
-    CODE/TEXT after 2 of 2             SN + 128 hex
-    RECIPE after 2 of 2                MLSAG-2
-      and matching replay              Pedersen
-    size penalty after 8 KiB           range64
-                                       key image
-                                       Tor
-                                       Dilithium when liboqs is real
-
-    first reward sweep secp
-    later ring
-
-    MSG   ML-KEM + X25519 if the peer advertised kem_pk
-          else crypto_box_seal
-
-
- NAAN
-
-    tick
-      → Tor first public pages
-      → gate (solver / OCR / GGUF)
-      → lymph replay
-      → RECIPE to PoE (hash, not the page)
-      → HARVEST log
-      → scar { class, day, method class }
-      → INTEL may show the class
-
-    does not mint NGT from a faucet
-    NGT only after finalize
-
-
- one CODE entry
-
-    snippet.rs in IDE
-         │
-         ▼
-    PoW + entry
-         │
-         ├──── POE_ENTRY ──► VPS + other cells
-         │
-         ▼
-    each full cell: POE_VOTE
-         │
-         ▼
-    2 of 2  →  FINALIZED  →  KNOW + stealth 0.10
-
-
-    GGUF talks
-    NAAN fetches
-    lymph keeps the page
-    PoE accepts the recipe or the CODE
-    RingCT pays
-    VPS holds the door
-```
+Hover a node. Filled is YOU. Outlined is the rest of the cell: Desktop, libsynapsed, Tor, PoE, NAAN, harvest, votes, KNOW, RingCT, the VPS mailbox.
 
 ## What this is
 
