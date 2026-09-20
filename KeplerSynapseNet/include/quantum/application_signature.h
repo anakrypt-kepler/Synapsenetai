@@ -6,7 +6,8 @@
 #include <vector>
 
 // On-wire PQ envelope: magic KQAS, domain-separated so a transfer sig cannot
-// be replayed as a consensus vote. Bytes are classic_sig || pqc_sig.
+// be replayed as a consensus vote. Bytes are classic_sig || pqc_sig (AND-mode
+// Ed25519 + ML-DSA-65). Handshake/NODE_MSG do not use this trailer.
 
 namespace synapse::quantum {
 

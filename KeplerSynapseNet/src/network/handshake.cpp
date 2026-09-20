@@ -1,5 +1,7 @@
 // Peer handshake: X25519 + optional ML-KEM-768, then HKDF session key.
 // Magic 0x534E4554 = "SNET". SYNAPSE_HANDSHAKE_PQ_STRICT=1 refuses classic-only.
+// This is a hybrid KEM (RFC 10024 family: X25519 + ML-KEM-768), not Dilithium.
+// Signatures stay on KQAS application envelopes. Do not put HybridSig here.
 
 #include "network/network.h"
 #include "crypto/crypto.h"

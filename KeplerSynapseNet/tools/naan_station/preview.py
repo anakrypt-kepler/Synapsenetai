@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -12,16 +13,25 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 from deck import (
+    HULL_RIM,
+    HULL_SKIRT,
     CrewMember,
     Deck,
     StationData,
     build_deck,
+    clip_prop_to_room,
+    clip_rect,
+    crop_offsets,
+    dilated_hull_rects,
+    in_corridor,
     in_deck,
+    is_wall_row,
     label_hits_room,
     load_station_data,
+    prop_sprite_rect,
     screenshot_crew,
 )
 
@@ -49,54 +59,172 @@ def _load(path: Path) -> Image.Image | None:
         return None
 
 
+def _skin_file(data: StationData, group: str, default_key: str) -> str | None:
+    tid = data.catalog.get("defaults", {}).get(default_key)
+    for tile in data.catalog.get(group, []):
+        if tile.get("id") == tid:
+            return tile.get("file")
+    return None
+
+
+def _paste_safe(canvas: Image.Image, sprite: Image.Image, x: int, y: int) -> None:
+    if sprite.mode != "RGBA":
+        sprite = sprite.convert("RGBA")
+    dest = (float(x), float(y), float(sprite.width), float(sprite.height))
+    hit = clip_rect(dest, (0.0, 0.0, float(canvas.width), float(canvas.height)))
+    if hit is None:
+        return
+    sx, sy, sw, sh = crop_offsets(dest, hit)
+    sx_i = max(0, int(round(sx)))
+    sy_i = max(0, int(round(sy)))
+    sw_i = min(max(1, int(round(sw))), sprite.width - sx_i)
+    sh_i = min(max(1, int(round(sh))), sprite.height - sy_i)
+    if sw_i <= 0 or sh_i <= 0:
+        return
+    canvas.alpha_composite(
+        sprite.crop((sx_i, sy_i, sx_i + sw_i, sy_i + sh_i)),
+        (int(round(hit[0])), int(round(hit[1]))),
+    )
+
+
 def _stamp_floor(canvas: Image.Image, atlas: Image.Image | None, dx: int, dy: int, tx: int, ty: int, tile: int, scale: int):
-    box = (dx, dy, dx + tile * scale, dy + tile * scale)
+    w = tile * scale
     if atlas is None:
-        color = (46, 49, 54) if (tx + ty) % 2 == 0 else (40, 43, 48)
-        ImageDraw.Draw(canvas).rectangle(box, fill=color)
+        color = (46, 49, 54, 255) if (tx + ty) % 2 == 0 else (40, 43, 48, 255)
+        ImageDraw.Draw(canvas).rectangle((dx, dy, dx + w, dy + w), fill=color)
         return
     period = 8
     cell_w = atlas.width // period
     cell_h = atlas.height // period
     sx = (tx % period) * cell_w
     sy = (ty % period) * cell_h
-    crop = atlas.crop((sx, sy, sx + cell_w, sy + cell_h)).resize((tile * scale, tile * scale), Image.NEAREST)
-    canvas.paste(crop, (dx, dy))
+    crop = atlas.crop((sx, sy, sx + cell_w, sy + cell_h)).resize((w, w), Image.NEAREST)
+    _paste_safe(canvas, crop, dx, dy)
+
+
+def _stamp_strip(canvas: Image.Image, atlas: Image.Image | None, dx: int, dy: int, w: int, h: int, tx: int) -> None:
+    w = max(1, int(w))
+    h = max(1, int(h))
+    if atlas is None:
+        ImageDraw.Draw(canvas).rectangle((dx, dy, dx + w, dy + h), fill=(74, 69, 64, 255))
+        return
+    period = 4
+    cell_w = max(1, atlas.width // period)
+    sx = (int(tx) % period) * cell_w
+    crop = atlas.crop((sx, 0, sx + cell_w, atlas.height)).resize((w, h), Image.NEAREST)
+    _paste_safe(canvas, crop, dx, dy)
+
+
+def _apply_hull_clip(layer: Image.Image, deck: Deck, scale: int) -> Image.Image:
+    # Same dest-in dilated hull as NaanStation.svelte paintDeck.
+    mask = Image.new("L", layer.size, 0)
+    draw = ImageDraw.Draw(mask)
+    for x0, y0, x1, y1 in dilated_hull_rects(deck, scale):
+        draw.rectangle((x0, y0, x1 - 1, y1 - 1), fill=255)
+    r, g, b, a = layer.split()
+    return Image.merge("RGBA", (r, g, b, ImageChops.multiply(a, mask)))
+
+
+def _blit_prop(
+    canvas: Image.Image,
+    src: Image.Image | None,
+    dest: tuple[float, float, float, float],
+    clip: tuple[float, float, float, float],
+) -> None:
+    hit = clip_rect(dest, clip)
+    if hit is None:
+        return
+    hit = clip_rect(hit, (0.0, 0.0, float(canvas.width), float(canvas.height)))
+    if hit is None:
+        return
+    # Round the blit inward so nearest-neighbor scale cannot paint past the clip.
+    hx, hy, hw, hh = hit
+    x0 = math.ceil(hx - 1e-9)
+    y0 = math.ceil(hy - 1e-9)
+    x1 = math.floor(hx + hw + 1e-9)
+    y1 = math.floor(hy + hh + 1e-9)
+    if x1 <= x0 or y1 <= y0:
+        return
+    hit = (float(x0), float(y0), float(x1 - x0), float(y1 - y0))
+    _dx, _dy, dw, dh = dest
+    w = max(1, int(round(dw)))
+    h = max(1, int(round(dh)))
+    if src is None:
+        px, py, pw, ph = hit
+        ImageDraw.Draw(canvas).rectangle((px, py, px + pw, py + ph), outline=(0, 229, 255, 255))
+        return
+    sprite = src.resize((w, h), Image.NEAREST)
+    sx, sy, sw, sh = crop_offsets(dest, hit)
+    sx_i = max(0, min(sprite.width - 1, int(round(sx))))
+    sy_i = max(0, min(sprite.height - 1, int(round(sy))))
+    sw_i = min(max(1, int(round(sw))), sprite.width - sx_i)
+    sh_i = min(max(1, int(round(sh))), sprite.height - sy_i)
+    if sw_i <= 0 or sh_i <= 0:
+        return
+    canvas.alpha_composite(
+        sprite.crop((sx_i, sy_i, sx_i + sw_i, sy_i + sh_i)),
+        (int(round(hit[0])), int(round(hit[1]))),
+    )
 
 
 def render_deck(deck: Deck, data: StationData, crew: list[CrewMember], scale: int = 2) -> Image.Image:
     tw = deck.view_cols * deck.tile * scale
     th = deck.view_rows * deck.tile * scale
     canvas = Image.new("RGBA", (tw, th), VOID + (255,))
-    draw = ImageDraw.Draw(canvas)
-    floor_id = data.catalog.get("defaults", {}).get("floor", "grate")
-    floor_file = next((t["file"] for t in data.catalog.get("floors", []) if t["id"] == floor_id), "grate.png")
+    hull = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
+    draw_hull = ImageDraw.Draw(hull)
+    floor_file = _skin_file(data, "floors", "floor") or "grate.png"
+    wall_file = _skin_file(data, "walls", "wall")
+    shell_file = _skin_file(data, "shells", "shell")
     atlas = _load(data.public / "floors" / floor_file)
+    wall = _load(data.public / "walls" / wall_file) if wall_file else None
+    shell = _load(data.public / "shells" / shell_file) if shell_file else None
     tile = deck.tile
+    ts = tile * scale
     ox, oy = deck.ox, deck.oy
+    rim = HULL_RIM * scale
+    skirt = HULL_SKIRT * scale
 
     for y in range(deck.st_rows):
         for x in range(deck.st_cols):
             if not in_deck(deck, x, y):
                 continue
-            dx = (ox + x) * tile * scale
-            dy = (oy + y) * tile * scale
-            _stamp_floor(canvas, atlas, dx, dy, x, y, tile, scale)
-            draw.rectangle((dx, dy, dx + tile * scale, dy + tile * scale), outline=(20, 20, 24))
+            dx = (ox + x) * ts
+            dy = (oy + y) * ts
+            _stamp_floor(hull, atlas, dx, dy, x, y, tile, scale)
+            draw_hull.rectangle((dx, dy, dx + ts - 1, dy + ts - 1), outline=(20, 20, 24, 80))
+            if is_wall_row(deck, x, y):
+                _stamp_strip(hull, wall, dx, dy, ts, max(1, ts // 2), x)
+            if in_corridor(deck, x, y):
+                overlay = Image.new("RGBA", (ts, ts), (0, 0, 0, 30))
+                _paste_safe(hull, overlay, dx, dy)
+            # Shell rim is intentional hull trim; dest-in below keeps the dilated hull.
+            if not in_deck(deck, x - 1, y):
+                _stamp_strip(hull, shell, dx - rim, dy, rim, ts, x)
+            if not in_deck(deck, x + 1, y):
+                _stamp_strip(hull, shell, dx + ts, dy, rim, ts, x)
+            if not in_deck(deck, x, y - 1):
+                _stamp_strip(hull, shell, dx - rim, dy - rim, ts + rim * 2, rim, x)
+            if not in_deck(deck, x, y + 1):
+                _stamp_strip(hull, shell, dx - rim, dy + ts, ts + rim * 2, rim + skirt, x)
 
+    canvas.alpha_composite(_apply_hull_clip(hull, deck, scale))
+
+    rooms = {r.id: r for r in deck.rooms}
     for ov in deck.overlays:
-        src = _load(data.public / "props" / ov.file)
-        u = tile / deck.dump_t
-        left = int(((ox + ov.tx) * tile + ov.bx * u) * scale)
-        top = int(((oy + ov.ty) * tile + ov.by * u) * scale)
-        w = max(1, int(ov.bw * u * scale))
-        h = max(1, int(ov.bh * u * scale))
-        if src is None:
-            draw.rectangle((left, top, left + w, top + h), outline=(0, 229, 255))
+        room = rooms.get(ov.room)
+        if room is None:
             continue
-        sprite = src.resize((w, h), Image.NEAREST)
-        canvas.alpha_composite(sprite, (max(0, left), max(0, top)))
+        src = _load(data.public / "props" / ov.file)
+        raw = prop_sprite_rect(ov, ox, oy, tile, deck.dump_t)
+        dest = (raw[0] * scale, raw[1] * scale, raw[2] * scale, raw[3] * scale)
+        clipped = clip_prop_to_room(ov, room, ox, oy, tile, deck.dump_t)
+        if clipped is None:
+            continue
+        clip = (clipped[0] * scale, clipped[1] * scale, clipped[2] * scale, clipped[3] * scale)
+        _blit_prop(canvas, src, dest, clip)
 
+    draw = ImageDraw.Draw(canvas)
     small = _font(max(9, 5 * scale))
     for room in deck.rooms:
         if room.kind == "hall":
@@ -211,7 +339,7 @@ def run_window(initial: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Inspect NAAN station rooms, props, and labels.")
-    parser.add_argument("--shot", metavar="PNG", help="Write a PNG and exit.")
+    parser.add_argument("--png", "--shot", dest="shot", metavar="PNG", help="Write a PNG and exit.")
     parser.add_argument("--crew", choices=("none", "screenshot"), default="screenshot")
     parser.add_argument("--scale", type=int, default=2)
     args = parser.parse_args(argv)

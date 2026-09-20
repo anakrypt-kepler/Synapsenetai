@@ -473,8 +473,11 @@ std::string WebSearch::Impl::httpGet(const std::string& host, const std::string&
     CurlFetchOptions opt;
     opt.timeoutSeconds = config.timeoutSeconds;
     opt.maxBytes = config.maxPageSize;
-    if (config.routeClearnetThroughTor && !config.tor.socksHost.empty() && config.tor.socksPort != 0) {
-        opt.socksProxyHostPort = config.tor.socksHost + ":" + std::to_string(config.tor.socksPort);
+    if (config.routeClearnetThroughTor) {
+        opt.requireSocks = true;
+        if (!config.tor.socksHost.empty() && config.tor.socksPort != 0) {
+            opt.socksProxyHostPort = config.tor.socksHost + ":" + std::to_string(config.tor.socksPort);
+        }
     }
     CurlFetchResult res = curlFetch(url.str(), opt);
     if (res.exitCode != 0 || res.body.empty()) {
@@ -644,8 +647,11 @@ std::vector<SearchResult> WebSearch::searchClearnet(const std::string& query) {
         CurlFetchOptions opt;
         opt.timeoutSeconds = impl_->config.timeoutSeconds;
         opt.maxBytes = impl_->config.maxPageSize;
-        if (impl_->config.routeClearnetThroughTor && !impl_->config.tor.socksHost.empty() && impl_->config.tor.socksPort != 0) {
-            opt.socksProxyHostPort = impl_->config.tor.socksHost + ":" + std::to_string(impl_->config.tor.socksPort);
+        if (impl_->config.routeClearnetThroughTor) {
+            opt.requireSocks = true;
+            if (!impl_->config.tor.socksHost.empty() && impl_->config.tor.socksPort != 0) {
+                opt.socksProxyHostPort = impl_->config.tor.socksHost + ":" + std::to_string(impl_->config.tor.socksPort);
+            }
         }
         CurlFetchResult res = curlFetch(url, opt);
         if (res.exitCode != 0) {

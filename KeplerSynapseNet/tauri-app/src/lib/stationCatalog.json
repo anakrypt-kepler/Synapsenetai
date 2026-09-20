@@ -5936,6 +5936,13 @@
       "chair": "chair-n.png",
       "title": "POE",
       "sn": "VOTE"
+    },
+    "hold": {
+      "prop": "quarters_lockerbank.png",
+      "terminal": null,
+      "chair": null,
+      "title": "HOLD",
+      "sn": "STASH"
     }
   }
 }

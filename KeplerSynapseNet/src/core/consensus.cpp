@@ -112,10 +112,17 @@ bool Vote::verify() const {
     if (allZero) return false;
     crypto::Hash256 hash = computeHash();
     if (!crypto::verify(hash, signature, validator)) return false;
-    if (!quantumSignature.empty() && !quantum::isApplicationSignatureEnvelope(quantumSignature)) {
-        return false;
-    }
-    return true;
+    // Empty trailer is legacy classical-only. A present KQAS blob must
+    // AND-verify HybridSig (Ed25519 + ML-DSA-65), not just parse as an envelope.
+    if (quantumSignature.empty()) return true;
+    Vote body = *this;
+    body.quantumSignature.clear();
+    std::vector<uint8_t> binding(validator.begin(), validator.end());
+    return quantum::verifyApplicationPayload(
+        "core.consensus.vote",
+        body.serialize(),
+        binding,
+        quantumSignature);
 }
 
 // Validator/result persistence helpers

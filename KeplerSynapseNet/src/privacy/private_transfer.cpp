@@ -410,18 +410,9 @@ bool buildPrivateSend(const StealthAddress& self,
     auto idHash = crypto::sha256(idSrc.data(), idSrc.size());
     result.tx.txid.assign(idHash.begin(), idHash.end());
 
-    // Outer Dilithium envelope. MLSAG-2 still authorizes the spend; this is
-    // a PQ wrapper over privateTxMessage||txid, derived from the stealth
-    // spend scalar (wallet hybrid keys are not in this layer).
-    if (quantum::getPQCBackendStatus().dilithiumReal) {
-        std::vector<uint8_t> pqcMsg = message;
-        pqcMsg.insert(pqcMsg.end(), result.tx.txid.begin(), result.tx.txid.end());
-        if (!self.signHybrid(pqcMsg, result.tx.pqcSig) || result.tx.pqcSig.empty()) {
-            err = "pqc_sig failed";
-            return false;
-        }
-        result.tx.version = 3;
-    }
+    // Do not attach Dilithium to MLSAG spends. A ~5KB KQAS envelope derived
+    // from the spend scalar is a stable identity across stealth txs.
+    result.tx.pqcSig.clear();
     for (const auto& o : result.tx.vouts) {
         if (!o.ecdh.empty() && o.ecdh[0] == 0x03 && o.ecdh.size() > 80) {
             result.tx.version = 3;
@@ -527,21 +518,9 @@ bool verifyPrivateTx(const PrivateTx& tx, std::string& err) {
     }
 
     const auto pqc = quantum::getPQCBackendStatus();
-    // v2 (default, including ledger reconstruction): MLSAG only, even if an
-    // output carries a 0x03 ecdh wrap. v3 engine blobs must present a valid
-    // Dilithium envelope when the real backend is on.
-    if (pqc.dilithiumReal && tx.version >= 3) {
-        if (tx.pqcSig.empty()) {
-            err = "v3 missing pqc_sig";
-            return false;
-        }
-        std::vector<uint8_t> pqcMsg = message;
-        pqcMsg.insert(pqcMsg.end(), tx.txid.begin(), tx.txid.end());
-        if (!StealthAddress::verifyHybrid(pqcMsg, tx.pqcSig)) {
-            err = "pqc_sig invalid";
-            return false;
-        }
-    } else if (pqc.dilithiumReal && !tx.pqcSig.empty()) {
+    // MLSAG authorizes the spend. A Dilithium envelope on this blob would
+    // link stealth outputs. If a legacy v3 pqcSig is present, still check it.
+    if (pqc.dilithiumReal && !tx.pqcSig.empty()) {
         std::vector<uint8_t> pqcMsg = message;
         pqcMsg.insert(pqcMsg.end(), tx.txid.begin(), tx.txid.end());
         if (!StealthAddress::verifyHybrid(pqcMsg, tx.pqcSig)) {

@@ -158,6 +158,7 @@ std::string TorFetch::fetch(const std::string& url) {
     CurlFetchOptions opt;
     opt.timeoutSeconds = timeoutSeconds;
     opt.maxBytes = maxBytes;
+    opt.requireSocks = true;
     opt.socksProxyHostPort = socks;
     CurlFetchResult res = curlFetch(url, opt);
     response = res.body;

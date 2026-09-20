@@ -52,8 +52,9 @@ std::string AIWrapper::Impl::fetchExcerpt(HtmlExtractor* extractor,
     CurlFetchOptions opt;
     opt.timeoutSeconds = cfg.timeoutSeconds > 0 ? cfg.timeoutSeconds : 10;
     opt.maxBytes = std::min<size_t>(cfg.maxPageSize > 0 ? cfg.maxPageSize : (1024 * 1024), 512 * 1024);
-    if (!cfg.tor.socksHost.empty() && cfg.tor.socksPort != 0) {
-        if (result.isOnion || cfg.routeClearnetThroughTor) {
+    if (result.isOnion || cfg.routeClearnetThroughTor) {
+        opt.requireSocks = true;
+        if (!cfg.tor.socksHost.empty() && cfg.tor.socksPort != 0) {
             opt.socksProxyHostPort = cfg.tor.socksHost + ":" + std::to_string(cfg.tor.socksPort);
         }
     }

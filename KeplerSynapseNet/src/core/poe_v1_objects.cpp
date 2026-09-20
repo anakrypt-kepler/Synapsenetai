@@ -313,8 +313,18 @@ bool ValidationVoteV1::verifySignature(std::string* reason) const {
         if (reason) *reason = "vote_sig_failed";
         return false;
     }
-    if (!quantumSignature.empty() && !quantum::isApplicationSignatureEnvelope(quantumSignature)) {
-        if (reason) *reason = "vote_pq_envelope_invalid";
+    // Empty trailer is legacy classical-only. A present KQAS blob must
+    // AND-verify HybridSig (Ed25519 + ML-DSA-65), not just parse as an envelope.
+    if (quantumSignature.empty()) return true;
+    ValidationVoteV1 body = *this;
+    body.quantumSignature.clear();
+    std::vector<uint8_t> binding(validatorPubKey.begin(), validatorPubKey.end());
+    if (!quantum::verifyApplicationPayload(
+            "core.poe.validation_vote",
+            body.serialize(),
+            binding,
+            quantumSignature)) {
+        if (reason) *reason = "vote_pq_sig_failed";
         return false;
     }
     return true;

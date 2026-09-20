@@ -1,4 +1,4 @@
-clearnet_engines=duckduckgo
+clearnet_engines=duckduckgo,brave
 darknet_engines=ahmia,torch,darksearch,deepsearch
 custom_darknet_urls=http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/
 direct_onion_links=http://piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion/
@@ -21,7 +21,7 @@ agent.tor.process.allow_takeover_external=0
 route_clearnet_through_tor=1
 naan_force_tor_mode=1
 naan_auto_search_enabled=1
-naan_auto_search_mode=tor
+naan_auto_search_mode=both
 naan_auto_search_queries=latest space engineering research,latest ai research papers,open source systems engineering best practices
 naan_auto_search_max_results=4
 clearnet_site_allowlist=nasa.gov,science.nasa.gov,solarsystem.nasa.gov,ntrs.nasa.gov,data.nasa.gov,earthdata.nasa.gov,spacex.com,esa.int,roscosmos.ru,blueorigin.com,ulalaunch.com,arxiv.org,scholar.google.com,sciencedirect.com,link.springer.com,nature.com,sciencemag.org,ieeexplore.ieee.org,researchgate.net,pubmed.ncbi.nlm.nih.gov,jstor.org,openlibrary.org,worldscientific.com,github.com,stackoverflow.com,w3schools.com,developer.mozilla.org,docs.python.org,learn.microsoft.com,freecodecamp.org,geeksforgeeks.org,codeforces.com,leetcode.com,hackerrank.com,kaggle.com,cs50.harvard.edu,data.gov,ourworldindata.org,worldbank.org,who.int,oecd.org,data.un.org,khanacademy.org,coursera.org,edx.org,ocw.mit.edu,pll.harvard.edu,udemy.com,brilliant.org,udacity.com,futurelearn.com,open.edu,sci-hub.se,gutenberg.org,openai.com,deepmind.com,huggingface.co,paperswithcode.com,distill.pub,fast.ai,ai.google,developer.nvidia.com,rocketlabusa.com,spaceflightnow.com,everydayastronaut.com,forum.nasaspaceflight.com,exercism.org,visualgo.net,cp-algorithms.com,gitlab.com,ncbi.nlm.nih.gov,mayoclinic.org,webmd.com,medlineplus.gov,cdc.gov,nejm.org,bmj.com,amboss.com,osmosis.org,geekymedics.com,radiopaedia.org,teachmeanatomy.info,online.hbs.edu,investopedia.com,bloomberg.com,wsj.com,tradingview.com,finance.yahoo.com,ycombinator.com,startupschool.org,producthunt.com,entrepreneur.com,techcrunch.com,upwork.com,fiverr.com,freelancer.com,shopify.com,amazon.com,wikipedia.org,ru.wikipedia.org,en.wikipedia.org,jaxa.jp,isro.gov.in,cnsa.gov.cn,russianspaceweb.com,b14643.de,apps.dtic.mil,online.stanford.edu,grc.nasa.gov,aerodynamics4students.com,engineeringtoolbox.com,nakka-rocketry.net,kerbalspaceprogram.com,orbiter-forum.com,openrocket.info,rocketryforum.com,lesswrong.com,arbital.com,alignmentforum.org,intelligence.org,futureoflife.org,deepmind.google,ai.meta.com,anthropic.com,mila.quebec,allenai.org,keras.io,pytorch.org,tensorflow.org,colab.research.google.com,thepiratebay.org,hubblesite.org,northropgrumman.com,arianespace.com,zenodo.org,space.com,astronomy.com,universetoday.com,phys.org,skyandtelescope.org,codecademy.com,rocketmime.com,orbit.medphys.ucl.ac.uk

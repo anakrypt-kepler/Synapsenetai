@@ -3827,13 +3827,13 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             if (!std::filesystem::exists(naanWebCfgPath)) {
                 std::ofstream naanCfg(naanWebCfgPath);
                 if (naanCfg.is_open()) {
-                    naanCfg << "clearnet_engines=duckduckgo\n";
+                    naanCfg << "clearnet_engines=duckduckgo,brave\n";
                     naanCfg << "darknet_engines=ahmia,torch,darksearch,deepsearch\n";
                     naanCfg << "custom_darknet_urls=" << ahmiaOnion << "\n";
                     naanCfg << "route_clearnet_through_tor=1\n";
                     naanCfg << "naan_force_tor_mode=1\n";
                     naanCfg << "naan_auto_search_enabled=1\n";
-                    naanCfg << "naan_auto_search_mode=tor\n";
+                    naanCfg << "naan_auto_search_mode=both\n";
                     naanCfg << "naan_auto_search_queries=latest space engineering research,latest ai research papers,open source systems engineering best practices\n";
                     naanCfg << "naan_auto_search_max_results=4\n";
                     naanCfg << "clearnet_site_allowlist=\n";

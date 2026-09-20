@@ -30,6 +30,32 @@
 namespace synapse {
 namespace core {
 
+namespace {
+
+// Present producer KQAS trailers must AND-verify HybridSig over the block
+// hash. Parse-only envelope checks used to accept a well-sized blob.
+bool producerTrailerOk(const Block& block) {
+    const bool pqRequired = block.height >= BLOCK_PQ_MANDATORY_HEIGHT;
+    if (pqRequired && block.version < BLOCK_VERSION_PQ) return false;
+    if (block.version < BLOCK_VERSION_PQ) return true;
+
+    const bool hasProducer = block.producer != crypto::PublicKey{};
+    const bool hasProducerSig = block.producerSignature != crypto::Signature{};
+    if (pqRequired && (!hasProducer || !hasProducerSig)) return false;
+    if (hasProducer != hasProducerSig) return false;
+    if (hasProducer && !crypto::verify(block.hash, block.producerSignature, block.producer)) {
+        return false;
+    }
+    if (block.producerQuantumSignature.empty()) return !pqRequired;
+
+    std::vector<uint8_t> payload(block.hash.begin(), block.hash.end());
+    std::vector<uint8_t> binding(block.producer.begin(), block.producer.end());
+    return quantum::verifyApplicationPayload(
+        "core.block.producer", payload, binding, block.producerQuantumSignature);
+}
+
+} // namespace
+
 static void writeU64(std::vector<uint8_t>& out, uint64_t val) {
     for (int i = 0; i < 8; i++) out.push_back((val >> (i * 8)) & 0xff);
 }
@@ -478,8 +504,8 @@ bool Ledger::Impl::validateBlock(const Block& block) {
     for (const auto& event : block.events) {
         if (!validateEvent(event)) return false;
     }
-    
-    return true;
+
+    return producerTrailerOk(block);
 }
 
 bool Ledger::Impl::validateEvent(const Event& event) {
@@ -864,6 +890,8 @@ bool Ledger::appendBlockWithValidation(const Block& block) {
         if (ev.type != EventType::IDENTITY_BIND) continue;
         if (ev.data.empty()) continue;
         if (!quantum::isApplicationSignatureEnvelope(ev.data)) continue;
+        // TOFU of the identity id. HybridSig over this blob is not bound to a
+        // ledger domain yet; producer trailers AND-verify separately.
         const std::string address = crypto::canonicalWalletAddressFromPublicKey(ev.author);
         if (address.empty()) continue;
         registry.verifyBinding(address, ev.data);
@@ -1034,28 +1062,7 @@ bool Ledger::verifyBlock(const Block& block) const {
     for (const auto& e : block.events) {
         if (!e.verify()) return false;
     }
-
-    const bool pqRequired = block.height >= BLOCK_PQ_MANDATORY_HEIGHT;
-    if (pqRequired && block.version < BLOCK_VERSION_PQ) {
-        return false;
-    }
-
-    if (block.version >= BLOCK_VERSION_PQ) {
-        const bool hasProducer = block.producer != crypto::PublicKey{};
-        const bool hasProducerSig = block.producerSignature != crypto::Signature{};
-        if (pqRequired && (!hasProducer || !hasProducerSig)) return false;
-        if (hasProducer != hasProducerSig) return false;
-        if (hasProducer && !crypto::verify(block.hash, block.producerSignature, block.producer)) {
-            return false;
-        }
-        if (!block.producerQuantumSignature.empty()
-            && !quantum::isApplicationSignatureEnvelope(block.producerQuantumSignature)) {
-            return false;
-        }
-        if (pqRequired && block.producerQuantumSignature.empty()) return false;
-    }
-
-    return true;
+    return producerTrailerOk(block);
 }
 
 bool Ledger::verifyChain() const {

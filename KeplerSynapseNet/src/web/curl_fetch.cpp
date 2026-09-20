@@ -73,6 +73,11 @@ CurlFetchResult curlFetch(const std::string& url, const CurlFetchOptions& option
     result.error = "curl fetch not supported on Windows build";
     return result;
 #else
+    if (options.requireSocks && options.socksProxyHostPort.empty()) {
+        result.exitCode = -1;
+        result.error = "socks required";
+        return result;
+    }
     std::string errPath = makeTempPath("synapsenet_curl_err_");
     if (errPath.empty()) {
         result.exitCode = -1;

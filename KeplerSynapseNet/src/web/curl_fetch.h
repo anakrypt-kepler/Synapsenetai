@@ -13,6 +13,8 @@ struct CurlFetchOptions {
     size_t maxBytes = 1024 * 1024;
     std::string userAgent = "Mozilla/5.0 (compatible; SynapseNet/0.1)";
     bool followRedirects = true;
+    // Fail closed instead of a clearnet curl when Tor is the required path.
+    bool requireSocks = false;
 };
 
 struct CurlFetchResult {

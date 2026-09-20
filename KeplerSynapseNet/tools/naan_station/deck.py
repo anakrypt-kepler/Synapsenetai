@@ -12,6 +12,14 @@ KEPLER = HERE.parents[1]
 LIB = KEPLER / "tauri-app" / "src" / "lib"
 PUBLIC = KEPLER / "tauri-app" / "public" / "station"
 KINDS = ("bed", "tor", "lymph", "recipe", "poe")
+# Frozen campus constants. Same numbers as stationLayout.json (Svelte agent).
+SUITE_W = 25
+SUITE_H = 12
+SPINE = 3
+HOLD_KIND = "hold"
+# Matches NaanStation.svelte paintDeck rim / dest-in hull.
+HULL_RIM = 11
+HULL_SKIRT = 10
 
 
 @dataclass(frozen=True)
@@ -113,6 +121,9 @@ class StationData:
     view_cols: int
     view_rows: int
     origin_y: int
+    suite_w: int
+    suite_h: int
+    spine: int
 
 
 def load_station_data() -> StationData:
@@ -126,11 +137,14 @@ def load_station_data() -> StationData:
         public=PUBLIC,
         tile=int(layout.get("tile", 16)),
         dump_t=int(layout.get("dumpT", 12)),
-        primary_cols=int(layout.get("gridCols", 26)),
-        st_rows=int(layout.get("gridRows", 12)),
-        view_cols=int(layout.get("viewCols", 64)),
-        view_rows=int(layout.get("viewRows", 36)),
-        origin_y=int(layout.get("originY", 14)),
+        primary_cols=int(layout.get("gridCols", SUITE_W)),
+        st_rows=int(layout.get("gridRows", SUITE_H)),
+        view_cols=int(layout.get("viewCols", 80)),
+        view_rows=int(layout.get("viewRows", 48)),
+        origin_y=int(layout.get("originY", 10)),
+        suite_w=int(layout.get("suiteW", SUITE_W)),
+        suite_h=int(layout.get("suiteH", SUITE_H)),
+        spine=int(layout.get("spine", SPINE)),
     )
 
 
@@ -174,46 +188,163 @@ def screenshot_crew() -> tuple[list[str], list[CrewMember]]:
 
 
 def pack_wings(crew: Iterable[CrewMember], primary_cols: int, view_cols: int) -> list[int]:
+    # Leftover helper. build_deck uses campus slots, not these 15/22 strides.
     members = list(crew)
     n = len(members)
     if not n:
         return []
     prefer = [22 if "bed" in c.rooms else 15 for c in members]
-    if primary_cols + sum(prefer) <= view_cols - 2:
+    budget = view_cols - 2 - primary_cols
+    if sum(prefer) <= budget:
         return prefer
+    out = list(prefer)
+    shaved = True
+    while sum(out) > budget and shaved:
+        shaved = False
+        for i, c in enumerate(members):
+            if "bed" in c.rooms and out[i] > 15:
+                out[i] -= 1
+                shaved = True
+                if sum(out) <= budget:
+                    return out
     if primary_cols + 15 * n <= view_cols - 2:
         return [15] * n
     return [12] * n
 
 
+def campus_cols_per_row(view_cols: int, suite_w: int = SUITE_W, spine: int = SPINE) -> int:
+    cell_w = suite_w + spine
+    # 80 -> 2 columns: primary | extra0 on row 0; extra1 wraps under primary
+    return 1 + (view_cols - 2 - suite_w) // cell_w
+
+
+def campus_origin(
+    slot: int,
+    view_cols: int,
+    suite_w: int = SUITE_W,
+    suite_h: int = SUITE_H,
+    spine: int = SPINE,
+) -> tuple[int, int]:
+    # Extra crew i = 0..n-1 occupy campus slots. slot 0 is primary.
+    cell_w = suite_w + spine  # 28
+    cell_h = suite_h + spine  # 15
+    cols_per_row = campus_cols_per_row(view_cols, suite_w, spine)
+    col = slot % cols_per_row
+    row = slot // cols_per_row
+    return (col * cell_w, row * cell_h)
+
+
+def _suite_col_x(bx: int) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int]]:
+    # west pad 2, COL_W 7, GAP 2
+    # col0: bx+2 .. bx+8
+    # col1: bx+10 .. bx+16
+    # col2: bx+18 .. bx+24
+    return ((bx + 2, bx + 8), (bx + 10, bx + 16), (bx + 18, bx + 24))
+
+
+def _paints(room: Room, enabled: dict[str, list[str]]) -> bool:
+    # Paint filter: hall OR hold OR kind in enabled[owner].
+    if room.kind == "hall" or room.kind == HOLD_KIND:
+        return True
+    return room.kind in enabled.get(room.owner, [])
+
+
+def _walks(room: Room, kinds: list[str]) -> bool:
+    # HOLD tiles are walkable for that owner.
+    if room.kind == "hall" or room.kind == HOLD_KIND:
+        return True
+    return room.kind in kinds
+
+
+def _deck_extent(rooms: list[Room], halls: list[tuple[int, int, int, int]]) -> tuple[int, int]:
+    max_x = 0
+    max_y = 0
+    for r in rooms:
+        max_x = max(max_x, r.x2)
+        max_y = max(max_y, r.y2)
+    for x1, y1, x2, y2 in halls:
+        max_x = max(max_x, x1, x2)
+        max_y = max(max_y, y1, y2)
+    return max_x + 1, max_y + 1
+
+
+def _cover_suite(
+    halls: list[tuple[int, int, int, int]],
+    local: list[tuple[int, int, int, int]],
+    bx: int,
+    by: int,
+    suite_w: int,
+    suite_h: int,
+) -> None:
+    # The 25x12 suite rectangle must be 100% in_deck. Fill unused cells with
+    # halls (plaza + the GAP columns + west pad + y=6 spine). No Swiss cheese.
+    cover = (bx, by, bx + suite_w - 1, by + suite_h - 1)
+    halls.append(cover)
+    local.append(cover)
+    west = (bx, by, bx + 1, by + suite_h - 1)
+    gap0 = (bx + 9, by, bx + 9, by + suite_h - 1)
+    gap1 = (bx + 17, by, bx + 17, by + suite_h - 1)
+    spine_y = (bx, by + 6, bx + suite_w - 1, by + 6)
+    for rect in (west, gap0, gap1, spine_y):
+        halls.append(rect)
+        local.append(rect)
+
+
+def _plaza(
+    halls: list[tuple[int, int, int, int]],
+    local: list[tuple[int, int, int, int]],
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+) -> None:
+    rect = (x1, y1, x2, y2)
+    halls.append(rect)
+    local.append(rect)
+
+
+def clamp_overlay_to_room(ov: Overlay, room: Room) -> Overlay:
+    max_x = max(room.x1, room.x2 - max(0, ov.w - 1))
+    max_y = max(room.y1, room.y2 - max(0, ov.h - 1))
+    tx = min(max(room.x1, ov.tx), max_x)
+    ty = min(max(room.y1, ov.ty), max_y)
+    if tx == ov.tx and ty == ov.ty and ov.room == room.id and ov.owner == room.owner:
+        return ov
+    return Overlay(
+        room.id, ov.kind, room.owner, ov.file, tx, ty, ov.role,
+        ov.w, ov.h, ov.bx, ov.by, ov.bw, ov.bh,
+    )
+
+
 def _shift_prop(ov: Overlay, src: Room, dest: Room) -> Overlay:
     dx = dest.x1 - src.x1
     dy = dest.y1 - src.y1
-    tx = ov.tx + dx
-    ty = ov.ty + dy
-    max_x = max(dest.x1, dest.x2 - max(0, ov.w - 1))
-    max_y = max(dest.y1, dest.y2 - max(0, ov.h - 1))
-    tx = min(max(dest.x1, tx), max_x)
-    ty = min(max(dest.y1, ty), max_y)
-    return Overlay(dest.id, dest.kind, dest.owner, ov.file, tx, ty, ov.role, ov.w, ov.h, ov.bx, ov.by, ov.bw, ov.bh)
+    shifted = Overlay(
+        dest.id, dest.kind, dest.owner, ov.file,
+        ov.tx + dx, ov.ty + dy, ov.role,
+        ov.w, ov.h, ov.bx, ov.by, ov.bw, ov.bh,
+    )
+    return clamp_overlay_to_room(shifted, dest)
 
 
 def _room_overlays(data: StationData, kind: str, owner: str, room_id: str) -> list[Overlay]:
     out: list[Overlay] = []
     lr = data.layout["rooms"][kind]
+    bounds = Room(room_id, kind, owner, "", "", lr["x1"], lr["y1"], lr["x2"], lr["y2"])
     for prop in lr["props"]:
         file = resolve_prop(data, kind, prop["file"])
         if not file:
             continue
         view = view_of(data, file)
-        out.append(Overlay(
+        ov = Overlay(
             room_id, kind, owner, file,
             int(prop["tx"]), int(prop["ty"]),
             prop.get("role") or "dress",
             int(view["w"]), int(view["h"]),
             float(view["bx"]), float(view["by"]),
             float(view["bw"]), float(view["bh"]),
-        ))
+        )
+        out.append(clamp_overlay_to_room(ov, bounds))
     return out
 
 
@@ -256,10 +387,13 @@ def _place_labels(deck_rooms: list[Room], ox: int, oy: int, tile: int, crew: lis
         w, h = _label_px(text, tile)
         x1 = min(r.x1 for r in owned)
         y1 = min(r.y1 for r in owned)
+        # Row 0 stacks the banner above room labels (-40). Wrapped rows only
+        # have a 3-tile spine; a -40 offset lands on the suite above.
+        clearance = 40 if y1 <= 2 else 8
         banners.append(Label(
             "banner", owner, text,
             (ox + x1) * tile + 2,
-            (oy + y1) * tile - h - 40,
+            (oy + y1) * tile - h - clearance,
             w, h,
         ))
     return labels, banners
@@ -286,70 +420,94 @@ def build_deck(primary_rooms: Iterable[str] | None = None, crew: Iterable[CrewMe
         rooms.append(room)
         overlays.extend(_room_overlays(data, kind, "primary", kind))
 
-    strides = pack_wings(crew_list, data.primary_cols, data.view_cols)
-    cursor = data.primary_cols
-    for i, member in enumerate(crew_list):
-        w = strides[i] if i < len(strides) else 15
-        bx = cursor
-        cursor += w
-        left_w = 5 if w <= 12 else 6
-        right_w = left_w
-        gap = 1
-        hall_w = 1 if w <= 12 else 2
-        left_x1 = bx + hall_w
-        left_x2 = left_x1 + left_w - 1
-        right_x1 = left_x2 + 1 + gap
-        right_x2 = right_x1 + right_w - 1
-        want = list(member.rooms) or ["tor"]
-        enabled[member.id] = want
-        trunk_x = left_x2 + 1
-        local = [
-            (bx, 6, max(bx, right_x2), 6),
-            (left_x1 + 2, 5, left_x1 + 2, 7),
-            (trunk_x, 2, trunk_x, 9),
-            (left_x2, 2, trunk_x, 3),
-            (left_x2, 8, trunk_x, 9),
-        ]
-        halls.append((16, 6, bx + hall_w, 6))
-        halls.extend(local)
-        walk_halls[member.id] = list(local)
-        rooms.append(Room(member.id + ":hall", "hall", member.id, "HALL", "", bx, 6, bx + max(0, hall_w - 1), 8))
-        spec = data.catalog["rooms"]
-        slot: dict[str, Room] = {
-            "tor": Room(member.id + ":tor", "tor", member.id, spec["tor"]["title"], spec["tor"]["sn"], left_x1, 0, left_x2, 5),
-            "lymph": Room(member.id + ":lymph", "lymph", member.id, spec["lymph"]["title"], spec["lymph"]["sn"], left_x1, 7, left_x2, 11),
-            "recipe": Room(member.id + ":recipe", "recipe", member.id, spec["recipe"]["title"], spec["recipe"]["sn"], right_x1, 0, right_x2, 5),
-            "poe": Room(member.id + ":poe", "poe", member.id, spec["poe"]["title"], spec["poe"]["sn"], right_x1, 7, right_x2, 11),
-        }
-        if w >= 22 and "bed" in want:
-            slot["bed"] = Room(member.id + ":bed", "bed", member.id, spec["bed"]["title"], spec["bed"]["sn"], right_x2 + 2, 4, right_x2 + 7, 11)
-            bed_hall = (right_x2, 6, right_x2 + 2, 6)
-            halls.append(bed_hall)
-            walk_halls[member.id].append(bed_hall)
-        elif "bed" in want and "lymph" not in want:
-            slot["bed"] = Room(member.id + ":bed", "bed", member.id, spec["bed"]["title"], spec["bed"]["sn"], left_x1, 4, left_x2, 11)
-        for kind in want:
-            dest = slot.get(kind)
-            if not dest:
-                continue
-            rooms.append(dest)
-            src = bases[kind]
-            for ov in _room_overlays(data, kind, member.id, dest.id):
-                overlays.append(_shift_prop(ov, src, dest))
+    hold_src = _base_room(data, HOLD_KIND) if HOLD_KIND in data.layout.get("rooms", {}) else None
+    spec = data.catalog["rooms"]
+    suite_w = data.suite_w
+    suite_h = data.suite_h
+    spine = data.spine
+    cols_per_row = campus_cols_per_row(data.view_cols, suite_w, spine)
+    origins: dict[int, tuple[int, int]] = {0: (0, 0)}
 
-    st_cols = max(data.primary_cols, cursor)
+    for i, member in enumerate(crew_list):
+        # For extra index i: slot = i+1 (slot 0 is primary)
+        slot = i + 1
+        bx, by = campus_origin(slot, data.view_cols, suite_w, suite_h, spine)
+        origins[slot] = (bx, by)
+        want = [k for k in (member.rooms or ("tor",)) if k in KINDS]
+        enabled[member.id] = want
+        local: list[tuple[int, int, int, int]] = []
+        _cover_suite(halls, local, bx, by, suite_w, suite_h)
+        rooms.append(Room(
+            member.id + ":hall", "hall", member.id, "HALL", "",
+            bx, by + 6, bx + suite_w - 1, by + 6,
+        ))
+        col_x = _suite_col_x(bx)
+        # north y: by+0 .. by+5 ; south y: by+7 .. by+11
+        north_plan = ("tor", "recipe", "poe")
+        south_plan = ("lymph", HOLD_KIND, "bed")
+        for col_i, kind in enumerate(north_plan):
+            x1, x2 = col_x[col_i]
+            y1, y2 = by, by + 5
+            if kind in want:
+                dest = Room(
+                    member.id + ":" + kind, kind, member.id,
+                    spec[kind]["title"], spec[kind]["sn"],
+                    x1, y1, x2, y2,
+                )
+                rooms.append(dest)
+                for ov in _room_overlays(data, kind, member.id, dest.id):
+                    overlays.append(_shift_prop(ov, bases[kind], dest))
+            else:
+                _plaza(halls, local, x1, y1, x2, y2)
+        for col_i, kind in enumerate(south_plan):
+            x1, x2 = col_x[col_i]
+            y1, y2 = by + 7, by + 11
+            place = kind == HOLD_KIND or kind in want
+            if place:
+                dest = Room(
+                    member.id + ":" + kind, kind, member.id,
+                    spec[kind]["title"], spec[kind]["sn"],
+                    x1, y1, x2, y2,
+                )
+                rooms.append(dest)
+                src = hold_src if kind == HOLD_KIND else bases[kind]
+                if src is not None:
+                    for ov in _room_overlays(data, kind, member.id, dest.id):
+                        overlays.append(_shift_prop(ov, src, dest))
+            else:
+                _plaza(halls, local, x1, y1, x2, y2)
+        walk_halls[member.id] = list(local)
+
+    # Spines: only 3-tile connectors, NEVER a hall from x=16 across empty space.
+    occupied = set(origins)
+    for slot in sorted(occupied):
+        bx, by = origins[slot]
+        row = slot // cols_per_row
+        right = slot + 1
+        if right in occupied and right // cols_per_row == row:
+            # Horizontally adjacent occupied slots: 3-wide connector on hall y
+            # (by+5 .. by+7) between the two 25-col suites.
+            halls.append((bx + suite_w, by + 5, bx + suite_w + spine - 1, by + 7))
+        down = slot + cols_per_row
+        if down in occupied:
+            # Vertically adjacent occupied slots in the same column: 3-tall
+            # connector around x = bx+7..bx+9 (aligns with primary hall x=8).
+            halls.append((bx + 7, by + suite_h, bx + 9, by + suite_h + spine - 1))
+
+    st_cols, st_rows = _deck_extent(rooms, halls)
+    st_cols = max(data.primary_cols, st_cols)
     ox = max(1, (data.view_cols - st_cols) // 2)
     if ox + st_cols > data.view_cols:
         ox = max(1, data.view_cols - st_cols)
 
-    paint = [r for r in rooms if r.kind == "hall" or r.kind in enabled.get(r.owner, [])]
+    paint = [r for r in rooms if _paints(r, enabled)]
     walk: dict[str, set[str]] = {}
     for owner, kinds in enabled.items():
         cells: set[str] = set()
         for room in rooms:
             if room.owner != owner:
                 continue
-            if room.kind != "hall" and room.kind not in kinds:
+            if not _walks(room, kinds):
                 continue
             for y in range(room.y1, room.y2 + 1):
                 for x in range(room.x1, room.x2 + 1):
@@ -368,7 +526,7 @@ def build_deck(primary_rooms: Iterable[str] | None = None, crew: Iterable[CrewMe
         ox=ox,
         oy=data.origin_y,
         st_cols=st_cols,
-        st_rows=data.st_rows,
+        st_rows=st_rows,
         view_cols=data.view_cols,
         view_rows=data.view_rows,
         tile=data.tile,
@@ -386,6 +544,106 @@ def in_deck(deck: Deck, x: int, y: int) -> bool:
     return any(r.contains(x, y) for r in deck.rooms) or any(
         h[0] <= x <= h[2] and h[1] <= y <= h[3] for h in deck.halls
     )
+
+
+def is_wall_row(deck: Deck, x: int, y: int) -> bool:
+    for room in deck.rooms:
+        if room.kind == "hall":
+            continue
+        if room.x1 <= x <= room.x2 and y == room.y1:
+            return True
+    return False
+
+
+def in_corridor(deck: Deck, x: int, y: int) -> bool:
+    if any(r.kind != "hall" and r.contains(x, y) for r in deck.rooms):
+        return False
+    return any(h[0] <= x <= h[2] and h[1] <= y <= h[3] for h in deck.halls)
+
+
+def prop_sprite_rect(
+    ov: Overlay, ox: int, oy: int, tile: int, dump_t: int
+) -> tuple[float, float, float, float]:
+    u = tile / float(dump_t)
+    left = (ox + ov.tx) * tile + ov.bx * u
+    top = (oy + ov.ty) * tile + ov.by * u
+    return left, top, ov.bw * u, ov.bh * u
+
+
+def clip_rect(
+    src: tuple[float, float, float, float],
+    clip: tuple[float, float, float, float],
+) -> tuple[float, float, float, float] | None:
+    sx, sy, sw, sh = src
+    cx, cy, cw, ch = clip
+    left = max(sx, cx)
+    top = max(sy, cy)
+    right = min(sx + sw, cx + cw)
+    bottom = min(sy + sh, cy + ch)
+    if right <= left or bottom <= top:
+        return None
+    return (left, top, right - left, bottom - top)
+
+
+def room_clip_rect(room: Room, ox: int, oy: int, tile: int) -> tuple[float, float, float, float]:
+    # Same box as NaanStation.svelte pctPropClip: owning room tiles, no hull rim.
+    # Isometric dump by is often negative; overflow is cut at this north wall.
+    px, py, pw, ph = room.pixels(ox, oy, tile)
+    return (float(px), float(py), float(pw), float(ph))
+
+
+def room_hull_rect(room: Room, ox: int, oy: int, tile: int) -> tuple[float, float, float, float]:
+    # Dilated hull of one room. Props may sit on the wall rim but not in the void.
+    px, py, pw, ph = room.pixels(ox, oy, tile)
+    return (
+        float(px - HULL_RIM),
+        float(py - HULL_RIM),
+        float(pw + HULL_RIM * 2),
+        float(ph + HULL_RIM + HULL_SKIRT),
+    )
+
+
+def clip_prop_to_room(
+    ov: Overlay,
+    room: Room,
+    ox: int,
+    oy: int,
+    tile: int,
+    dump_t: int,
+) -> tuple[float, float, float, float] | None:
+    # Tight clip: dump sprite intersect the room tiles, then the owning hull.
+    # Negative by cannot paint into a neighbor or the void past the hull rim.
+    sprite = prop_sprite_rect(ov, ox, oy, tile, dump_t)
+    hit = clip_rect(sprite, room_clip_rect(room, ox, oy, tile))
+    if hit is None:
+        return None
+    return clip_rect(hit, room_hull_rect(room, ox, oy, tile))
+
+
+def crop_offsets(
+    dest: tuple[float, float, float, float],
+    clipped: tuple[float, float, float, float],
+) -> tuple[float, float, float, float]:
+    dx, dy, _dw, _dh = dest
+    cx, cy, cw, ch = clipped
+    return (cx - dx, cy - dy, cw, ch)
+
+
+def dilated_hull_rects(deck: Deck, scale: int = 1) -> list[tuple[int, int, int, int]]:
+    tile = deck.tile * scale
+    rim = HULL_RIM * scale
+    skirt = HULL_SKIRT * scale
+    ox, oy = deck.ox, deck.oy
+    out: list[tuple[int, int, int, int]] = []
+    for y in range(deck.st_rows):
+        for x in range(deck.st_cols):
+            if not in_deck(deck, x, y):
+                continue
+            dx = (ox + x) * tile
+            dy = (oy + y) * tile
+            # Path2D.rect(dx-rim, dy-rim, TILE+2*rim, TILE+rim+skirt)
+            out.append((dx - rim, dy - rim, dx + tile + rim, dy + tile + skirt))
+    return out
 
 
 def rects_overlap(a: tuple[float, float, float, float], b: tuple[float, float, float, float], pad: float = 0) -> bool:

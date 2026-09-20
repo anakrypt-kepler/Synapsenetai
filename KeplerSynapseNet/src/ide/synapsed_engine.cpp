@@ -3,6 +3,7 @@
 // Do not log cookies, URLs, or session tokens from bypass/harvest paths.
 
 #include "ide/synapsed_engine.h"
+#include "core/naan_harvest_plan.h"
 #include "crypto/keys.h"
 #include "crypto/crypto.h"
 #include "crypto/ring_signature.h"
@@ -4519,11 +4520,13 @@ std::string SynapsedEngine::fetchViaTor(const std::string& url, const std::strin
     for (char c : cookieTag) {
         if (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_') tag.push_back(c);
     }
+    const int socksPort = gSocksPort.load();
+    if (socksPort <= 0) return "";
     const std::string cookieFile = tag.empty()
         ? (dataDir_ + "/tor_cookies.txt")
         : (dataDir_ + "/tor_cookies_" + tag + ".txt");
     std::string cmd = "curl -s -k --max-time " + std::to_string(timeout) +
-        " --socks5-hostname 127.0.0.1:" + std::to_string(gSocksPort.load()) + " -L "
+        " --socks5-hostname 127.0.0.1:" + std::to_string(socksPort) + " -L "
         "-H \"User-Agent: " + ua + "\" "
         "-c " + cookieFile + " -b " + cookieFile + " "
         "\"" + url + "\" 2>/dev/null";
@@ -6265,21 +6268,8 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
 
     primeCookieJar();
 
-    std::string powReplay = exploitCVE0001_PowCookieReplay(url);
-    if (!powReplay.empty()) {
-        recordBypass("NAAN-CVE-2026-0001", "endgame_v3_pow",
-            "pow_cookie_replay_pre", isOnion ? "tor" : "clearnet",
-            0.0, 200, powReplay.size());
-        return powReplay;
-    }
-
-    std::string confusionResult = exploitCVE0009_CookieConfusion(url);
-    if (!confusionResult.empty()) {
-        recordBypass("NAAN-CVE-2026-0009", "shared_cookie_jar",
-            "cookie_confusion_pre", isOnion ? "tor" : "clearnet",
-            0.0, 200, confusionResult.size());
-        return confusionResult;
-    }
+    // Harvest files the real SOCKS page. Canned CVE HTML is not knowledge
+    // and used to stall the loop for minutes while ignoring stop.
 
     for (int attempt = 0; attempt < effectiveRetries; attempt++) {
         if (stopped()) return "";
@@ -6296,6 +6286,10 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                 std::this_thread::sleep_for(std::chrono::seconds(1));
             continue;
         }
+
+        // Queue / JS-challenge HTML is not knowledge. Return it so the harvest
+        // loop can follow hrefs instead of sleeping on dread/Ahmia stubs.
+        if (synapse::core::isJunkHarvestHtml(html)) return html;
 
         auto fetchEnd = std::chrono::high_resolution_clock::now();
         double ttfbMs = std::chrono::duration<double, std::milli>(fetchEnd - fetchStart).count();
@@ -8721,41 +8715,40 @@ std::string SynapsedEngine::naanControl(const std::string& paramsJson) {
 }
 
 void SynapsedEngine::loadNaanWebConfig() {
-    cfgSources_ = "tor";
-    std::ifstream in(dataDir_ + "/naan_agent_web.conf");
-    if (!in.good()) return;
-    std::string line;
-    bool leftover = false;
-    while (std::getline(in, line)) {
-        auto pos = line.find("naan_auto_search_mode=");
-        if (pos == std::string::npos) continue;
-        std::string v = line.substr(pos + 22);
-        while (!v.empty() && (v.back() == '\r' || v.back() == ' ')) v.pop_back();
-        if (v != "tor") leftover = true;
-    }
-    if (leftover) persistNaanSources();
-}
-
-void SynapsedEngine::persistNaanSources() const {
+    // Transport stays Tor (cfgSources_). Do not rewrite naan_auto_search_mode
+    // from that flag — "tor" is not a legal mode and used to funnel harvest.
+    // Leftover duckduckgo-only lines get Brave. Queries and topics stay put.
     const std::string path = dataDir_ + "/naan_agent_web.conf";
     std::ifstream in(path);
+    if (!in.good()) return;
     std::vector<std::string> lines;
-    bool found = false;
-    if (in.good()) {
-        std::string line;
-        while (std::getline(in, line)) {
-            if (line.find("naan_auto_search_mode=") == 0) {
-                lines.push_back("naan_auto_search_mode=" + cfgSources_);
-                found = true;
-            } else {
-                lines.push_back(line);
+    bool changed = false;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.rfind("clearnet_engines=", 0) == 0) {
+            std::string v = line.substr(17);
+            while (!v.empty() && (v.back() == '\r' || v.back() == ' ')) v.pop_back();
+            std::string low = v;
+            for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (low.find("brave") == std::string::npos &&
+                low.find("duckduckgo") != std::string::npos) {
+                if (v.empty()) line = "clearnet_engines=duckduckgo,brave";
+                else line = "clearnet_engines=" + v + ",brave";
+                changed = true;
             }
         }
+        lines.push_back(line);
     }
-    if (!found) lines.push_back("naan_auto_search_mode=" + cfgSources_);
+    in.close();
+    if (!changed) return;
     std::ofstream out(path, std::ios::trunc);
     if (!out.good()) return;
     for (const auto& l : lines) out << l << "\n";
+}
+
+void SynapsedEngine::persistNaanSources() const {
+    // Intentionally empty. naan_auto_search_mode is clearnet/darknet/both,
+    // not the SOCKS transport string stored in cfgSources_.
 }
 
 void SynapsedEngine::startNaan() {
@@ -8777,20 +8770,18 @@ static std::string buildNaanPoeTitle(const std::string& topic) {
 static std::string buildNaanPoeBody(const std::string& topic, const std::string& url,
                                    const std::string& chosenTitle, const std::string& hash,
                                    const std::string& via, const std::string& text) {
-    // Keep the body unique. Dumping the same search-page HTML makes SimHash
-    // reject later harvests as too_similar even when sha256 differs.
+    // Lead with page text so SimHash is the article, not shared boilerplate.
+    // Filing the same search UI used to trip too_similar / near_duplicate.
     std::ostringstream o;
-    o << "SynapseNet NAAN harvest record.\n";
+    if (!text.empty()) {
+        std::string excerpt = text.size() > 1800 ? text.substr(0, 1800) : text;
+        o << excerpt << "\n\n";
+    }
     o << "topic: " << topic << "\n";
     o << "url: " << url << "\n";
     o << "title: " << chosenTitle << "\n";
     o << "via: " << via << "\n";
     o << "sha256: " << hash << "\n";
-    o << "ts: " << nowMillis() << "\n";
-    if (!text.empty()) {
-        std::string excerpt = text.size() > 240 ? text.substr(0, 240) : text;
-        o << "excerpt: " << excerpt << "\n";
-    }
     std::string body = o.str();
     if (body.size() < 50)
         body += "Source fetched over Tor. Local draft is not a wallet credit.\n";
@@ -8829,32 +8820,61 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
         NaanAgentSlot* slot = nullptr;
         std::string topic;
         int tickSec = 45;
-        std::string sources = "tor";
         std::vector<std::string> topics;
+        bool waitLoop = false;
+        bool resetBudget = false;
         {
             std::lock_guard<std::mutex> lock(mtx_);
             auto it = naanAgents_.find(agentId);
             if (it == naanAgents_.end() || !it->second) break;
             slot = it->second.get();
-            if (cfgTopics_.empty()) {
-                slot->state = "cooldown";
-                if (agentId == kPrimaryNaanId) naanState_ = "cooldown";
-                break;
+            const auto loopAction = synapse::core::decideNaanHarvestLoop(
+                slot->stop.load(),
+                cfgTopics_.empty(),
+                slot->spent,
+                naanBudgetPerEpoch_);
+            if (loopAction == synapse::core::NaanHarvestLoopAction::StopUser) break;
+            if (loopAction == synapse::core::NaanHarvestLoopAction::WaitTopic ||
+                loopAction == synapse::core::NaanHarvestLoopAction::WaitBudget) {
+                slot->state = (loopAction == synapse::core::NaanHarvestLoopAction::WaitBudget)
+                    ? "budget_exhausted" : "cooldown";
+                slot->currentTask = (loopAction == synapse::core::NaanHarvestLoopAction::WaitBudget)
+                    ? "budget wait — new epoch after tick" : "waiting for topics";
+                tickSec = naanTickInterval_;
+                if (agentId == kPrimaryNaanId) {
+                    naanState_ = slot->state;
+                    naanCurrentTask_ = slot->currentTask;
+                }
+                waitLoop = true;
+                resetBudget = loopAction == synapse::core::NaanHarvestLoopAction::WaitBudget;
+            } else {
+                topics = cfgTopics_;
+                tickSec = naanTickInterval_;
+                if (llamaEngine_ && llamaEngine_->getActiveRequests() > 0)
+                    slot->inferenceState = "waiting_for_model";
+                else if (slot->modelMode == "own")
+                    slot->inferenceState = slot->inferenceState == "error" ? "error" : "ready";
+                else
+                    slot->inferenceState = inferenceReady_ ? "ready" : (modelLoaded_ ? "registered" : "idle");
             }
-            if (slot->spent + 1.0 > naanBudgetPerEpoch_) {
-                slot->state = "budget_exhausted";
-                if (agentId == kPrimaryNaanId) naanState_ = "budget_exhausted";
-                break;
+        }
+        if (waitLoop) {
+            // Only a human stop ends harvest. Empty topics and budget wait.
+            for (int w = 0; w < tickSec && !stopped(); w++)
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (resetBudget && !stopped()) {
+                std::lock_guard<std::mutex> relock(mtx_);
+                auto it2 = naanAgents_.find(agentId);
+                if (it2 != naanAgents_.end() && it2->second) {
+                    it2->second->spent = 0;
+                    it2->second->state = "active";
+                    if (agentId == kPrimaryNaanId) {
+                        naanSpentThisEpoch_ = 0;
+                        naanState_ = "active";
+                    }
+                }
             }
-            topics = cfgTopics_;
-            tickSec = naanTickInterval_;
-            sources = cfgSources_;
-            if (llamaEngine_ && llamaEngine_->getActiveRequests() > 0)
-                slot->inferenceState = "waiting_for_model";
-            else if (slot->modelMode == "own")
-                slot->inferenceState = slot->inferenceState == "error" ? "error" : "ready";
-            else
-                slot->inferenceState = inferenceReady_ ? "ready" : (modelLoaded_ ? "registered" : "idle");
+            continue;
         }
 
         std::shuffle(topics.begin(), topics.end(), rng);
@@ -8885,14 +8905,21 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
             continue;
         }
 
-        std::string url = topicToUrl(topic);
-        if (sources == "tor" && url.find(".onion") == std::string::npos) {
-            std::string q = topic;
-            for (char& c : q) if (c == ' ') c = '+';
-            url = "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/search/?q=" + q;
+        uint64_t harvestTick = 0;
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            auto it = naanAgents_.find(agentId);
+            if (it != naanAgents_.end() && it->second)
+                harvestTick = static_cast<uint64_t>(it->second->submissions)
+                + static_cast<uint64_t>(nowMillis() / 1000);
+            for (unsigned char c : agentId) harvestTick = harvestTick * 131ull + c;
         }
+        const auto target = synapse::core::pickNaanHarvestTarget(topic, harvestTick);
+        std::string url = target.url.empty() ? topicToUrl(topic) : target.url;
         if (!naanShare_.claimUrl(agentId, url)) {
             naanShare_.releaseTopic(agentId, topic);
+            for (int w = 0; w < 2 && !stopped(); w++)
+                std::this_thread::sleep_for(std::chrono::seconds(1));
             continue;
         }
 
@@ -8903,11 +8930,12 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
             auto it = naanAgents_.find(agentId);
             if (it != naanAgents_.end() && it->second) slot = it->second.get();
             if (slot) {
-                slot->currentTask = "fetching [" + topic + "] via " + (isOnion ? "tor" : "clearnet");
+                slot->currentTask = "fetching [" + topic + "] via " + target.engine;
                 slot->currentTaskId = taskId;
                 slot->state = "active";
                 slot->log.push_back(NaanLogEntry{nowMillis(),
-                    ">> [" + agentId + "] fetching [" + topic + "] " + (isOnion ? "onion" : "clearnet")});
+                    ">> [" + agentId + "] fetching [" + topic + "] engine=" + target.engine +
+                    (isOnion ? " onion" : " clearnet-over-tor")});
                 if (slot->log.size() > 80) slot->log.erase(slot->log.begin());
                 if (agentId == kPrimaryNaanId) {
                     naanCurrentTask_ = slot->currentTask;
@@ -8930,6 +8958,47 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
             break;
         }
 
+        auto pageIsSurface = [](const std::string& pageUrl, const std::string& pageHtml) {
+            if (pageHtml.empty()) return true;
+            if (synapse::core::isJunkHarvestHtml(pageHtml)) return true;
+            if (synapse::core::isHarvestSearchSurface(pageUrl)) return true;
+            return false;
+        };
+        std::vector<std::string> resultHrefs;
+        if (pageIsSurface(url, html))
+            resultHrefs = synapse::core::extractHarvestHrefs(html, 8, url);
+
+        auto adoptPage = [&](const std::string& pageUrl, std::string pageHtml) {
+            if (pageUrl != url) {
+                naanShare_.releaseUrl(agentId, url);
+                url = pageUrl;
+            }
+            html = std::move(pageHtml);
+            isOnion = url.find(".onion") != std::string::npos;
+        };
+
+        auto walkResultHrefs = [&](size_t startShift) {
+            if (resultHrefs.empty()) return;
+            const size_t n = resultHrefs.size();
+            const size_t start = static_cast<size_t>((harvestTick + startShift) % n);
+            for (size_t i = 0; i < n; ++i) {
+                if (stopped()) break;
+                const std::string& href = resultHrefs[(start + i) % n];
+                if (href == url) continue;
+                if (synapse::core::isHarvestSearchSurface(href)) continue;
+                if (!naanShare_.claimUrl(agentId, href)) continue;
+                std::string next = fetchWithRetry(href, 3, stopPtr, agentId);
+                if (!pageIsSurface(href, next)) {
+                    adoptPage(href, std::move(next));
+                    return;
+                }
+                naanShare_.releaseUrl(agentId, href);
+            }
+        };
+
+        if (pageIsSurface(url, html)) walkResultHrefs(0);
+        if (pageIsSurface(url, html)) html.clear();
+
         BypassReport br;
         {
             std::lock_guard<std::mutex> lock(bypassMtx_);
@@ -8938,8 +9007,8 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
 
         std::string fetchedVia;
         if (html.empty()) fetchedVia = "failed";
-        else if (isOnion) fetchedVia = "tor_socks5";
-        else fetchedVia = "clearnet";
+        else if (isOnion) fetchedVia = "tor_onion";
+        else fetchedVia = "tor_clearnet";
 
         std::vector<std::string> titles;
         if (!html.empty()) titles = extractTitles(html);
@@ -8955,14 +9024,31 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
 
         // Dedup is on the page, not on the agent. Agent id and wall clock
         // must not mint a unique hash for the same URL + title.
-        const std::string hash = sha256Hex(url + "\n" + chosenTitle);
-        const std::string sig = ed25519Sign(hash);
+        std::string hash = sha256Hex(url + "\n" + chosenTitle);
+        std::string sig = ed25519Sign(hash);
 
         bool filed = !html.empty() && !titles.empty();
         std::string status = filed ? "draft" : "fetch_failed";
         if (filed && !naanShare_.noteHash(hash)) {
             filed = false;
             status = "duplicate";
+            // Same catalog title is a skip, not a freeze. Try the next result.
+            walkResultHrefs(1);
+            if (!pageIsSurface(url, html)) {
+                titles = extractTitles(html);
+                if (!titles.empty()) {
+                    std::uniform_int_distribution<size_t> pick(0, titles.size() - 1);
+                    chosenTitle = titles[pick(rng)];
+                    hash = sha256Hex(url + "\n" + chosenTitle);
+                    if (naanShare_.noteHash(hash)) {
+                        filed = true;
+                        status = "draft";
+                        fetchedVia = isOnion ? "tor_onion" : "tor_clearnet";
+                        sig = ed25519Sign(hash);
+                    }
+                }
+            }
+            if (!filed) fetchedVia = html.empty() ? "failed" : fetchedVia;
         }
 
         {
@@ -8975,13 +9061,6 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
                 else slot->currentTask = "extracted " + std::to_string(titles.size()) + " entries from [" + topic + "]";
                 slot->currentTaskId = taskId;
                 if (filed) {
-                    if (slot->spent + 1.0 > naanBudgetPerEpoch_) {
-                        slot->state = "budget_exhausted";
-                        if (agentId == kPrimaryNaanId) naanState_ = "budget_exhausted";
-                        naanShare_.releaseUrl(agentId, url);
-                        naanShare_.releaseTopic(agentId, topic);
-                        break;
-                    }
                     slot->spent += 1.0;
                     if (agentId == kPrimaryNaanId) naanSpentThisEpoch_ = slot->spent;
                 }
@@ -9052,7 +9131,10 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
                 nlohmann::json jr = nlohmann::json::parse(poeRes, nullptr, false);
                 if (!jr.is_discarded() && jr.is_object()) {
                     if (jr.contains("error")) {
-                        note = "poe reject: " + jr.value("error", "failed");
+                        const std::string err = jr.value("error", "failed");
+                        // too_similar / near_duplicate / exact_duplicate skip this
+                        // page. They do not stop the harvest loop.
+                        note = "poe reject: " + err;
                     } else {
                         const std::string sid = jr.value("submitId", "");
                         note = std::string("poe ") + jr.value("status", "pending")
@@ -9065,6 +9147,9 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
                     slot->log.push_back(NaanLogEntry{nowMillis(), "[" + agentId + "] " + note});
                     if (slot->log.size() > 80) slot->log.erase(slot->log.begin());
                     if (agentId == kPrimaryNaanId) naanLog_ = slot->log;
+                    if (slot->state != "budget_exhausted") slot->state = "active";
+                    if (agentId == kPrimaryNaanId && slot->state != "budget_exhausted")
+                        naanState_ = "active";
                 }
             }
         }
@@ -9072,7 +9157,10 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
         naanShare_.releaseUrl(agentId, url);
         naanShare_.releaseTopic(agentId, topic);
 
-        for (int w = 0; w < tickSec && !stopped(); w++) {
+        // Duplicate / failed fetches rest briefly so the crew keeps walking.
+        // Only a human stop ends the loop.
+        int restSec = filed ? tickSec : std::min(tickSec, 5);
+        for (int w = 0; w < restSec && !stopped(); w++) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     }

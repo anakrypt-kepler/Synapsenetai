@@ -38,15 +38,21 @@
   export let lastLog: string = "";
   export let submissions: number = 0;
   export let ngt: number = 0;
+  // Per-body harvest tallies when the parent has them. Missing keys still show Lv.
+  export let crewSubmissions: Record<string, number> = {};
   export let focusedId: string = PRIMARY_NAAN_ID;
   export let nowLine: string = "";
 
   const TILE = Number(stationLayout.tile) || 16;
   const DUMP_T = Number(stationLayout.dumpT) || 12;
-  const PRIMARY_COLS = Number(stationLayout.gridCols) || 26;
-  const ST_ROWS = Number(stationLayout.gridRows) || 12;
-  const VIEW_COLS = Number(stationLayout.viewCols) || 64;
-  const VIEW_ROWS = Number(stationLayout.viewRows) || 36;
+  const VIEW_COLS = Number(stationLayout.viewCols) || 80;
+  const VIEW_ROWS = Number(stationLayout.viewRows) || 48;
+  // Campus packer. JSON gridRows is one suite, not the whole station.
+  const SUITE_W = Number((stationLayout as { suiteW?: number }).suiteW) || 25;
+  const SUITE_H = Number((stationLayout as { suiteH?: number }).suiteH) || 12;
+  const SPINE = Number((stationLayout as { spine?: number }).spine) || 3;
+  const CELL_W = SUITE_W + SPINE;
+  const CELL_H = SUITE_H + SPINE;
   const VW = VIEW_COLS * TILE;
   const VH = VIEW_ROWS * TILE;
   const SPEED = 34 / DUMP_T;
@@ -70,7 +76,7 @@
     "north-east": -Math.PI / 4,
   };
 
-  type RoomKind = HarvestRoomId | "hall";
+  type RoomKind = HarvestRoomId | "hall" | "hold";
   type Room = {
     id: string;
     kind: RoomKind;
@@ -96,14 +102,43 @@
     lights?: LayoutLight[];
   };
   // Warm/cold pools thrown on the deck by lamps, screens and vats. Painted in
-  // world pixels so they follow a room when a crew wing shifts it sideways.
+  // world pixels so they follow a room when a crew suite is packed on campus.
   type DeckLight = LayoutLight & { owner: string };
   const LAYOUT_ROOMS = stationLayout.rooms as Record<string, LayoutRoom>;
   const LAYOUT_CORRIDORS = stationLayout.corridors as Array<{ x1: number; y1: number; x2: number; y2: number; label: string | null }>;
-  const originY = Number((stationLayout as { originY?: number }).originY) || 14;
+  const originY = Number((stationLayout as { originY?: number }).originY) || 10;
 
   function layoutRoom(kind: HarvestRoomId): LayoutRoom {
     return LAYOUT_ROOMS[kind] || LAYOUT_ROOMS.bed;
+  }
+
+  // Visual-only 7x5 locker if JSON hold has not landed yet.
+  const HOLD_FALLBACK: LayoutRoom = {
+    x1: 0, y1: 0, x2: 6, y2: 4,
+    seat: { tx: 3, ty: 3, face: "south", work: false },
+    blocks: [
+      [0, 0, 3, 1],
+      [4, 0, 2, 1],
+      [0, 4, 2, 1],
+    ],
+    props: [
+      { file: "quarters_lockerbank.png", tx: 0, ty: 0, role: "dress" },
+      { file: "industrial_locker.png", tx: 4, ty: 0, role: "dress" },
+      { file: "crate.png", tx: 0, ty: 4, role: "dress" },
+    ],
+  };
+
+  type PlaceKind = HarvestRoomId | "hold";
+
+  function layoutVisual(kind: PlaceKind): LayoutRoom {
+    if (kind === "hold") return LAYOUT_ROOMS.hold || HOLD_FALLBACK;
+    return layoutRoom(kind);
+  }
+
+  function visualSpec(kind: PlaceKind): { prop: string | null; terminal: string | null; chair?: string | null; title: string; sn: string } {
+    if (kind !== "hold") return stationCatalog.rooms[kind];
+    const hit = (stationCatalog as { rooms: Record<string, { prop: string | null; terminal: string | null; chair?: string | null; title: string; sn: string }> }).rooms.hold;
+    return hit || { prop: "quarters_lockerbank.png", terminal: null, chair: null, title: "HOLD", sn: "STASH" };
   }
 
   const BASE: Record<HarvestRoomId, Room> = {} as Record<HarvestRoomId, Room>;
@@ -143,6 +178,19 @@
     work: stationLayout.hallSeat.work,
   };
 
+  const holdLr = layoutVisual("hold");
+  const HOLD_BASE: Room = {
+    id: "hold", kind: "hold", owner: "primary",
+    name: visualSpec("hold").title, sn: visualSpec("hold").sn,
+    x1: holdLr.x1, y1: holdLr.y1, x2: holdLr.x2, y2: holdLr.y2,
+  };
+  const HOLD_SEAT: Seat = {
+    tx: holdLr.seat.tx, ty: holdLr.seat.ty,
+    face: holdLr.seat.face as Facing,
+    work: holdLr.seat.work,
+  };
+  const HOLD_BLOCKS: Array<[number, number, number, number]> = holdLr.blocks.map((b) => b as unknown as [number, number, number, number]);
+
   type Overlay = {
     room: string;
     kind: RoomKind;
@@ -158,10 +206,10 @@
     return VIEWS[file] || { w: 1, h: 1, bx: 0, by: 0, bw: DUMP_T, bh: DUMP_T };
   }
 
-  function baseOverlays(kind: HarvestRoomId, owner: string, roomId: string): Overlay[] {
+  function baseOverlays(kind: PlaceKind, owner: string, roomId: string): Overlay[] {
     const out: Overlay[] = [];
-    const spec = stationCatalog.rooms[kind];
-    const lr = layoutRoom(kind);
+    const spec = visualSpec(kind);
+    const lr = layoutVisual(kind);
     const put = (file: string | null | undefined, tx: number, ty: number, prop: Overlay["prop"]) => {
       const src = propSrc(file);
       if (src && file) out.push({ room: roomId, kind, owner, src, file, tx, ty, prop });
@@ -190,16 +238,6 @@
     return { ...ov, tx, ty, owner: to.owner, room: to.id, kind: to.kind };
   }
 
-  function packWings(crew: NaanCrewMember[]): number[] {
-    const n = crew.length;
-    if (!n) return [];
-    const prefer = crew.map((c) => (c.rooms.includes("bed") ? 22 : 15));
-    const sum = prefer.reduce((a, b) => a + b, 0);
-    if (PRIMARY_COLS + sum <= VIEW_COLS - 2) return prefer;
-    if (PRIMARY_COLS + 15 * n <= VIEW_COLS - 2) return crew.map(() => 15);
-    return crew.map(() => 12);
-  }
-
   function wingRoom(owner: string, kind: HarvestRoomId, x1: number, y1: number, x2: number, y2: number): Room {
     const spec = stationCatalog.rooms[kind];
     return {
@@ -224,9 +262,9 @@
     };
   }
 
-  function shiftSeat(kind: HarvestRoomId, dest: Room): Seat {
-    const src = BASE[kind];
-    const base = BASE_SEATS[kind];
+  function shiftSeat(kind: PlaceKind, dest: Room): Seat {
+    const src = kind === "hold" ? HOLD_BASE : BASE[kind];
+    const base = kind === "hold" ? HOLD_SEAT : BASE_SEATS[kind];
     return clampSeat({
       tx: base.tx - src.x1 + dest.x1,
       ty: base.ty - src.y1 + dest.y1,
@@ -241,6 +279,8 @@
     overlays: Overlay[];
     ox: number;
     stCols: number;
+    stRows: number;
+    occ: Uint8Array;
     seats: Record<string, Partial<Record<RoomKind, Seat>>>;
     walk: Record<string, Set<string>>;
     enabled: Record<string, HarvestRoomId[]>;
@@ -256,11 +296,12 @@
     for (let y = ty; y < ty + h; y++) for (let x = tx; x < tx + w; x++) set.delete(x + "," + y);
   }
 
-  function placeBlocks(set: Set<string>, kind: HarvestRoomId, dest: Room) {
-    const src = BASE[kind];
+  function placeBlocks(set: Set<string>, kind: PlaceKind, dest: Room) {
+    const src = kind === "hold" ? HOLD_BASE : BASE[kind];
     const dx = dest.x1 - src.x1;
     const dy = dest.y1 - src.y1;
-    for (const [x, y, w, h] of ROOM_BLOCKS[kind]) {
+    const blocks = kind === "hold" ? HOLD_BLOCKS : ROOM_BLOCKS[kind];
+    for (const [x, y, w, h] of blocks) {
       const nx = x + dx;
       const ny = y + dy;
       const x0 = Math.max(nx, dest.x1);
@@ -271,18 +312,43 @@
     }
   }
 
-  function roomLights(kind: HarvestRoomId, owner: string, dest: Room): DeckLight[] {
-    const src = BASE[kind];
+  function roomLights(kind: PlaceKind, owner: string, dest: Room): DeckLight[] {
+    const src = kind === "hold" ? HOLD_BASE : BASE[kind];
     const dx = dest.x1 - src.x1;
     const dy = dest.y1 - src.y1;
     const out: DeckLight[] = [];
-    for (const l of layoutRoom(kind).lights || []) {
+    for (const l of layoutVisual(kind).lights || []) {
       const tx = l.tx + dx;
       const ty = l.ty + dy;
       if (tx < dest.x1 || tx > dest.x2 || ty < dest.y1 || ty > dest.y2) continue;
       out.push({ ...l, tx, ty, owner });
     }
     return out;
+  }
+
+  function occupancyGrid(stCols: number, stRows: number, rooms: Room[], halls: Hall[]): Uint8Array {
+    const occ = new Uint8Array(Math.max(0, stCols * stRows));
+    const stamp = (x1: number, y1: number, x2: number, y2: number) => {
+      const xa = Math.max(0, Math.min(x1, x2));
+      const xb = Math.min(stCols - 1, Math.max(x1, x2));
+      const ya = Math.max(0, Math.min(y1, y2));
+      const yb = Math.min(stRows - 1, Math.max(y1, y2));
+      if (xb < xa || yb < ya) return;
+      for (let y = ya; y <= yb; y++) {
+        const row = y * stCols;
+        for (let x = xa; x <= xb; x++) occ[row + x] = 1;
+      }
+    };
+    for (const r of rooms) stamp(r.x1, r.y1, r.x2, r.y2);
+    for (const h of halls) stamp(h.x1, h.y1, h.x2, h.y2);
+    return occ;
+  }
+
+  function campusSlot(slot: number): { col: number; row: number; bx: number; by: number } {
+    const colsPerRow = 1 + Math.floor((VIEW_COLS - 2 - SUITE_W) / CELL_W);
+    const col = slot % colsPerRow;
+    const row = Math.floor(slot / colsPerRow);
+    return { col, row, bx: col * CELL_W, by: row * CELL_H };
   }
 
   function buildDeck(enabledPrimary: HarvestRoomId[], crew: NaanCrewMember[]): Deck {
@@ -309,39 +375,34 @@
       lights.push(...roomLights(id, "primary", r));
     }
 
-    const strides = packWings(crew);
-    let cursor = PRIMARY_COLS;
+    // Extra crew occupy campus slots 1..n. Primary stays on JSON coords at slot 0.
+    const occupied: Array<{ col: number; row: number; bx: number; by: number }> = [
+      { ...campusSlot(0) },
+    ];
     crew.forEach((c, i) => {
-      const w = strides[i] || 15;
-      const bx = cursor;
-      cursor += w;
-      const leftW = w <= 12 ? 5 : 6;
-      const rightW = leftW;
-      const gap = w <= 12 ? 1 : 1;
-      const hallW = w <= 12 ? 1 : 2;
-      const leftX1 = bx + hallW;
-      const leftX2 = leftX1 + leftW - 1;
-      const rightX1 = leftX2 + 1 + gap;
-      const rightX2 = rightX1 + rightW - 1;
+      const pos = campusSlot(i + 1);
+      occupied.push(pos);
+      const { bx, by } = pos;
       const want: HarvestRoomId[] = c.rooms.length ? [...c.rooms] : ["tor"];
       enabled[c.id] = want;
       seats[c.id] = {};
       walk[c.id] = new Set();
 
-      // The gap column between the two room stacks carries a full-height trunk.
-      // Without it the north and south cross-corridors only reach the spine
-      // through a neighbouring room, so a wing missing LYMPH stranded its POE.
-      const trunkX = leftX2 + 1;
-      const localHalls: Hall[] = [
-        { x1: bx, y1: 6, x2: Math.max(bx, rightX2), y2: 6 },
-        { x1: leftX1 + 2, y1: 5, x2: leftX1 + 2, y2: 7 },
-        { x1: trunkX, y1: 2, x2: trunkX, y2: 9 },
-        { x1: leftX2, y1: 2, x2: trunkX, y2: 3 },
-        { x1: leftX2, y1: 8, x2: trunkX, y2: 9 },
+      const hallY = by + 6;
+      const northY1 = by;
+      const northY2 = by + 5;
+      const southY1 = by + 7;
+      const southY2 = by + 11;
+      const colX = [
+        { x1: bx + 2, x2: bx + 8 },
+        { x1: bx + 10, x2: bx + 16 },
+        { x1: bx + 18, x2: bx + 24 },
       ];
-      // Paint a bridge to the wing; walk stays inside each body's own rooms.
-      halls.push({ x1: 16, y1: 6, x2: bx + hallW, y2: 6 });
-      for (const h of localHalls) halls.push(h);
+
+      // Solid 25x12 hull: west pad, gap cols, hall row, and empty room slots.
+      const plaza: Hall = { x1: bx, y1: by, x2: bx + SUITE_W - 1, y2: by + SUITE_H - 1 };
+      const localHalls: Hall[] = [plaza];
+      halls.push(plaza);
       walkHalls[c.id] = localHalls;
 
       const hallRoom: Room = {
@@ -351,53 +412,96 @@
         name: "HALL",
         sn: "",
         x1: bx,
-        y1: 6,
-        x2: bx + Math.max(0, hallW - 1),
-        y2: 8,
+        y1: hallY,
+        x2: bx + 1,
+        y2: hallY + 2,
       };
       rooms.push(hallRoom);
-      seats[c.id].hall = { tx: bx, ty: 7, face: "south", work: false };
+      seats[c.id].hall = { tx: bx, ty: hallY + 1, face: "south", work: false };
 
-      const slot: Partial<Record<HarvestRoomId, Room>> = {
-        tor: wingRoom(c.id, "tor", leftX1, 0, leftX2, 5),
-        lymph: wingRoom(c.id, "lymph", leftX1, 7, leftX2, 11),
-        recipe: wingRoom(c.id, "recipe", rightX1, 0, rightX2, 5),
-        poe: wingRoom(c.id, "poe", rightX1, 7, rightX2, 11),
-      };
-
-      if (w >= 22 && want.includes("bed")) {
-        slot.bed = wingRoom(c.id, "bed", rightX2 + 2, 4, rightX2 + 7, 11);
-        const bedHall: Hall = { x1: rightX2, y1: 6, x2: rightX2 + 2, y2: 6 };
-        halls.push(bedHall);
-        walkHalls[c.id].push(bedHall);
-      } else if (want.includes("bed") && !want.includes("lymph")) {
-        slot.bed = wingRoom(c.id, "bed", leftX1, 4, leftX2, 11);
-      }
-
-      for (const kind of want) {
-        const dest = slot[kind];
-        if (!dest || dest.kind === "hall") {
-          seats[c.id][kind] = seats[c.id].hall;
-          continue;
-        }
+      const putHarvest = (kind: HarvestRoomId, x1: number, y1: number, x2: number, y2: number) => {
+        if (!want.includes(kind)) return;
+        const dest = wingRoom(c.id, kind, x1, y1, x2, y2);
         rooms.push(dest);
         seats[c.id][kind] = shiftSeat(kind, dest);
-        const shifted = baseOverlays(kind, c.id, dest.id).map((ov) => shiftInto(ov, BASE[kind], dest));
-        overlays.push(...shifted);
+        overlays.push(...baseOverlays(kind, c.id, dest.id).map((ov) => shiftInto(ov, BASE[kind], dest)));
         lights.push(...roomLights(kind, c.id, dest));
+      };
+
+      // North 3-across: TOR, RECIPE, POE. South: LYMPH, HOLD, BED.
+      putHarvest("tor", colX[0].x1, northY1, colX[0].x2, northY2);
+      putHarvest("recipe", colX[1].x1, northY1, colX[1].x2, northY2);
+      putHarvest("poe", colX[2].x1, northY1, colX[2].x2, northY2);
+      putHarvest("lymph", colX[0].x1, southY1, colX[0].x2, southY2);
+      putHarvest("bed", colX[2].x1, southY1, colX[2].x2, southY2);
+
+      const holdDest: Room = {
+        id: c.id + ":hold",
+        kind: "hold",
+        owner: c.id,
+        name: visualSpec("hold").title,
+        sn: visualSpec("hold").sn,
+        x1: colX[1].x1, y1: southY1, x2: colX[1].x2, y2: southY2,
+      };
+      rooms.push(holdDest);
+      seats[c.id].hold = shiftSeat("hold", holdDest);
+      overlays.push(...baseOverlays("hold", c.id, holdDest.id).map((ov) => shiftInto(ov, HOLD_BASE, holdDest)));
+      lights.push(...roomLights("hold", c.id, holdDest));
+
+      for (const kind of want) {
+        if (!seats[c.id][kind]) seats[c.id][kind] = seats[c.id].hall;
       }
     });
 
-    const stCols = Math.max(PRIMARY_COLS, cursor);
+    // 3-tile collars between orthogonally adjacent occupied slots. No long void bridges.
+    for (let i = 0; i < occupied.length; i++) {
+      for (let j = i + 1; j < occupied.length; j++) {
+        const a = occupied[i];
+        const b = occupied[j];
+        const adjH = a.row === b.row && Math.abs(a.col - b.col) === 1;
+        const adjV = a.col === b.col && Math.abs(a.row - b.row) === 1;
+        if (!adjH && !adjV) continue;
+        if (adjH) {
+          const left = a.bx < b.bx ? a : b;
+          halls.push({
+            x1: left.bx + SUITE_W,
+            y1: left.by + 5,
+            x2: left.bx + SUITE_W + SPINE - 1,
+            y2: left.by + 7,
+          });
+        } else {
+          const top = a.by < b.by ? a : b;
+          halls.push({
+            x1: top.bx + 7,
+            y1: top.by + SUITE_H,
+            x2: top.bx + 9,
+            y2: top.by + SUITE_H + SPINE - 1,
+          });
+        }
+      }
+    }
+
+    let maxX = 0;
+    let maxY = 0;
+    for (const r of rooms) {
+      if (r.x2 > maxX) maxX = r.x2;
+      if (r.y2 > maxY) maxY = r.y2;
+    }
+    for (const h of halls) {
+      if (h.x2 > maxX) maxX = h.x2;
+      if (h.y2 > maxY) maxY = h.y2;
+    }
+    const stCols = maxX + 1;
+    const stRows = maxY + 1;
     let ox = Math.max(1, Math.floor((VIEW_COLS - stCols) / 2));
     if (ox + stCols > VIEW_COLS) ox = Math.max(1, VIEW_COLS - stCols);
 
-    const paintRooms = rooms.filter((r) => r.kind === "hall" || enabled[r.owner]?.includes(r.kind as HarvestRoomId));
+    const paintRooms = rooms.filter((r) => r.kind === "hall" || r.kind === "hold" || enabled[r.owner]?.includes(r.kind as HarvestRoomId));
     for (const owner of Object.keys(walk)) {
       const set = walk[owner];
       for (const r of rooms) {
         if (r.owner !== owner) continue;
-        if (r.kind !== "hall" && !enabled[owner]?.includes(r.kind as HarvestRoomId)) continue;
+        if (r.kind !== "hall" && r.kind !== "hold" && !enabled[owner]?.includes(r.kind as HarvestRoomId)) continue;
         markWalk(set, r.x1, r.y1, r.x2, r.y2);
       }
       for (const h of walkHalls[owner] || []) {
@@ -405,13 +509,14 @@
       }
       for (const r of rooms) {
         if (r.owner !== owner || r.kind === "hall") continue;
-        if (!enabled[owner]?.includes(r.kind as HarvestRoomId)) continue;
-        placeBlocks(set, r.kind as HarvestRoomId, r);
+        if (r.kind !== "hold" && !enabled[owner]?.includes(r.kind as HarvestRoomId)) continue;
+        placeBlocks(set, r.kind as PlaceKind, r);
       }
     }
 
     overlays.sort((a, b) => a.ty + viewOf(a.file).h - (b.ty + viewOf(b.file).h));
-    return { rooms: paintRooms, halls, overlays, ox, stCols, seats, walk, enabled, walkHalls, lights };
+    const occ = occupancyGrid(stCols, stRows, paintRooms, halls);
+    return { rooms: paintRooms, halls, overlays, ox, stCols, stRows, occ, seats, walk, enabled, walkHalls, lights };
   }
 
   const reduceMotion =
@@ -421,11 +526,22 @@
   $: look = $stationLook;
   $: agent = findAgent(look.agent);
   $: inferred = inferHarvestRoom(status, task, lastLog);
-  $: xp = harvestLevel({ submissions, ngt });
   $: active = (status || "").toUpperCase() === "ACTIVE";
   function harvestOn(owner: string): boolean {
     if (owner === PRIMARY_NAAN_ID || owner === "primary") return active;
     return !!agentActive[owner];
+  }
+
+  function isPrimaryOwner(owner: string): boolean {
+    return owner === PRIMARY_NAAN_ID || owner === "primary";
+  }
+
+  function bodyXp(owner: string) {
+    const primary = isPrimaryOwner(owner);
+    const mapped = primary
+      ? (crewSubmissions[PRIMARY_NAAN_ID] ?? crewSubmissions.primary ?? submissions)
+      : (crewSubmissions[owner] ?? 0);
+    return harvestLevel({ submissions: mapped, ngt: primary ? ngt : 0 });
   }
 
   let liveRooms: Room[] = [{ ...BASE.bed }, { ...BASE.tor }, { ...BASE.lymph }, { ...BASE.recipe }, { ...BASE.poe }];
@@ -433,8 +549,10 @@
   let overlays: Overlay[] = [];
   let ox = 19;
   const oy = originY;
-  let stCols = PRIMARY_COLS;
   let deck: Deck = buildDeck(["bed", "tor", "lymph", "recipe", "poe"], []);
+  let stCols = deck.stCols;
+  let stRows = deck.stRows;
+  let occ = deck.occ;
   let goalHot: Record<string, RoomKind> = { primary: "bed" };
   let frameBump = 0;
   let poseClock = 0;
@@ -509,6 +627,8 @@
     overlays = deck.overlays;
     ox = deck.ox;
     stCols = deck.stCols;
+    stRows = deck.stRows;
+    occ = deck.occ;
     hero.lastGoal = "";
     const keep = new Set(crew.map((c) => c.id));
     crewWalk = crewWalk.filter((w) => keep.has(w.owner));
@@ -558,6 +678,8 @@
   let raf = 0;
   let lastTs = 0;
   let acc = 0;
+  let skyAcc = 0;
+  let skyFrames = 0;
   let z = ZFIT;
   let tz = ZFIT;
   let panX = 0;
@@ -568,11 +690,8 @@
   let pinch0 = 0;
 
   function inDeck(x: number, y: number): boolean {
-    if (x < 0 || y < 0 || x >= stCols || y >= ST_ROWS) return false;
-    return (
-      liveRooms.some((r) => x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2) ||
-      liveHalls.some((h) => x >= h.x1 && x <= h.x2 && y >= h.y1 && y <= h.y2)
-    );
+    if (x < 0 || y < 0 || x >= stCols || y >= stRows) return false;
+    return occ[y * stCols + x] !== 0;
   }
 
   function inCorridor(x: number, y: number): boolean {
@@ -677,14 +796,16 @@
     return out;
   }
 
-  function resolveGoal(owner: string, want: HarvestRoomId): { id: RoomKind; seat: Seat } {
+  function resolveGoal(owner: string, want: RoomKind): { id: RoomKind; seat: Seat } {
     const on = deck.enabled[owner] || [];
     const bag = deck.seats[owner] || {};
     const hall = bag.hall || PRIMARY_HALL_SEAT;
-    if (on.includes(want) && bag[want]) return { id: want, seat: bag[want] as Seat };
+    if (want === "hold" && bag.hold) return { id: "hold", seat: bag.hold };
+    if (want === "hall" && bag.hall) return { id: "hall", seat: hall };
+    if (on.includes(want as HarvestRoomId) && bag[want]) return { id: want, seat: bag[want] as Seat };
     if (!on.length) return { id: "hall", seat: hall };
     const origin = bag[want]
-      || (owner === "primary" ? BASE_SEATS[want] : undefined)
+      || (owner === "primary" && want !== "hall" && want !== "hold" ? BASE_SEATS[want] : undefined)
       || hall;
     let best: HarvestRoomId = on[0];
     let bd = Infinity;
@@ -752,7 +873,7 @@
     if (w.thinkLeft <= 0) goToSeat(w, goal, seat, deck.walk[w.owner] || new Set());
   }
 
-  function stepWalker(w: Walker, inferredRoom: HarvestRoomId, dt: number) {
+  function stepWalker(w: Walker, inferredRoom: RoomKind, dt: number) {
     const got = resolveGoal(w.owner, inferredRoom);
     goalHot[w.owner] = got.id;
     const walkable = deck.walk[w.owner] || new Set();
@@ -882,19 +1003,23 @@
   $: zoomPct = Math.round(z * 100);
   $: worldXf = `translate3d(${panX}px, ${panY}px, 0) scale(${z})`;
   $: heroSrc = poseClock >= 0 ? walkerSrc(hero) : walkerSrc(hero);
+  $: heroXp = poseClock >= 0 ? bodyXp("primary") : bodyXp("primary");
   $: crewViews = (poseClock >= 0 ? crewWalk : crewWalk).map((w) => {
     const c = $naanCrew.find((x) => x.id === w.owner);
+    const lv = bodyXp(w.owner);
     return {
       id: w.id,
       owner: w.owner,
       sit: w.sitting,
       left: ((ox + w.px) / VIEW_COLS) * 100,
       top: ((oy + w.py) / VIEW_ROWS) * 100,
-      z: 8 + Math.floor(w.py),
+      z: 80 + Math.floor(w.py),
       src: walkerSrc(w),
       bump: frameBump,
       name: findAgent(c?.skin || w.skin).label,
       pose: poseWord(w.sitting, w.working),
+      level: lv.level,
+      frac: lv.frac,
     };
   });
 
@@ -1071,7 +1196,7 @@
 
   function punchHull(ctx: CanvasRenderingContext2D) {
     const r = CHAM;
-    for (let y = 0; y < ST_ROWS; y++) {
+    for (let y = 0; y < stRows; y++) {
       for (let x = 0; x < stCols; x++) {
         if (!inDeck(x, y)) continue;
         const x0 = (ox + x) * TILE;
@@ -1087,7 +1212,7 @@
   }
 
   function paintAmberWindows(ctx: CanvasRenderingContext2D) {
-    for (let y = 0; y < ST_ROWS; y++) {
+    for (let y = 0; y < stRows; y++) {
       for (let x = 0; x < stCols; x++) {
         if (!inDeck(x, y)) continue;
         const edge = !inDeck(x - 1, y) || !inDeck(x + 1, y) || !inDeck(x, y - 1) || isWallRow(x, y);
@@ -1117,7 +1242,7 @@
 
   function deckPath(): Path2D {
     const p = new Path2D();
-    for (let y = 0; y < ST_ROWS; y++) {
+    for (let y = 0; y < stRows; y++) {
       for (let x = 0; x < stCols; x++) {
         if (!inDeck(x, y)) continue;
         p.rect((ox + x) * TILE, (oy + y) * TILE, TILE, TILE);
@@ -1152,7 +1277,7 @@
     ctx.clearRect(0, 0, VW, VH);
     const rim = 11;
     const skirt = 10;
-    for (let y = 0; y < ST_ROWS; y++) {
+    for (let y = 0; y < stRows; y++) {
       for (let x = 0; x < stCols; x++) {
         if (!inDeck(x, y)) continue;
         const dx = (ox + x) * TILE;
@@ -1222,7 +1347,7 @@
     ctx.save();
     ctx.globalCompositeOperation = "destination-in";
     const hull = new Path2D();
-    for (let y = 0; y < ST_ROWS; y++) {
+    for (let y = 0; y < stRows; y++) {
       for (let x = 0; x < stCols; x++) {
         if (!inDeck(x, y)) continue;
         hull.rect((ox + x) * TILE - rim, (oy + y) * TILE - rim, TILE + rim * 2, TILE + rim + skirt);
@@ -1269,7 +1394,7 @@
     for (const w of crewWalk) {
       const cm = $naanCrew.find((c) => c.id === w.owner);
       const ownRooms = cm?.rooms || [];
-      let crewGoal: HarvestRoomId;
+      let crewGoal: RoomKind;
       if (ownRooms.length) {
         w.roamTimer += dt;
         if (w.sitting && w.working && w.roamTimer >= ROAM_INTERVAL) {
@@ -1277,6 +1402,10 @@
           w.roamIdx = (w.roamIdx + 1) % ownRooms.length;
         }
         crewGoal = ownRooms[w.roamIdx % ownRooms.length];
+        // Idle extra: sit in HOLD stash without touching the harvest roam list.
+        if (!harvestOn(w.owner) && deck.seats[w.owner]?.hold && (w.lastGoal === "hold" || (w.sitting && w.roamTimer >= ROAM_INTERVAL))) {
+          crewGoal = "hold";
+        }
       } else {
         crewGoal = inferred;
       }
@@ -1291,7 +1420,14 @@
     }
     poseClock += 1;
     frameBump += 1;
-    paintSky(ts);
+    // Sky is a full-canvas starfield; skip most rAF ticks.
+    skyAcc += dt;
+    skyFrames += 1;
+    if (skyAcc >= 0.08 || skyFrames >= 3) {
+      skyAcc = 0;
+      skyFrames = 0;
+      paintSky(ts);
+    }
     raf = requestAnimationFrame(tick);
   }
 
@@ -1323,6 +1459,10 @@
     return `left:${left}%;top:${top}%`;
   }
 
+  function owningRoom(ov: Overlay): Room | undefined {
+    return liveRooms.find((r) => r.id === ov.room);
+  }
+
   function pctProp(ov: Overlay): string {
     const v = viewOf(ov.file);
     const u = TILE / DUMP_T;
@@ -1332,6 +1472,34 @@
     const h = (v.bh * u) / VH * 100;
     const zix = 5 + ov.ty + v.h;
     return `left:${left}%;top:${top}%;width:${w}%;height:${h}%;z-index:${zix}`;
+  }
+
+  // Clip box is the owning room in view percent. Sprite dump bounds can hang
+  // past the tile; overflow:hidden on this box keeps walls/props in the room.
+  function pctPropClip(ov: Overlay): string {
+    const r = owningRoom(ov);
+    const v = viewOf(ov.file);
+    const zix = 5 + ov.ty + v.h;
+    if (!r) return pctProp(ov);
+    const left = ((ox + r.x1) * TILE) / VW * 100;
+    const top = ((oy + r.y1) * TILE) / VH * 100;
+    const w = ((r.x2 - r.x1 + 1) * TILE) / VW * 100;
+    const h = ((r.y2 - r.y1 + 1) * TILE) / VH * 100;
+    return `left:${left}%;top:${top}%;width:${w}%;height:${h}%;z-index:${zix}`;
+  }
+
+  function pctPropInRoom(ov: Overlay): string {
+    const r = owningRoom(ov);
+    const v = viewOf(ov.file);
+    const u = TILE / DUMP_T;
+    if (!r) return "left:0;top:0;width:100%;height:100%";
+    const rw = Math.max(1, (r.x2 - r.x1 + 1) * TILE);
+    const rh = Math.max(1, (r.y2 - r.y1 + 1) * TILE);
+    const left = ((ov.tx - r.x1) * TILE + v.bx * u) / rw * 100;
+    const top = ((ov.ty - r.y1) * TILE + v.by * u) / rh * 100;
+    const w = (v.bw * u) / rw * 100;
+    const h = (v.bh * u) / rh * 100;
+    return `left:${left}%;top:${top}%;width:${w}%;height:${h}%`;
   }
 </script>
 
@@ -1367,18 +1535,20 @@
       <canvas class="deck" bind:this={deckCv} width={VW} height={VH} aria-hidden="true"></canvas>
 
       {#each overlays as ov}
-        <img
-          class="prop"
-          class:term={ov.prop === "terminal"}
-          class:chair={ov.prop === "chair"}
-          class:dress={ov.prop === "dress"}
-          class:hot={poseClock >= 0 && ov.kind === goalHot[ov.owner]}
-          src={ov.src}
-          alt=""
-          draggable="false"
-          style={pctProp(ov)}
-          on:error={(e) => { e.currentTarget.style.display = "none"; }}
-        />
+        <div class="prop-clip" style={pctPropClip(ov)}>
+          <img
+            class="prop"
+            class:term={ov.prop === "terminal"}
+            class:chair={ov.prop === "chair"}
+            class:dress={ov.prop === "dress"}
+            class:hot={poseClock >= 0 && ov.kind === goalHot[ov.owner]}
+            src={ov.src}
+            alt=""
+            draggable="false"
+            style={pctPropInRoom(ov)}
+            on:error={(e) => { e.currentTarget.style.display = "none"; }}
+          />
+        </div>
       {/each}
 
       {#each wingOwners() as owner}
@@ -1402,41 +1572,52 @@
       {/each}
 
       <div
-        class="walker"
+        class="walker-slot"
         class:sit={poseClock >= 0 && hero.sitting}
-        class:focused={focusedId === PRIMARY_NAAN_ID}
-        style="left:{hereX}%;top:{hereY}%;z-index:{32 + Math.floor(hero.py)};--beat:{poseClock}"
-        role="button"
-        tabindex="0"
-        on:pointerdown|stopPropagation={() => focusOwner(PRIMARY_NAAN_ID)}
-        on:keydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); focusOwner(PRIMARY_NAAN_ID); } }}
+        style="left:{hereX}%;top:{hereY}%;z-index:{80 + Math.floor(hero.py)};--beat:{poseClock}"
       >
         <AgentLevelChip
           compact
-          level={xp.level}
-          frac={xp.frac}
+          level={heroXp.level}
+          frac={heroXp.frac}
           name={focusedId === PRIMARY_NAAN_ID ? agentShortName(look.agent) : undefined}
         />
-        <img src={heroSrc} alt="" width="48" height="48" draggable="false" />
+        <div
+          class="walker"
+          class:sit={poseClock >= 0 && hero.sitting}
+          class:focused={focusedId === PRIMARY_NAAN_ID}
+          role="button"
+          tabindex="0"
+          on:pointerdown|stopPropagation={() => focusOwner(PRIMARY_NAAN_ID)}
+          on:keydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); focusOwner(PRIMARY_NAAN_ID); } }}
+        >
+          <img src={heroSrc} alt="" width="48" height="48" draggable="false" />
+        </div>
       </div>
 
       {#each crewViews as cv (cv.id)}
         <div
-          class="walker"
+          class="walker-slot"
           class:sit={cv.sit}
-          class:focused={focusedId === cv.owner}
-          style="left:{cv.left}%;top:{cv.top}%;z-index:{32 + Math.floor(cv.z)};--beat:{cv.bump}"
-          role="button"
-          tabindex="0"
-          on:pointerdown|stopPropagation={() => focusOwner(cv.owner)}
-          on:keydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); focusOwner(cv.owner); } }}
+          style="left:{cv.left}%;top:{cv.top}%;z-index:{cv.z};--beat:{cv.bump}"
         >
           <AgentLevelChip
             compact
-            level={1}
+            level={cv.level}
+            frac={cv.frac}
             name={focusedId === cv.owner ? agentShortName($naanCrew.find((x) => x.id === cv.owner)?.skin || "") : undefined}
           />
-          <img src={cv.src} alt="" width="48" height="48" draggable="false" />
+          <div
+            class="walker"
+            class:sit={cv.sit}
+            class:focused={focusedId === cv.owner}
+            role="button"
+            tabindex="0"
+            on:pointerdown|stopPropagation={() => focusOwner(cv.owner)}
+            on:keydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); focusOwner(cv.owner); } }}
+          >
+            <img src={cv.src} alt="" width="48" height="48" draggable="false" />
+          </div>
         </div>
       {/each}
     </div>
@@ -1552,10 +1733,20 @@
     z-index: 1;
   }
 
+  .prop-clip {
+    position: absolute;
+    overflow: hidden;
+    overflow: clip;
+    overflow-clip-margin: 0;
+    clip-path: inset(0);
+    contain: paint;
+    pointer-events: none;
+  }
+
   .prop {
     position: absolute;
-    object-fit: contain;
-    object-position: bottom center;
+    object-fit: fill;
+    object-position: 0 0;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     pointer-events: none;
@@ -1628,27 +1819,37 @@
     margin-top: 1px;
   }
 
-  .walker {
+  .walker-slot {
     position: absolute;
     width: 4.6%;
+    pointer-events: none;
+    transform: translate(-50%, -100%);
+    overflow: visible;
+  }
+
+  .walker-slot.sit {
+    transform: translate(-50%, -92%);
+  }
+
+  .walker {
+    position: relative;
+    width: 100%;
     image-rendering: pixelated;
     pointer-events: auto;
     cursor: pointer;
-    transform: translate(-50%, -100%);
-  }
-
-  .walker.sit {
-    transform: translate(-50%, -92%);
+    transform: none;
+    overflow: visible;
   }
 
   .walker.focused {
     filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.55));
   }
 
-  .walker :global(.ag-lv) {
+  .walker-slot :global(.ag-lv) {
     position: absolute;
     left: 50%;
     bottom: 100%;
+    top: auto;
     transform: translate(-50%, -2px);
     z-index: 2;
     background: #000;
@@ -1659,7 +1860,7 @@
     -webkit-backdrop-filter: none;
   }
 
-  .walker :global(.ag-n) {
+  .walker-slot :global(.ag-n) {
     color: #ffd34a;
   }
 

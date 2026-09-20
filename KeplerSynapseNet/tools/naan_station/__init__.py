@@ -6,6 +6,8 @@ from .deck import (
     Overlay,
     Room,
     build_deck,
+    clip_prop_to_room,
+    clip_rect,
     load_station_data,
     screenshot_crew,
 )

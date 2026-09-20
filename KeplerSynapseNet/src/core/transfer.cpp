@@ -113,9 +113,10 @@ static size_t serializedSizeForFee(const Transaction& tx) {
     return std::max<size_t>(1, body.serialize().size());
 }
 
-// Empty quantumSignature is allowed only for faucet/coinbase (no inputs),
-// first reward sweep (secp claim), and MLSAG RingCT when Dilithium is simulated.
-// Transparent and shield spends fail closed. Present envelopes must verifyBinding.
+// Empty quantumSignature is allowed for faucet/coinbase (no inputs),
+// first reward sweep (secp claim), and MLSAG RingCT spends. Dilithium on a
+// stealth spend is a linkability fingerprint. Transparent and shield spends
+// fail closed. Present envelopes must verifyBinding.
 static bool quantumSignaturePolicyOk(const Transaction& tx) {
     if (!tx.quantumSignature.empty()) {
         if (tx.inputs.empty()) return true;
@@ -126,8 +127,8 @@ static bool quantumSignaturePolicyOk(const Transaction& tx) {
     if (tx.inputs.empty()) return true;
     if (tx.isRewardClaim()) return true;
     if (tx.isRingCtSpend()) {
-        // MLSAG private send: require Dilithium when the real backend is on.
-        return !quantum::getPQCBackendStatus().dilithiumReal;
+        // MLSAG is the spend proof. Dilithium on this path fingerprints the signer.
+        return true;
     }
     return false;
 }

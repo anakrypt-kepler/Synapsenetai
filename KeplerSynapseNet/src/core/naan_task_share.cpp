@@ -22,13 +22,8 @@ void NaanTaskShare::releaseUrl(const std::string& agentId, const std::string& ur
 
 bool NaanTaskShare::claimTopic(const std::string& agentId, const std::string& topic) {
     if (agentId.empty() || topic.empty()) return false;
-    std::lock_guard<std::mutex> lock(mtx_);
-    auto it = topicOwner_.find(topic);
-    if (it == topicOwner_.end()) {
-        topicOwner_[topic] = agentId;
-        return true;
-    }
-    return it->second == agentId;
+    // Topics are a shared queue. URL exclusivity still blocks duplicate fetches.
+    return true;
 }
 
 void NaanTaskShare::releaseTopic(const std::string& agentId, const std::string& topic) {

@@ -12,10 +12,27 @@
 #endif
 #include "pqc_backend_oqs.h"
 
+// AND-mode HybridSig: Ed25519 AND ML-DSA-65 (FIPS 204). Both halves must
+// verify. Parameter set is ML-DSA-65 only (not ML-DSA-44/87, not Dilithium2/5).
+// liboqs may still name the algorithm Dilithium3; wire sizes are 1952/4032/3309.
+// Signs the raw message; application envelopes already domain-separate via
+// buildApplicationSignatureTranscript ("synapsenet-application-signature-v1",
+// suite "ed25519+ml-dsa-65"). This is not IETF Composite ML-DSA (X.509).
+// MLSAG/RingCT/stealth spends stay classical. Handshake/NODE_MSG stay
+// Kyber+X25519: handshake.cpp has no Dilithium trailer (do not invent one).
+
 namespace synapse {
 namespace quantum {
 
 namespace {
+
+bool pqcKeyMaterialPresent(const std::vector<uint8_t>& key) {
+    if (key.empty()) return false;
+    for (uint8_t b : key) {
+        if (b != 0) return true;
+    }
+    return false;
+}
 
 std::vector<uint8_t> hkdfSha256Expand(const std::vector<uint8_t>& ikm,
                                        const std::string& info,
@@ -181,27 +198,43 @@ SignatureResult HybridSig::sign(const std::vector<uint8_t>& message,
     std::lock_guard<std::mutex> lock(impl_->mtx);
 
     SignatureResult result;
+    result.success = false;
+
+    // Fail closed: empty/zero PQC SK used to memcpy nothing into a zero
+    // Dilithium buffer and still produce a classic-only "success".
+    if (secretKey.classicSecretKey.size() != crypto_sign_ed25519_SECRETKEYBYTES) {
+        return result;
+    }
+    if (!pqcKeyMaterialPresent(secretKey.pqcSecretKey)) {
+        return result;
+    }
 
     std::vector<uint8_t> classicSig(crypto_sign_ed25519_BYTES);
     unsigned long long classicSigLen = 0;
     if (crypto_sign_ed25519_detached(classicSig.data(), &classicSigLen,
                                       message.data(), message.size(),
                                       secretKey.classicSecretKey.data()) != 0) {
-        result.success = false;
         return result;
     }
     classicSig.resize(classicSigLen);
-
-    DilithiumSecretKey dilSk{};
-    size_t copyLen = std::min(secretKey.pqcSecretKey.size(), dilSk.size());
-    std::memcpy(dilSk.data(), secretKey.pqcSecretKey.data(), copyLen);
-    auto pqcResult = impl_->dilithium.sign(message, dilSk);
-
-    if (!pqcResult.success) {
-        result.success = false;
+    if (classicSig.size() != crypto_sign_ed25519_BYTES) {
         return result;
     }
 
+    DilithiumSecretKey dilSk{};
+    const size_t copyLen = std::min(secretKey.pqcSecretKey.size(), dilSk.size());
+    std::memcpy(dilSk.data(), secretKey.pqcSecretKey.data(), copyLen);
+    if (!impl_->dilithium.validateSecretKey(dilSk)) {
+        return result;
+    }
+    auto pqcResult = impl_->dilithium.sign(message, dilSk);
+
+    if (!pqcResult.success || pqcResult.signature.empty()) {
+        return result;
+    }
+
+    // Wire bytes are classic || pqc. Use the Dilithium result length (liboqs
+    // ML-DSA-65 may not match DILITHIUM_SIGNATURE_SIZE exactly).
     result.signature.clear();
     result.signature.insert(result.signature.end(), classicSig.begin(), classicSig.end());
     result.signature.insert(result.signature.end(), pqcResult.signature.begin(), pqcResult.signature.end());
@@ -214,7 +247,21 @@ bool HybridSig::verify(const std::vector<uint8_t>& message,
                         const HybridKeyPair& publicKey) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
 
-    if (signature.size() < crypto_sign_ed25519_BYTES + DILITHIUM_SIGNATURE_SIZE) {
+    // Fail closed: missing PQC PK used to memcpy nothing into a zero buffer.
+    if (publicKey.classicPublicKey.size() != crypto_sign_ed25519_PUBLICKEYBYTES) {
+        return false;
+    }
+    if (!pqcKeyMaterialPresent(publicKey.pqcPublicKey)) {
+        return false;
+    }
+
+    // Need the 64-byte Ed25519 prefix. PQC half is the remaining bytes so a
+    // liboqs ML-DSA-65 length that is not DILITHIUM_SIGNATURE_SIZE still AND-verifies.
+    if (signature.size() < crypto_sign_ed25519_BYTES) {
+        return false;
+    }
+    const size_t pqcLen = signature.size() - crypto_sign_ed25519_BYTES;
+    if (pqcLen == 0) {
         return false;
     }
 
@@ -225,14 +272,18 @@ bool HybridSig::verify(const std::vector<uint8_t>& message,
     }
 
     DilithiumPublicKey dilPk{};
-    size_t copyLen = std::min(publicKey.pqcPublicKey.size(), dilPk.size());
-    std::memcpy(dilPk.data(), publicKey.pqcPublicKey.data(), copyLen);
+    const size_t pkCopy = std::min(publicKey.pqcPublicKey.size(), dilPk.size());
+    std::memcpy(dilPk.data(), publicKey.pqcPublicKey.data(), pkCopy);
+    if (!impl_->dilithium.validatePublicKey(dilPk)) {
+        return false;
+    }
 
     DilithiumSignature dilSig{};
     const uint8_t* pqcSigStart = signature.data() + crypto_sign_ed25519_BYTES;
-    size_t pqcSigLen = std::min(signature.size() - crypto_sign_ed25519_BYTES, dilSig.size());
-    std::memcpy(dilSig.data(), pqcSigStart, pqcSigLen);
+    const size_t sigCopy = std::min(pqcLen, dilSig.size());
+    std::memcpy(dilSig.data(), pqcSigStart, sigCopy);
 
+    // AND-mode: classic already verified; Dilithium must also verify.
     return impl_->dilithium.verify(message, dilSig, dilPk);
 }
 

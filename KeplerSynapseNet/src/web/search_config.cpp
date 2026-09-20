@@ -1175,7 +1175,13 @@ void sanitizeSearchConfig(SearchConfig& cfg) {
     cfg.clearnetEngines.swap(cleanClearnet);
     dedupeEngines(cfg.clearnetEngines);
     if (cfg.clearnetEngines.empty()) {
-        cfg.clearnetEngines = {SearchEngine::DUCKDUCKGO};
+        cfg.clearnetEngines = {SearchEngine::DUCKDUCKGO, SearchEngine::BRAVE};
+    }
+    // Leftover duckduckgo-only user confs stall harvest on one engine.
+    // Add Brave in memory. Do not rewrite naan_auto_search_queries.
+    if (cfg.clearnetEngines.size() == 1 &&
+        cfg.clearnetEngines[0] == SearchEngine::DUCKDUCKGO) {
+        cfg.clearnetEngines.push_back(SearchEngine::BRAVE);
     }
 
     std::vector<SearchEngine> cleanDarknet;
@@ -1313,7 +1319,7 @@ static bool loadConfigFromFile(const std::string& path,
 
 SearchConfig defaultSearchConfig() {
     SearchConfig cfg;
-    cfg.clearnetEngines = {SearchEngine::DUCKDUCKGO};
+    cfg.clearnetEngines = {SearchEngine::DUCKDUCKGO, SearchEngine::BRAVE};
     cfg.darknetEngines = {SearchEngine::AHMIA, SearchEngine::TORCH, SearchEngine::DARKSEARCH, SearchEngine::DEEPSEARCH};
     cfg.customDarknetUrls = {"http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/"};
     cfg.directOnionLinks = {

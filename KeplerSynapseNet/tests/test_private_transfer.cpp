@@ -90,17 +90,10 @@ int main() {
         if (!anyWrap) return fail("expected 0x03 ecdh wrap");
     }
     if (pqc.dilithiumReal) {
-        if (result.tx.pqcSig.empty()) return fail("expected pqc_sig");
-        auto tampered = result.tx;
-        tampered.pqcSig.back() ^= 0x01;
+        // Stealth spends stay MLSAG-only. A spend-scalar Dilithium PK would link txs.
+        if (!result.tx.pqcSig.empty()) return fail("stealth spend must not carry pqc_sig");
         std::string e2;
-        if (verifyPrivateTx(tampered, e2)) return fail("tampered pqc_sig accepted");
-        if (pqc.kyberReal) {
-            auto missing = result.tx;
-            missing.pqcSig.clear();
-            std::string e3;
-            if (verifyPrivateTx(missing, e3)) return fail("v3 without pqc_sig accepted");
-        }
+        if (!verifyPrivateTx(result.tx, e2)) return fail(std::string("mlsag-only verify failed: ") + e2);
     }
 
     OwnedOutput owned;

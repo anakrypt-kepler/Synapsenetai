@@ -21,7 +21,7 @@ static void testExclusiveUrlClaim() {
 static void testTopicAndHashDedup() {
     NaanTaskShare share;
     assert(share.claimTopic("primary", "zero-day"));
-    assert(!share.claimTopic("crew-1", "zero-day"));
+    assert(share.claimTopic("crew-1", "zero-day"));
     share.releaseTopic("primary", "zero-day");
     assert(share.claimTopic("crew-1", "zero-day"));
     assert(share.noteHash("abc"));

@@ -349,13 +349,13 @@ static bool ensureNaanWebConfigFileExists(const std::string& path) {
 
     std::ofstream out(path, std::ios::out | std::ios::trunc);
     if (!out.is_open()) return false;
-    out << "clearnet_engines=duckduckgo\n";
+    out << "clearnet_engines=duckduckgo,brave\n";
     out << "darknet_engines=ahmia,torch,darksearch,deepsearch\n";
     out << "custom_darknet_urls=http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/\n";
     out << "route_clearnet_through_tor=1\n";
     out << "naan_force_tor_mode=1\n";
     out << "naan_auto_search_enabled=1\n";
-    out << "naan_auto_search_mode=tor\n";
+    out << "naan_auto_search_mode=both\n";
     out << "naan_auto_search_queries=latest space engineering research,latest ai research papers,open source systems engineering best practices\n";
     out << "naan_auto_search_max_results=4\n";
     out << "clearnet_site_allowlist=\n";

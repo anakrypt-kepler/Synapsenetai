@@ -1,4 +1,7 @@
 // Encode/verify the KQAS envelope. Domain string is part of the signed transcript.
+// Suite is Ed25519 + ML-DSA-65 (FIPS 204) AND-mode concat, domain
+// "synapsenet-application-signature-v1". Not IETF Composite ML-DSA (X.509).
+// Handshake/NODE_MSG do not carry this trailer.
 
 #include "quantum/application_signature.h"
 #include "crypto/crypto.h"
@@ -115,6 +118,8 @@ bool ApplicationSignatureEnvelope::deserialize(const std::vector<uint8_t>& data,
     if (!readU32(p, end, signatureSize)) return false;
     if (!readBytes(p, end, signatureSize, out.signature)) return false;
 
+    // Exact ML-DSA-65 sizes (1952-byte PK, 64+3309-byte sig). A parse-only
+    // caller is not a HybridSig verify; verifyApplicationPayload AND-checks both halves.
     return p == end &&
            out.classicPublicKey.size() == CLASSIC_ED25519_PUBLIC_KEY_SIZE &&
            out.pqcPublicKey.size() == DILITHIUM_PUBLIC_KEY_SIZE &&

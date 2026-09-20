@@ -1,4 +1,5 @@
-// Load/save identities.json. TOFU: first hybrid sig from an address wins.
+// Load/save identities.json. TOFU: first hybrid identity id from an address wins.
+// The 5-arg verifyBinding AND-verifies HybridSig (Ed25519 + ML-DSA-65) first.
 
 #include "quantum/identity_registry.h"
 #include "quantum/application_signature.h"
@@ -92,6 +93,9 @@ bool IdentityRegistry::hasBinding(const std::string& address) const {
 bool IdentityRegistry::verifyBinding(const std::string& address,
                                      const std::vector<uint8_t>& envelopeBytes) const {
     if (envelopeBytes.empty()) return false;
+    // Parse-only TOFU of identity ids. HybridSig AND-verify is the 5-arg
+    // overload (domain/payload/binding). Callers that only have a blob must
+    // have verified the trailer already (transfer does; votes do in Vote::verify).
     std::string envelopeId;
     if (!applicationSignatureIdentityId(envelopeBytes, envelopeId)) return false;
 
@@ -104,6 +108,15 @@ bool IdentityRegistry::verifyBinding(const std::string& address,
         return true;
     }
     return it->second == envelopeId;
+}
+
+bool IdentityRegistry::verifyBinding(const std::string& address,
+                                     const std::string& domain,
+                                     const std::vector<uint8_t>& payload,
+                                     const std::vector<uint8_t>& binding,
+                                     const std::vector<uint8_t>& envelopeBytes) const {
+    if (!verifyApplicationPayload(domain, payload, binding, envelopeBytes)) return false;
+    return verifyBinding(address, envelopeBytes);
 }
 
 void IdentityRegistry::clear() {

@@ -130,8 +130,9 @@ static void testBypassHostsOverrideRouteRules() {
 
 static void testNaanDefaultsAndAhmiaOnionPath() {
     synapse::web::SearchConfig cfg = synapse::web::defaultSearchConfig();
-    assert(cfg.clearnetEngines.size() == 1);
+    assert(cfg.clearnetEngines.size() == 2);
     assert(cfg.clearnetEngines[0] == synapse::web::SearchEngine::DUCKDUCKGO);
+    assert(cfg.clearnetEngines[1] == synapse::web::SearchEngine::BRAVE);
     assert(cfg.routeClearnetThroughTor);
     assert(cfg.naanForceTorMode);
     assert(cfg.naanAutoSearchEnabled);

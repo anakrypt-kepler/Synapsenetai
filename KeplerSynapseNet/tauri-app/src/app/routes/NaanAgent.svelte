@@ -6,6 +6,7 @@
   import SynapseHoloLogo from "../components/sprites/SynapseHoloLogo.svelte";
   import NaanAgentHud from "../components/naan/NaanAgentHud.svelte";
   import NaanCrewRoster from "../components/naan/NaanCrewRoster.svelte";
+  import NaanHoldStash from "../components/naan/NaanHoldStash.svelte";
   import {
     naanRooms,
     naanCrew,
@@ -334,6 +335,11 @@
   $: agentActiveMap = Object.fromEntries(
     Object.values(engineAgents).map((a) => [a.id, a.state === "ACTIVE"]),
   );
+  $: crewSubmissions = {
+    [PRIMARY_NAAN_ID]: engineAgents[PRIMARY_NAAN_ID]?.submissions ?? agentScore.submissions,
+    primary: engineAgents[PRIMARY_NAAN_ID]?.submissions ?? agentScore.submissions,
+    ...Object.fromEntries($naanCrew.map((c) => [c.id, engineAgents[c.id]?.submissions ?? 0])),
+  };
   $: roster = [
     {
       id: PRIMARY_NAAN_ID,
@@ -423,9 +429,15 @@
     task={focusAgent?.current_task || currentTask}
     lastLog={lastLog}
     submissions={focusAgent?.submissions ?? agentScore.submissions}
+    crewSubmissions={crewSubmissions}
     ngt={totalNgt}
     bind:focusedId
     bind:nowLine
+  />
+  <NaanHoldStash
+    name={findAgent(focusSkin).label}
+    submissions={focusAgent?.submissions ?? (harvestFocus ? agentScore.submissions : 0)}
+    level={xp.level}
   />
 
   <div class="hud-row">

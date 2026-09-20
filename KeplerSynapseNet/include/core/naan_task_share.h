@@ -1,8 +1,9 @@
 #pragma once
 
 // Shared harvest claims for multiple local NAAN loops.
-// One agent may own a URL or topic at a time. Filed sha256 values are
-// sticky so a restart of one loop does not republish the same page.
+// One agent may own a URL at a time. Topics are shared work: extra crew
+// keep fetching with a different engine tick instead of freezing.
+// Filed sha256 values are sticky so a restart of one loop does not republish.
 
 #include <mutex>
 #include <string>

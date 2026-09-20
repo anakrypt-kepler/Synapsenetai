@@ -13,6 +13,7 @@
       : 0;
   $: label = (name || "").trim();
   $: fillPct = bar > 0 ? Math.max(1, Math.round(bar * 100)) : 0;
+  // Always paint "Lv N" (never hide the number). Compact still has to fit "Lv 12".
 </script>
 
 <span class="ag-lv" class:named={!!label} class:has-bar={bar > 0} class:compact aria-hidden="true">
@@ -71,6 +72,13 @@
     gap: 3px;
     padding: 1px 4px 2px;
     font-size: 7px;
+    overflow: visible;
+  }
+
+  .ag-lv.compact.named {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
   }
 
   .ag-lv.compact .ag-nm {
@@ -80,6 +88,7 @@
   .ag-n {
     color: #ffd34a;
     flex: 0 0 auto;
+    overflow: visible;
   }
 
   .ag-nm {
