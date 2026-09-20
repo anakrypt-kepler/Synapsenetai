@@ -1,11 +1,5 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: light)" srcset="pictures/art/mesh-light.svg">
-    <img src="pictures/art/mesh-dark.svg" alt="SynapseNet map — the cell, the mesh, the ledger. Filled node is YOU. Outlined nodes are the rest of the cell." width="100%">
-  </picture>
-</p>
-<p align="center">
-  <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/hero-light.svg">
     <img src="pictures/art/hero-dark.svg" alt="SynapseNet — intelligence belongs to everyone" width="100%">
   </picture>

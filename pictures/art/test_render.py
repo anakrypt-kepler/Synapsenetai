@@ -93,8 +93,9 @@ class RenderTests(unittest.TestCase):
 
     def test_readme_uses_profile_picture_tags(self):
         text = README.read_text(encoding="utf-8")
-        self.assertGreaterEqual(text.count("pictures/art/mesh-dark.svg"), 2)
-        self.assertGreaterEqual(text.count("pictures/art/mesh-light.svg"), 2)
+        self.assertEqual(text.count("pictures/art/mesh-dark.svg"), 1)
+        self.assertEqual(text.count("pictures/art/mesh-light.svg"), 1)
+        self.assertGreater(text.find("pictures/art/mesh-dark.svg"), text.find("This is alpha."))
         shown = ("hero", "mesh", "portrait", "footer") + FLOWS + (
             "hd-what",
             "hd-not",
