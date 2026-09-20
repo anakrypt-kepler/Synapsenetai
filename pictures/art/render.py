@@ -28,10 +28,11 @@ THEMES = {
 
 
 class SVG:
-    def __init__(self, height, theme, title, width=840, extra_style=""):
+    def __init__(self, height, theme, title, width=840, extra_style="", embed_font=True):
         self.height, self.width, self.title = height, width, title
         self.colors = THEMES[theme]
         self.extra_style = extra_style
+        self.embed_font = embed_font
         self.parts = []
 
     def raw(self, value):
@@ -54,7 +55,8 @@ class SVG:
 
     def finish(self):
         title = escape(self.title, quote=True)
-        style = font_style() + "text{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre}.reveal{animation:reveal .8s ease both}@keyframes reveal{from{opacity:0}to{opacity:1}}@media(prefers-reduced-motion:reduce){.motion{display:none}.reveal{animation:none!important}}" + self.extra_style
+        face = font_style() if self.embed_font else ""
+        style = face + "text{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre}.reveal{animation:reveal .8s ease both}@keyframes reveal{from{opacity:0}to{opacity:1}}@media(prefers-reduced-motion:reduce){.motion{display:none}.reveal{animation:none!important}}" + self.extra_style
         return (
             f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{self.width}" height="{self.height}" viewBox="0 0 {self.width} {self.height}" role="img" aria-label="{title}">\n'
             f"<title>{title}</title>\n<style>{style}</style>\n" + "\n".join(self.parts) + "\n</svg>\n"
@@ -67,6 +69,7 @@ def font_style():
     return "@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:100 800;src:url(data:font/woff2;base64," + encoded + ") format('woff2')}"
 
 
+@lru_cache(maxsize=1)
 def portrait_data():
     with Image.open(PORTRAIT) as original:
         portrait = ImageOps.exif_transpose(original).convert("RGB")
@@ -319,6 +322,313 @@ def net(theme):
     return svg
 
 
+HEADINGS = (
+    ("hd-what", "What this is", "cell / mouth / memory / skin"),
+    ("hd-not", "What this is not", "not Tor / not Bitcoin / not Monero"),
+    ("hd-why", "Why it exists", "iron you own"),
+    ("hd-mine", "Mine intelligence", "useful contribution, not hashes"),
+    ("hd-now", "What you can do now", "alpha surface"),
+    ("hd-naan", "NAAN is the miner", "lymph, then recipe"),
+    ("hd-gates", "Why gates exist", "public doors, public tollbooths"),
+    ("hd-skeptic", "For the skeptic", "read the holes"),
+    ("hd-change", "What this can change", "memory with teeth"),
+    ("hd-later", "Later", "kernel for 2030"),
+    ("hd-skin", "Confidentiality", "named layers, named holes"),
+    ("hd-boot", "After it boots", "seed, Tor, model, map"),
+    ("hd-linux", "Linux", "clone, lego, run"),
+    ("hd-wizard", "First-run wizard", "five steps, in order"),
+    ("hd-tabs", "Tabs", "thirteen rooms"),
+    ("hd-set", "SET", "Tor only. No clearnet button."),
+    ("hd-docker", "Docker", "Linux image, even on Windows"),
+    ("hd-support", "Support", "optional. buys nothing."),
+    ("hd-license", "License", "MIT / 2026"),
+)
+
+
+def add_grid(svg, height):
+    svg.raw(f'<defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="{svg.colors["grid"]}"/></pattern></defs>')
+    svg.rect(0, 0, svg.width, height, "url(#grid)")
+
+
+def add_corners(svg, height):
+    bottom = height - 14
+    right = svg.width - 14
+    for path in [f"M14 22V8H30", f"M{right} 22V8h-16", f"M14 {bottom}v14h16", f"M{right} {bottom}v14h-16"]:
+        svg.raw(f'<path d="{path}" fill="none" stroke="{ACCENT}" stroke-width="2"/>')
+
+
+def add_packet(svg, eid, index):
+    duration, begin = 3.2 + index % 7 * 0.18, -(index * 0.41 % 4)
+    svg.raw(
+        f'<circle class="motion" r="2.2" fill="{ACCENT}" opacity="0">'
+        f'<animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.12;0.88;1" dur="{duration:.2f}s" begin="{begin:.2f}s" repeatCount="indefinite"/>'
+        f'<animateMotion dur="{duration:.2f}s" begin="{begin:.2f}s" repeatCount="indefinite"><mpath href="#{eid}" xlink:href="#{eid}"/></animateMotion></circle>'
+    )
+
+
+def add_edge(svg, index, x1, y1, x2, y2, prefix="e"):
+    eid = f"{prefix}{index}"
+    svg.raw(f'<path id="{eid}" d="M{x1},{y1}L{x2},{y2}" fill="none" stroke="{svg.colors["edge"]}"/>')
+    add_packet(svg, eid, index)
+    return eid
+
+
+def add_dot(svg, x, y, label, hub=False, side="right"):
+    radius = 13 if hub else 6
+    stroke = ACCENT if hub else svg.colors["dim"]
+    fill_node = ACCENT if hub else svg.colors["card"]
+    if hub:
+        svg.raw(
+            f'<circle class="motion" cx="{x}" cy="{y}" r="{radius}" fill="none" stroke="{ACCENT}">'
+            f'<animate attributeName="r" values="{radius};{radius + 10}" dur="2.6s" repeatCount="indefinite"/>'
+            f'<animate attributeName="opacity" values=".55;0" dur="2.6s" repeatCount="indefinite"/></circle>'
+        )
+    svg.raw(f'<circle cx="{x}" cy="{y}" r="{radius}" fill="{fill_node}" stroke="{stroke}" stroke-width="1.5"/>')
+    if side == "left":
+        svg.text(x - radius - 10, y + 4, label, 12, "text" if hub else "muted", text_anchor="end")
+    elif side == "up":
+        svg.text(x, y - radius - 10, label, 12, "text" if hub else "muted", text_anchor="middle")
+    else:
+        svg.text(x + radius + 10, y + 4, label, 12, "text" if hub else "muted", text_anchor="start")
+
+
+def flow(theme, title, note, aria, nodes, links, height=230):
+    svg = SVG(height, theme, aria)
+    add_grid(svg, height)
+    add_corners(svg, height)
+    svg.section(title, note)
+    by_name = {name: (x, y, hub, side) for name, x, y, hub, side in nodes}
+    for index, (left, right) in enumerate(links):
+        x1, y1, *_ = by_name[left]
+        x2, y2, *_ = by_name[right]
+        add_edge(svg, index, x1, y1, x2, y2)
+    for name, x, y, hub, side in nodes:
+        add_dot(svg, x, y, name, hub=hub, side=side)
+    svg.text(svg.width - 22, height - 16, "packets ride the edges", 10, "dim", text_anchor="end")
+    return svg
+
+
+def band(theme, title, note):
+    svg = SVG(54, theme, title, embed_font=False)
+    svg.section(title, note)
+    return svg
+
+
+def install(theme):
+    return flow(
+        theme,
+        "Linux install",
+        "clone / lego / run",
+        "How a Linux cell is built: git clone, lego-linux.sh, then run-desktop.sh",
+        (
+            ("git clone", 78, 118, False, "up"),
+            ("lego-linux.sh", 268, 118, True, "up"),
+            ("cmake rust tor", 478, 118, False, "up"),
+            ("~/.synapsenet", 690, 118, False, "up"),
+            ("run-desktop.sh", 478, 198, True, "right"),
+        ),
+        (
+            ("git clone", "lego-linux.sh"),
+            ("lego-linux.sh", "cmake rust tor"),
+            ("cmake rust tor", "~/.synapsenet"),
+            ("~/.synapsenet", "run-desktop.sh"),
+            ("lego-linux.sh", "run-desktop.sh"),
+        ),
+        height=230,
+    )
+
+
+def lego(theme):
+    steps = (
+        "1 detect",
+        "2 cmake",
+        "3 rust",
+        "4 node",
+        "5 sodium",
+        "6 tor",
+        "7 webkit",
+        "8 configure",
+        "9 synapsed",
+        "10 tests",
+        "11 desktop",
+        "12 install",
+        "13 print",
+    )
+    svg = SVG(236, theme, "lego-linux.sh numbered steps. The script does not sudo.")
+    add_grid(svg, 236)
+    add_corners(svg, 236)
+    svg.section("lego-linux.sh", "13 steps / no sudo")
+    for index, label in enumerate(steps):
+        col, row = index % 7, index // 7
+        x, y = 18 + col * 118, 62 + row * 78
+        accented = index in (0, 5, 8, 11)
+        svg.raw(f'<g class="reveal" style="animation-delay:{index * 0.07:.2f}s">')
+        svg.rect(x, y, 108, 64, svg.colors["card"], rx=6, stroke=ACCENT if accented else svg.colors["edge"])
+        svg.rect(x, y, 3, 64, ACCENT if accented else svg.colors["edge"])
+        svg.text(x + 54, y + 38, label, 12, ACCENT if accented else "text", text_anchor="middle", font_weight=600)
+        svg.raw("</g>")
+    svg.text(22, 224, "--from N --until N   --skip-desktop   --skip-tests", 10, "dim")
+    return svg
+
+
+def naan(theme):
+    return flow(
+        theme,
+        "NAAN harvest",
+        "Tor first / no faucet mint",
+        "NAAN harvest path: tick, Tor SOCKS, gate, lymph, RECIPE, PoE, scar",
+        (
+            ("tick", 70, 128, False, "up"),
+            ("Tor SOCKS", 210, 128, True, "up"),
+            ("gate", 360, 128, False, "up"),
+            ("lymph", 490, 128, False, "up"),
+            ("RECIPE", 630, 128, True, "up"),
+            ("PoE", 750, 128, False, "left"),
+            ("scar", 630, 198, False, "right"),
+        ),
+        (
+            ("tick", "Tor SOCKS"),
+            ("Tor SOCKS", "gate"),
+            ("gate", "lymph"),
+            ("lymph", "RECIPE"),
+            ("RECIPE", "PoE"),
+            ("RECIPE", "scar"),
+        ),
+        height=228,
+    )
+
+
+def know(theme):
+    return flow(
+        theme,
+        "Knowledge chain",
+        "votes, then majority",
+        "Knowledge path: IDE and NAAN into votes, majority, FINALIZED, KNOW, RingCT, NGT",
+        (
+            ("IDE CODE", 80, 110, False, "up"),
+            ("NAAN RECIPE", 80, 188, False, "right"),
+            ("POE_VOTE", 300, 148, True, "up"),
+            ("majority", 470, 148, False, "up"),
+            ("FINALIZED", 630, 148, True, "up"),
+            ("KNOW", 760, 110, False, "left"),
+            ("RingCT", 760, 188, False, "left"),
+            ("NGT", 630, 210, False, "right"),
+        ),
+        (
+            ("IDE CODE", "POE_VOTE"),
+            ("NAAN RECIPE", "POE_VOTE"),
+            ("POE_VOTE", "majority"),
+            ("majority", "FINALIZED"),
+            ("FINALIZED", "KNOW"),
+            ("FINALIZED", "RingCT"),
+            ("RingCT", "NGT"),
+        ),
+        height=246,
+    )
+
+
+def skin(theme):
+    layers = (
+        ("Transport", "Tor only. Session onion. Fail-closed. No clearnet button."),
+        ("Wallet at rest", "wallet.dat encrypted. v4 wraps ML-KEM-768 when liboqs is real."),
+        ("Spends", "Stealth + MLSAG-2 + range64 + key image, over Tor."),
+        ("MSG", "ML-KEM + X25519 if kem_pk. Else crypto_box_seal only."),
+    )
+    svg = SVG(248, theme, "Confidentiality layers: transport, wallet, spends, MSG. Holes named.")
+    add_grid(svg, 248)
+    add_corners(svg, 248)
+    svg.section("Confidentiality", "layered. named. holes left in.")
+    for index, (title, blurb) in enumerate(layers):
+        y = 62 + index * 44
+        svg.raw(f'<g class="reveal" style="animation-delay:{index * 0.12:.2f}s">')
+        svg.rect(22, y, 796, 38, svg.colors["card"], rx=6, stroke=svg.colors["edge"])
+        svg.rect(22, y, 3, 38, ACCENT)
+        svg.text(42, y + 24, title, 13, "text", font_weight=600)
+        svg.text(188, y + 24, blurb, 11, "muted")
+        svg.raw("</g>")
+    return svg
+
+
+def wizard(theme):
+    return flow(
+        theme,
+        "First-run wizard",
+        "five steps / in order",
+        "First-run wizard: Wallet, Connection, AI Model, Resources, Ready",
+        (
+            ("Wallet", 80, 128, True, "up"),
+            ("Connection", 250, 128, False, "up"),
+            ("AI Model", 430, 128, False, "up"),
+            ("Resources", 600, 128, False, "up"),
+            ("Ready", 750, 128, True, "up"),
+        ),
+        (
+            ("Wallet", "Connection"),
+            ("Connection", "AI Model"),
+            ("AI Model", "Resources"),
+            ("Resources", "Ready"),
+        ),
+        height=188,
+    )
+
+
+def tabs(theme):
+    names = ("MAIN", "WALLET", "SEND", "BLOCKS", "KNOW", "NAAN", "HARVEST", "INTEL", "MSG", "IDE", "NET", "RENT", "SET")
+    svg = SVG(168, theme, "Desktop tabs: MAIN through SET")
+    add_grid(svg, 168)
+    add_corners(svg, 168)
+    svg.section("Tabs", "thirteen rooms")
+    for index, name in enumerate(names):
+        col, row = index % 7, index // 7
+        x, y = 18 + col * 118, 62 + row * 46
+        hot = name in ("SEND", "NAAN", "NET", "SET")
+        svg.raw(f'<g class="reveal" style="animation-delay:{index * 0.05:.2f}s">')
+        svg.rect(x, y, 108, 34, svg.colors["card"], rx=16, stroke=ACCENT if hot else svg.colors["edge"])
+        svg.text(x + 54, y + 22, name, 11, ACCENT if hot else "text", text_anchor="middle", font_weight=600)
+        svg.raw("</g>")
+    return svg
+
+
+def docker(theme):
+    return flow(
+        theme,
+        "Docker",
+        "Linux image / even on Win10",
+        "Docker path: compose, Linux image, Tor sidecar, synapsed. up.ps1 is still Linux.",
+        (
+            ("compose", 90, 118, False, "up"),
+            ("Linux image", 280, 118, True, "up"),
+            ("tor:9050", 490, 118, False, "up"),
+            ("synapsed", 690, 118, True, "up"),
+            ("up.ps1", 280, 198, False, "right"),
+        ),
+        (
+            ("compose", "Linux image"),
+            ("Linux image", "tor:9050"),
+            ("tor:9050", "synapsed"),
+            ("up.ps1", "Linux image"),
+        ),
+        height=228,
+    )
+
+
+def cards(theme):
+    svg = SVG(196, theme, "The cell is peer plus miner plus validator. NAAN is the miner.")
+    left = (
+        (22, "The cell", "Peer + miner + validator.", ("desktop cell + VPS mailbox", "PoE is votes, not onions", "2 of 2, then majority")),
+        (430, "The miner", "NAAN. Lymph, then recipe.", ("Tor-first public pages", "GGUF talks, never judges", "NGT only after finalize")),
+    )
+    for x, title, blurb, lines in left:
+        svg.rect(x, 8, 388, 180, svg.colors["card"], rx=6, stroke=svg.colors["edge"])
+        svg.rect(x, 8, 3, 180, ACCENT)
+        svg.raw(f'<g fill="none" stroke="{ACCENT}" stroke-width="2" opacity=".18"><path d="M{x + 292} 58l28 -16 28 16v32l-28 16-28-16ZM{x + 292} 58l28 16 28-16M{x + 320} 74v32"/><circle cx="{x + 320}" cy="74" r="10"/></g>')
+        svg.text(x + 22, 44, title, 16, "text", font_weight=600)
+        svg.text(x + 22, 70, blurb, 12, ACCENT)
+        for index, line in enumerate(lines):
+            svg.text(x + 22, 104 + index * 22, line, 12)
+    return svg
+
+
 def hero(theme):
     svg = SVG(170, theme, "SynapseNet — intelligence belongs to everyone")
     svg.section("SynapseNet", "public cell / alpha")
@@ -377,7 +687,25 @@ def render():
         raise FileNotFoundError("pictures/art/JetBrainsMono.woff2 is required")
     if not PORTRAIT.is_file():
         raise FileNotFoundError("pictures/kepler.jpg is required")
-    graphics = {"hero": hero, "tiles": tiles, "map": net, "portrait": portrait, "footer": footer}
+    graphics = {
+        "hero": hero,
+        "tiles": tiles,
+        "map": net,
+        "mesh": net,
+        "portrait": portrait,
+        "footer": footer,
+        "install": install,
+        "lego": lego,
+        "naan": naan,
+        "know": know,
+        "skin": skin,
+        "wizard": wizard,
+        "tabs": tabs,
+        "docker": docker,
+        "cards": cards,
+    }
+    for key, title, note in HEADINGS:
+        graphics[key] = lambda theme, title=title, note=note: band(theme, title, note)
     written = []
     for name, builder in graphics.items():
         for theme in THEMES:

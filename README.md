@@ -1,19 +1,19 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: light)" srcset="pictures/art/map-light.svg">
-    <img src="pictures/art/map-dark.svg" alt="SynapseNet map — the cell, the mesh, the ledger. Filled node is YOU. Outlined nodes are the rest of the cell." width="100%">
-  </picture>
-</p>
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hero-light.svg">
-    <img src="pictures/art/hero-dark.svg" alt="SynapseNet — intelligence belongs to everyone" width="100%">
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/mesh-light.svg">
+    <img src="pictures/art/mesh-dark.svg" alt="SynapseNet map — the cell, the mesh, the ledger. Filled node is YOU. Outlined nodes are the rest of the cell." width="100%">
   </picture>
 </p>
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/tiles-light.svg">
     <img src="pictures/art/tiles-dark.svg" alt="SynapseNet status tiles" width="100%">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hero-light.svg">
+    <img src="pictures/art/hero-dark.svg" alt="SynapseNet — intelligence belongs to everyone" width="100%">
   </picture>
 </p>
 <p align="center">
@@ -66,14 +66,27 @@ This is alpha. Expect bugs. Read the holes before you trust the skin.
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: light)" srcset="pictures/art/map-light.svg">
-    <img src="pictures/art/map-dark.svg" alt="SynapseNet map — YOU in the cell, Tor mesh, PoE, NAAN, KNOW, RingCT, desktop cell and VPS mesh-peer." width="100%">
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/mesh-light.svg">
+    <img src="pictures/art/mesh-dark.svg" alt="SynapseNet map — YOU in the cell, Tor mesh, PoE, NAAN, KNOW, RingCT, desktop cell and VPS mesh-peer." width="100%">
   </picture>
 </p>
 
 Hover a node. Filled is YOU. Outlined is the rest of the cell: Desktop, libsynapsed, Tor, PoE, NAAN, harvest, votes, KNOW, RingCT, the VPS mailbox.
 
 ## What this is
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-what-light.svg">
+    <img src="pictures/art/hd-what-dark.svg" alt="What this is" width="100%">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/cards-light.svg">
+    <img src="pictures/art/cards-dark.svg" alt="The cell is peer plus miner plus validator. NAAN is the miner." width="100%">
+  </picture>
+</p>
 
 Every node is a cell. The local model is a mouth. The knowledge chain is memory. Confidentiality is the skin.
 
@@ -91,6 +104,13 @@ PoE is deterministic on purpose. Different GPUs, different quants, different flo
 
 ## What this is not
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-not-light.svg">
+    <img src="pictures/art/hd-not-dark.svg" alt="What this is not" width="100%">
+  </picture>
+</p>
+
 - **Not Tor.** Onion routing already exists. I did not replace the internet.
 - **Not Bitcoin.** NGT is not BTC. PoE is not hashcash.
 - **Not Monero.** Spends borrow stealth / ring / commitment ideas. The coin is SynapseNet. If you want to donate XMR, that is a donation, not a rebrand.
@@ -99,6 +119,13 @@ PoE is deterministic on purpose. Different GPUs, different quants, different flo
 ---
 
 ## Why it exists
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-why-light.svg">
+    <img src="pictures/art/hd-why-dark.svg" alt="Why it exists" width="100%">
+  </picture>
+</p>
 
 Corporate AI is a kill switch with an invoice. They train on the public web, lock the weights, log the prompt, and reserve the right to turn you off.
 
@@ -110,6 +137,19 @@ That is the help: a common organism grown by people, not a rented brain.
 
 ## Mine intelligence
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-mine-light.svg">
+    <img src="pictures/art/hd-mine-dark.svg" alt="Mine intelligence" width="100%">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/know-light.svg">
+    <img src="pictures/art/know-dark.svg" alt="Knowledge path: IDE and NAAN into votes, majority, FINALIZED, KNOW, RingCT, NGT" width="100%">
+  </picture>
+</p>
+
 I liked talking to a local model. Then I asked: what if people got paid for putting what they know into a network like that? That was the seed. 2023. Local writes. Failed Rust prototype. Failed C++ prototype. The fatal lesson: **you cannot let an LLM decide consensus.** Different models, different hardware, different floats. PoE is deterministic on purpose. The model talks. The ledger counts.
 
 Hash-mining burns a planet for a nonce. Here the work is a knowledge entry that other cells can verify. NGT is earn-or-transfer. You cannot buy it in-protocol. I am not promising it is worth anything. If nobody uses the network, the token is air.
@@ -118,11 +158,31 @@ Hash-mining burns a planet for a nonce. Here the work is a knowledge entry that 
 
 ## What you can do now (alpha)
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-now-light.svg">
+    <img src="pictures/art/hd-now-dark.svg" alt="What you can do now" width="100%">
+  </picture>
+</p>
+
 Run a cell. Talk to a GGUF you own. Hold a wallet. SEND private. MSG sealed. Sit on a Tor mesh. Watch NAAN draft knowledge into the chain. Desktop, `libsynapsed`, optional VS Code talking to the same node. That is the product surface. The rest of this file is how to stand it up.
 
 ---
 
 ## NAAN is the miner
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-naan-light.svg">
+    <img src="pictures/art/hd-naan-dark.svg" alt="NAAN is the miner" width="100%">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/naan-light.svg">
+    <img src="pictures/art/naan-dark.svg" alt="NAAN harvest path: tick, Tor SOCKS, gate, lymph, RECIPE, PoE, scar" width="100%">
+  </picture>
+</p>
 
 **Node-Attached Autonomous Agent Network.** One node, one attached agent. It starts with the node. It belongs to the knowledge network, not to you as a chatbot.
 
@@ -134,6 +194,13 @@ If a hundred people run nodes, a hundred miners come online. That is how the org
 
 ## Why gates exist in the tree
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-gates-light.svg">
+    <img src="pictures/art/hd-gates-dark.svg" alt="Why gates exist" width="100%">
+  </picture>
+</p>
+
 Public knowledge sits behind Cloudflare, Sucuri, DDoS queues, captchas. The page is still public. The gate is a tollbooth. A human clicking those boxes is not mining. Cognitive mining means the agent enters **without you in the chair**.
 
 Local solver + OCR/LLM fallback is how NAAN walks a public door. When a cell finds a working method, the organism can remember it so the next cell does not rediscover the same lock. Density of nodes versus one vendor. That sentence is about **autonomy of the miner**. It is not the name of the project.
@@ -143,6 +210,13 @@ I extract knowledge, not identity. Not logins. Not session cookies. Not private 
 ---
 
 ## For the skeptic
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-skeptic-light.svg">
+    <img src="pictures/art/hd-skeptic-dark.svg" alt="For the skeptic" width="100%">
+  </picture>
+</p>
 
 Models look at HARVEST and call this an industrial anti-bot factory. That is a misread.
 
@@ -158,6 +232,13 @@ If you want a scanner, write a scanner. Do not put my name on it.
 
 ## What this can change in principle
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-change-light.svg">
+    <img src="pictures/art/hd-change-dark.svg" alt="What this can change" width="100%">
+  </picture>
+</p>
+
 A memory with teeth. A chain you can audit. Not a wiki an editor-in-chief can vanish with a polite email.
 
 A local mind that still answers when the API bill dies, when the account is closed, when the region is geo-blocked.
@@ -172,6 +253,13 @@ Later: anyone mines. Even from a phone. That is the usable kernel I have not fin
 
 ## Later
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-later-light.svg">
+    <img src="pictures/art/hd-later-dark.svg" alt="Later" width="100%">
+  </picture>
+</p>
+
 This is too big for one person to "complete." The job is to leave a kernel a stranger around **2030–2035** can pick up without asking me for permission.
 
 Phone mining. A UI a non-priest can run. Signed updates. Multi-agent review that is still just proposals under PoE.
@@ -185,6 +273,19 @@ Creator rules sit in `interfaces txt/`. Meaning and purpose are immutable. A for
 ---
 
 ## Confidentiality (no fairy tale)
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-skin-light.svg">
+    <img src="pictures/art/hd-skin-dark.svg" alt="Confidentiality" width="100%">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/skin-light.svg">
+    <img src="pictures/art/skin-dark.svg" alt="Confidentiality layers: transport, wallet, spends, MSG. Holes named." width="100%">
+  </picture>
+</p>
 
 Layered. Named. Holes left in.
 
@@ -202,6 +303,13 @@ Layered. Named. Holes left in.
 
 ## What you do after it boots
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-boot-light.svg">
+    <img src="pictures/art/hd-boot-dark.svg" alt="After it boots" width="100%">
+  </picture>
+</p>
+
 1. Create or restore a 24-word seed. Write it on paper. It will not be shown again.
 2. Leave SET on **Tor**. Bridges only if your network censors vanilla Tor.
 3. Load a GGUF if you want IDE chat and hard captchas. Harvest works without one.
@@ -217,7 +325,16 @@ Kill the GUI by its PID. Never `pkill -f synapsenet-app` in the same command tha
 ## Linux
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Linux-000000?style=for-the-badge&logo=linux&logoColor=white&labelColor=000000" alt="Linux" />
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-linux-light.svg">
+    <img src="pictures/art/hd-linux-dark.svg" alt="Linux" width="100%">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/install-light.svg">
+    <img src="pictures/art/install-dark.svg" alt="How a Linux cell is built: git clone, lego-linux.sh, then run-desktop.sh" width="100%">
+  </picture>
 </p>
 
 Need a C++ compiler on the host. The Lego script will not sudo. Everything else lands in `~/.local` and `~/.synapsenet`.
@@ -232,6 +349,13 @@ cd Synapsenetai
 Session Tor is a standalone daemon the app starts. **Not Tor Browser.** Browser SOCKS on 9150 is the wrong socket.
 
 `lego-linux.sh` is numbered. `--from N --until N` if you already have pieces:
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/lego-light.svg">
+    <img src="pictures/art/lego-dark.svg" alt="lego-linux.sh numbered steps. The script does not sudo." width="100%">
+  </picture>
+</p>
 
 | Step | What it does |
 |------|----------------|
@@ -263,6 +387,19 @@ Already have a config with an empty `network.seed_nodes=`? Paste that line. Extr
 
 ## First-run wizard
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-wizard-light.svg">
+    <img src="pictures/art/hd-wizard-dark.svg" alt="First-run wizard" width="100%">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/wizard-light.svg">
+    <img src="pictures/art/wizard-dark.svg" alt="First-run wizard: Wallet, Connection, AI Model, Resources, Ready" width="100%">
+  </picture>
+</p>
+
 Five steps. Do them in order.
 
 1. **Wallet** — Create new or restore 24 words. Data dir `~/.synapsenet/`. File `wallet.dat`. Optional password. Save the seed before you click through.
@@ -274,6 +411,19 @@ Five steps. Do them in order.
 ---
 
 ## Tabs
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-tabs-light.svg">
+    <img src="pictures/art/hd-tabs-dark.svg" alt="Tabs" width="100%">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/tabs-light.svg">
+    <img src="pictures/art/tabs-dark.svg" alt="Desktop tabs: MAIN through SET" width="100%">
+  </picture>
+</p>
 
 | Tab | Job |
 |-----|-----|
@@ -295,6 +445,13 @@ Five steps. Do them in order.
 
 ## SET — values that matter
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-set-light.svg">
+    <img src="pictures/art/hd-set-dark.svg" alt="SET — Tor only. No clearnet button." width="100%">
+  </picture>
+</p>
+
 **Connection.** Tor. Mesh never uses direct TCP. **Tor + Bridges** only on censored links. Paste real obfs4 lines from [bridges.torproject.org](https://bridges.torproject.org/).
 
 **AI Model.** Catalog download or a path to a `.gguf`. Load it. Unload it. Harvest works without a GGUF. The catalog is an allowlist — the UI does not send a raw URL.
@@ -314,7 +471,16 @@ Five steps. Do them in order.
 ## Docker
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Docker-000000?style=for-the-badge&logo=docker&logoColor=white&labelColor=000000" alt="Docker" />
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-docker-light.svg">
+    <img src="pictures/art/hd-docker-dark.svg" alt="Docker" width="100%">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/docker-light.svg">
+    <img src="pictures/art/docker-dark.svg" alt="Docker path: compose, Linux image, Tor sidecar, synapsed. up.ps1 is still Linux." width="100%">
+  </picture>
 </p>
 
 This is a **Linux** image. Docker Desktop on Windows still runs Linux through WSL2. It is not a native `.exe`. Compose starts the **node daemon**, not the Tauri GUI.
@@ -363,6 +529,13 @@ Native Windows notes live in `KeplerSynapseNet/docker/windows/KEPLER_WRITE_THIS.
 
 ## Support
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-support-light.svg">
+    <img src="pictures/art/hd-support-dark.svg" alt="Support" width="100%">
+  </picture>
+</p>
+
 If this is worth keeping online — VPS, builds, time — you can send coin. That is optional. It does not buy a feature.
 
 <p align="center">
@@ -379,6 +552,13 @@ XMR here is a donation address. It is not a claim that NGT is Monero.
 ---
 
 ## License
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-license-light.svg">
+    <img src="pictures/art/hd-license-dark.svg" alt="License" width="100%">
+  </picture>
+</p>
 
 [MIT](LICENSE) — Copyright (c) 2026 KeplerSynapseNet
 

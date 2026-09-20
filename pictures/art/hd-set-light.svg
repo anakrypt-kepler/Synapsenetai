@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="840" height="54" viewBox="0 0 840 54" role="img" aria-label="SET">
+<title>SET</title>
+<style>text{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre}.reveal{animation:reveal .8s ease both}@keyframes reveal{from{opacity:0}to{opacity:1}}@media(prefers-reduced-motion:reduce){.motion{display:none}.reveal{animation:none!important}}</style>
+<text x="22" y="28" fill="#18181B" font-size="16" font-weight="600" letter-spacing="1.5">SET</text>
+<text x="818" y="28" fill="#71717A" font-size="11" text-anchor="end">Tor only. No clearnet button.</text>
+<defs><linearGradient id="rule"><stop stop-color="#FF4D0D" stop-opacity=".9"/><stop offset="1" stop-color="#FF4D0D" stop-opacity="0"/></linearGradient></defs>
+<rect x="0" y="40" width="840" height="1" fill="url(#rule)" />
+</svg>
