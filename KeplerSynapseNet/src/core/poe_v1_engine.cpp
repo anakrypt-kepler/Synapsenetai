@@ -2,6 +2,7 @@
 // All numbers here must stay integer/deterministic — no floating LLM scores.
 
 #include "core/poe_v1_engine.h"
+#include "wide128.h"
 #include "core/poe_v1_layers.h"
 #include "database/database.h"
 #include "utils/logger.h"
@@ -1236,9 +1237,9 @@ static bool computeEpochAllocationsFromNodes(
         std::vector<uint32_t> remainders(N, 0);
         uint64_t remSum = 0;
         for (size_t i = 0; i < N; ++i) {
-            unsigned __int128 tmp = static_cast<unsigned __int128>(inbound[i]) * static_cast<unsigned __int128>(D_NUM);
-            damped[i] = static_cast<uint64_t>(tmp / static_cast<unsigned __int128>(D_DEN));
-            uint32_t r = static_cast<uint32_t>(tmp % static_cast<unsigned __int128>(D_DEN));
+            SynapseU128 tmp = static_cast<SynapseU128>(inbound[i]) * static_cast<SynapseU128>(D_NUM);
+            damped[i] = static_cast<uint64_t>(tmp / static_cast<SynapseU128>(D_DEN));
+            uint32_t r = static_cast<uint32_t>(tmp % static_cast<SynapseU128>(D_DEN));
             remainders[i] = r;
             remSum += r;
         }
@@ -1271,9 +1272,9 @@ static bool computeEpochAllocationsFromNodes(
     std::vector<uint64_t> amountRemainders(N, 0);
     uint64_t sumAmounts = 0;
     for (size_t i = 0; i < N; ++i) {
-        unsigned __int128 prod = static_cast<unsigned __int128>(totalBudget) * static_cast<unsigned __int128>(score[i]);
-        uint64_t amt = static_cast<uint64_t>(prod / static_cast<unsigned __int128>(SCALE));
-        uint64_t rem = static_cast<uint64_t>(prod % static_cast<unsigned __int128>(SCALE));
+        SynapseU128 prod = static_cast<SynapseU128>(totalBudget) * static_cast<SynapseU128>(score[i]);
+        uint64_t amt = static_cast<uint64_t>(prod / static_cast<SynapseU128>(SCALE));
+        uint64_t rem = static_cast<uint64_t>(prod % static_cast<SynapseU128>(SCALE));
         amounts[i] = amt;
         amountRemainders[i] = rem;
         sumAmounts += amt;

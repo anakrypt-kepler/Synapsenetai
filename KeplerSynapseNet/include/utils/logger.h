@@ -4,6 +4,15 @@
 #include <functional>
 #include <cstdint>
 
+#ifdef _WIN32
+#ifdef ERROR
+#undef ERROR
+#endif
+#ifdef DEBUG
+#undef DEBUG
+#endif
+#endif
+
 namespace synapse {
 namespace utils {
 

@@ -1,4 +1,5 @@
 #include "cli/cli_rpc_client.h"
+#include "wide128.h"
 
 #include "config/config_loader.h"
 #include "rpc/rpc_commands.h"
@@ -23,7 +24,6 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
-#define close closesocket
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -797,12 +797,12 @@ static std::optional<int> runCliWithExecutor(const NodeConfig& config,
                 if (fracPart.size() > 8) return false;
                 for (char c : intPart) if (c < '0' || c > '9') return false;
                 for (char c : fracPart) if (c < '0' || c > '9') return false;
-                unsigned __int128 iv = 0;
+                SynapseU128 iv = 0;
                 for (char c : intPart) iv = iv * 10 + static_cast<unsigned>(c - '0');
-                unsigned __int128 fv = 0;
+                SynapseU128 fv = 0;
                 for (char c : fracPart) fv = fv * 10 + static_cast<unsigned>(c - '0');
                 for (size_t i = fracPart.size(); i < 8; ++i) fv *= 10;
-                unsigned __int128 total = iv * 100000000ULL + fv;
+                SynapseU128 total = iv * 100000000ULL + fv;
                 if (total > std::numeric_limits<uint64_t>::max()) return false;
                 out = static_cast<uint64_t>(total);
                 return true;

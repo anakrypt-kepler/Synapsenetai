@@ -45,9 +45,15 @@ fn lib_search_paths() -> Vec<std::path::PathBuf> {
         }
     }
     // CMake output lives in KeplerSynapseNet/build next to this crate.
-    paths.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../build"));
+    let build_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../build");
+    paths.push(build_root.join("Release"));
+    paths.push(build_root.join("Debug"));
+    paths.push(build_root);
     if let Ok(home) = std::env::var("HOME") {
-        paths.push(std::path::PathBuf::from(home).join(".synapsenet/lib"));
+        paths.push(std::path::PathBuf::from(&home).join(".synapsenet/lib"));
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        paths.push(std::path::PathBuf::from(profile).join(".synapsenet/lib"));
     }
     paths.push(std::path::PathBuf::from("/usr/local/lib"));
     paths.push(std::path::PathBuf::from("/usr/lib"));
@@ -67,7 +73,8 @@ fn find_library() -> Result<std::path::PathBuf, String> {
         for name in &names {
             let path = dir.join(name);
             if path.exists() {
-                return Ok(path);
+                // LoadLibraryExW rejects a path that still contains "..".
+                return Ok(std::fs::canonicalize(&path).unwrap_or(path));
             }
         }
     }
@@ -78,9 +85,21 @@ fn find_library() -> Result<std::path::PathBuf, String> {
 pub fn load() -> Result<(), String> {
     let lib_path = find_library()?;
 
+    #[cfg(windows)]
+    unsafe {
+        if let Some(parent) = lib_path.parent() {
+            use std::os::windows::ffi::OsStrExt;
+            let wide: Vec<u16> = parent.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+            extern "system" {
+                fn SetDllDirectoryW(path: *const u16) -> i32;
+            }
+            SetDllDirectoryW(wide.as_ptr());
+        }
+    }
+
     let result = unsafe {
         let library = Library::new(&lib_path)
-            .map_err(|e| format!("failed to load libsynapsed from {}: {}", lib_path.display(), e))?;
+            .map_err(|e| format!("failed to load libsynapsed from {}: {:?}", lib_path.display(), e))?;
 
         let fn_init: SynapsedInit = *library
             .get::<SynapsedInit>(b"synapsed_init\0")

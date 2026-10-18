@@ -2,6 +2,7 @@
 // validator set + results so a restart does not lose an in-flight epoch.
 
 #include "core/consensus.h"
+#include "wide128.h"
 #include "database/database.h"
 #include "quantum/application_signature.h"
 #include "utils/logger.h"
@@ -571,8 +572,8 @@ std::vector<Validator> Consensus::selectValidators(uint64_t eventId, uint32_t co
         uint64_t repScaled = static_cast<uint64_t>(repScaledLd);
 
         uint64_t stakeWeight = std::max<uint64_t>(1, val.stake);
-        unsigned __int128 combined = static_cast<unsigned __int128>(stakeWeight) * static_cast<unsigned __int128>(repScaled);
-        uint64_t weight = combined > static_cast<unsigned __int128>(UINT64_MAX)
+        SynapseU128 combined = static_cast<SynapseU128>(stakeWeight) * static_cast<SynapseU128>(repScaled);
+        uint64_t weight = combined > static_cast<SynapseU128>(UINT64_MAX)
             ? UINT64_MAX
             : static_cast<uint64_t>(combined);
         if (weight == 0) weight = 1;

@@ -43,6 +43,8 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
+#include <dirent.h>
 #pragma comment(lib, "ws2_32.lib")
 #else
 #include <sys/socket.h>
@@ -282,7 +284,27 @@ static const GgufOffer* findGgufOffer(const std::string& id) {
 }
 
 static std::string findObfs4Proxy() {
-    std::vector<std::string> cands = {
+    std::vector<std::string> cands;
+#ifdef _WIN32
+    auto addDir = [&](const std::string& dir) {
+        if (dir.empty()) return;
+        cands.push_back(dir + "\\lyrebird.exe");
+        cands.push_back(dir + "\\obfs4proxy.exe");
+    };
+    if (const char* env = std::getenv("SYNAPSENET_OBFS4")) cands.push_back(env);
+    if (const char* profile = std::getenv("USERPROFILE")) {
+        const std::string root(profile);
+        addDir(root + "\\Desktop\\Tor Browser\\Browser\\TorBrowser\\Tor");
+        addDir(root + "\\AppData\\Local\\Tor Browser\\Browser\\TorBrowser\\Tor");
+    }
+    addDir("C:\\Program Files\\Tor Browser\\Browser\\TorBrowser\\Tor");
+    for (const auto& c : cands) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(c, ec)) return c;
+    }
+    return "";
+#else
+    cands = {
         "/usr/bin/obfs4proxy",
         "/usr/sbin/obfs4proxy",
     };
@@ -295,6 +317,7 @@ static std::string findObfs4Proxy() {
         if (access(c.c_str(), X_OK) == 0) return c;
     }
     return "";
+#endif
 }
 
 static uint64_t fileSizeOr0(const std::string& path) {
@@ -863,6 +886,25 @@ uint16_t pickFreeLocalPort() {
 }
 
 std::string findTorBinary() {
+#ifdef _WIN32
+    std::vector<std::string> cands;
+    if (const char* env = std::getenv("SYNAPSENET_TOR")) cands.push_back(env);
+    if (const char* profile = std::getenv("USERPROFILE")) {
+        const std::string root(profile);
+        cands.push_back(root + "\\Desktop\\Tor Browser\\Browser\\TorBrowser\\Tor\\tor.exe");
+        cands.push_back(root + "\\AppData\\Local\\Tor Browser\\Browser\\TorBrowser\\Tor\\tor.exe");
+        cands.push_back(root + "\\.synapsenet\\tor\\tor.exe");
+    }
+    cands.push_back("C:\\Program Files\\Tor Browser\\Browser\\TorBrowser\\Tor\\tor.exe");
+    cands.push_back("C:\\Program Files\\Tor\\tor.exe");
+    for (const auto& c : cands) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(c, ec)) return c;
+    }
+    char found[MAX_PATH];
+    if (SearchPathA(nullptr, "tor.exe", nullptr, MAX_PATH, found, nullptr)) return found;
+    return {};
+#else
     const char* candidates[] = {
         "/usr/sbin/tor",
         "/usr/bin/tor",
@@ -877,6 +919,7 @@ std::string findTorBinary() {
         }
     }
     return {};
+#endif
 }
 
 int64_t parseGetinfoInt(const std::string& resp, const std::string& key) {
@@ -1095,6 +1138,23 @@ void SynapsedEngine::stopSessionTor() const {
         std::error_code ec;
         std::filesystem::remove_all(sessionTorDataDir_, ec);
     }
+#else
+    if (controlFd_ >= 0 && !onionServiceId_.empty()) {
+        (void)controlTransact(controlFd_, "DEL_ONION " + onionServiceId_);
+    }
+    if (sessionTorProcess_) {
+        HANDLE proc = static_cast<HANDLE>(sessionTorProcess_);
+        TerminateProcess(proc, 0);
+        WaitForSingleObject(proc, 5000);
+        CloseHandle(proc);
+        sessionTorProcess_ = nullptr;
+    }
+    sessionTorPid_ = -1;
+    if (!sessionTorDataDir_.empty()) {
+        std::error_code ec;
+        std::filesystem::remove_all(sessionTorDataDir_, ec);
+        sessionTorDataDir_.clear();
+    }
 #endif
     sessionSocksPort_ = 0;
     sessionControlPort_ = 0;
@@ -1106,7 +1166,172 @@ void SynapsedEngine::stopSessionTor() const {
 
 bool SynapsedEngine::startSessionTor() const {
 #ifdef _WIN32
-    return false;
+    static bool winsockReady = false;
+    if (!winsockReady) {
+        WSADATA wsa{};
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) == 0) winsockReady = true;
+    }
+    stopSessionTor();
+
+    auto tcpOpen = [&](uint16_t port) {
+        int sfd = connectLocalPort(port, 1);
+        if (sfd < 0) return false;
+        CLOSESOCK(sfd);
+        return true;
+    };
+    auto useExistingSocks = [&]() {
+        const uint16_t ports[] = {9150, 9050};
+        for (uint16_t p : ports) {
+            if (!tcpOpen(p)) continue;
+            sessionSocksPort_ = p;
+            gSocksPort.store(p);
+            const uint16_t ctrl = (p == 9150) ? 9151 : 9051;
+            if (tcpOpen(ctrl)) {
+                sessionControlPort_ = ctrl;
+                gControlPort.store(ctrl);
+            }
+            connectionType_ = "tor";
+            return true;
+        }
+        return false;
+    };
+
+    std::string torBin = findTorBinary();
+    if (torBin.empty()) return useExistingSocks();
+
+    uint16_t socks = pickFreeLocalPort();
+    uint16_t ctrl = pickFreeLocalPort();
+    if (socks == 0 || ctrl == 0 || socks == ctrl) {
+        socks = 18750;
+        ctrl = 18751;
+    }
+
+    sessionTorDataDir_ = dataDir_ + "/session-tor";
+    std::error_code ec;
+    std::filesystem::remove_all(sessionTorDataDir_, ec);
+    std::filesystem::create_directories(sessionTorDataDir_ + "/data", ec);
+    sessionCookiePath_ = sessionTorDataDir_ + "/data/control_auth_cookie";
+    const std::string rcPath = sessionTorDataDir_ + "/torrc";
+    const std::string logPath = sessionTorDataDir_ + "/tor.log";
+    // Tor's Windows parser treats a quoted Log path as a broken escape and
+    // exits. 8.3 names have no spaces, so the torrc can stay unquoted.
+    auto torPath = [](std::string p) {
+        for (char& c : p) if (c == '/') c = '\\';
+        char shortBuf[MAX_PATH];
+        DWORD n = GetShortPathNameA(p.c_str(), shortBuf, MAX_PATH);
+        std::string out = (n > 0 && n < MAX_PATH) ? std::string(shortBuf) : p;
+        for (char& c : out) if (c == '\\') c = '/';
+        return out;
+    };
+    auto torFile = [&](const std::string& path) {
+        std::filesystem::path full(path);
+        std::string parent = torPath(full.parent_path().string());
+        std::string name = full.filename().string();
+        if (parent.empty()) return name;
+        return parent + "/" + name;
+    };
+    {
+        std::ofstream f(rcPath);
+        if (!f) return useExistingSocks();
+        f << "SocksPort 127.0.0.1:" << socks << "\n"
+          << "ControlPort 127.0.0.1:" << ctrl << "\n"
+          << "CookieAuthentication 1\n"
+          << "CookieAuthFile " << torFile(sessionCookiePath_) << "\n"
+          << "DataDirectory " << torPath(sessionTorDataDir_ + "/data") << "\n"
+          << "Log notice file " << torFile(logPath) << "\n"
+          << "SafeLogging 1\n"
+          << "DormantCanceledByStartup 1\n";
+        std::string bridgeLines;
+        std::string connPref = "tor";
+        {
+            std::ifstream sf(dataDir_ + "/settings.json");
+            if (sf.good()) {
+                std::string content((std::istreambuf_iterator<char>(sf)),
+                                     std::istreambuf_iterator<char>());
+                nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
+                if (!j.is_discarded() && j.is_object()) {
+                    if (j.contains("bridge_lines") && j["bridge_lines"].is_string())
+                        bridgeLines = j["bridge_lines"].get<std::string>();
+                    if (j.contains("connection_type") && j["connection_type"].is_string())
+                        connPref = j["connection_type"].get<std::string>();
+                }
+            }
+        }
+        if (connPref == "tor_bridges" && !bridgeLines.empty()) {
+            std::string obfs = findObfs4Proxy();
+            if (!obfs.empty()) {
+                f << "UseBridges 1\n";
+                f << "ClientTransportPlugin obfs4 exec " << torFile(obfs) << "\n";
+                std::istringstream iss(bridgeLines);
+                std::string line;
+                while (std::getline(iss, line)) {
+                    line = trim(line);
+                    if (line.empty() || line[0] == '#') continue;
+                    if (line.rfind("Bridge ", 0) == 0) f << line << "\n";
+                    else f << "Bridge " << line << "\n";
+                }
+            }
+        }
+    }
+
+    std::string cmd = "\"" + torBin + "\" -f \"" + rcPath + "\"";
+    std::vector<char> cmdline(cmd.begin(), cmd.end());
+    cmdline.push_back('\0');
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    const std::string work = std::filesystem::path(torBin).parent_path().string();
+    if (!CreateProcessA(nullptr, cmdline.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, nullptr,
+                        work.empty() ? nullptr : work.c_str(), &si, &pi)) {
+        return useExistingSocks();
+    }
+    CloseHandle(pi.hThread);
+    sessionTorProcess_ = pi.hProcess;
+    sessionTorPid_ = static_cast<int64_t>(pi.dwProcessId);
+    sessionSocksPort_ = socks;
+    sessionControlPort_ = ctrl;
+    gSocksPort.store(socks);
+    gControlPort.store(ctrl);
+    gCookiePath = sessionCookiePath_;
+
+    bool socksUp = false;
+    bool bootOk = false;
+    for (int i = 0; i < 150 && !sessionBootStop_.load(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        DWORD code = 0;
+        HANDLE proc = static_cast<HANDLE>(sessionTorProcess_);
+        if (!proc || !GetExitCodeProcess(proc, &code) || code != STILL_ACTIVE) {
+            stopSessionTor();
+            return useExistingSocks();
+        }
+        if (!socksUp && tcpOpen(socks)) socksUp = true;
+        if (!std::filesystem::exists(sessionCookiePath_)) continue;
+        int cfd = connectLocalPort(ctrl, 1);
+        if (cfd < 0) continue;
+        if (!controlAuthenticate(cfd, sessionCookiePath_)) {
+            CLOSESOCK(cfd);
+            continue;
+        }
+        std::string resp = controlTransact(cfd, "GETINFO status/bootstrap-phase");
+        CLOSESOCK(cfd);
+        auto pos = resp.find("PROGRESS=");
+        int progress = 0;
+        if (pos != std::string::npos) progress = std::atoi(resp.c_str() + pos + 9);
+        torBootstrap_ = std::to_string(progress) + "%";
+        if (progress >= 100 || (socksUp && progress >= 90 && i > 40)) {
+            bootOk = true;
+            break;
+        }
+    }
+    if (!bootOk && !socksUp) {
+        stopSessionTor();
+        return useExistingSocks();
+    }
+    connectionType_ = "tor";
+    return true;
 #else
     stopSessionTor();
 
@@ -2747,7 +2972,10 @@ int SynapsedEngine::init(const std::string& configPath) {
     peerCount_ = 0;
 
     const char* home = std::getenv("HOME");
-    dataDir_ = home ? std::string(home) + "/.synapsenet" : "/tmp/.synapsenet";
+#ifdef _WIN32
+    if (!home || !home[0]) home = std::getenv("USERPROFILE");
+#endif
+    dataDir_ = (home && home[0]) ? std::string(home) + "/.synapsenet" : ".synapsenet";
     {
         std::ifstream cf(configPath);
         if (cf.good()) {

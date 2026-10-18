@@ -2,6 +2,7 @@
 // promote a bad actor back to FULL.
 
 #include "core/agent_score.h"
+#include "wide128.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -20,12 +21,12 @@ int64_t clampI64(int64_t v, int64_t lo, int64_t hi) {
 
 int64_t floorMulRatio(int64_t value, uint32_t numerator, uint32_t denominator) {
     if (denominator == 0) return value;
-    const __int128 scaled = static_cast<__int128>(value) * static_cast<__int128>(numerator);
+    const SynapseI128 scaled = static_cast<SynapseI128>(value) * static_cast<SynapseI128>(numerator);
     if (scaled >= 0) {
         return static_cast<int64_t>(scaled / denominator);
     }
-    const __int128 pos = -scaled;
-    const __int128 q = (pos + denominator - 1) / denominator;
+    const SynapseI128 pos = -scaled;
+    const SynapseI128 q = (pos + denominator - 1) / denominator;
     return -static_cast<int64_t>(q);
 }
 

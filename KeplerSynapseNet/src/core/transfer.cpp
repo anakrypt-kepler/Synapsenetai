@@ -2,6 +2,7 @@
 // Test faucet creditRewardDeterministic stays transparent. Spend: UTXO or MLSAG.
 
 #include "core/transfer.h"
+#include "wide128.h"
 #include "core/ringct.h"
 #include "crypto/address.h"
 #include "crypto/confidential_tx.h"
@@ -888,8 +889,8 @@ bool TransferManager::submitTransaction(const Transaction& tx) {
         auto feeRateLess = [](const Transaction& lhs, const Transaction& rhs) -> bool {
             const size_t lhsSize = serializedSizeForFee(lhs);
             const size_t rhsSize = serializedSizeForFee(rhs);
-            unsigned __int128 lhsRate = static_cast<unsigned __int128>(lhs.fee) * static_cast<unsigned __int128>(rhsSize);
-            unsigned __int128 rhsRate = static_cast<unsigned __int128>(rhs.fee) * static_cast<unsigned __int128>(lhsSize);
+            SynapseU128 lhsRate = static_cast<SynapseU128>(lhs.fee) * static_cast<SynapseU128>(rhsSize);
+            SynapseU128 rhsRate = static_cast<SynapseU128>(rhs.fee) * static_cast<SynapseU128>(lhsSize);
             if (lhsRate != rhsRate) return lhsRate < rhsRate;
             if (lhs.fee != rhs.fee) return lhs.fee < rhs.fee;
             if (lhs.timestamp != rhs.timestamp) return lhs.timestamp < rhs.timestamp;
@@ -898,8 +899,8 @@ bool TransferManager::submitTransaction(const Transaction& tx) {
         auto hasStrictlyHigherFeeRate = [](const Transaction& lhs, const Transaction& rhs) -> bool {
             const size_t lhsSize = serializedSizeForFee(lhs);
             const size_t rhsSize = serializedSizeForFee(rhs);
-            unsigned __int128 lhsRate = static_cast<unsigned __int128>(lhs.fee) * static_cast<unsigned __int128>(rhsSize);
-            unsigned __int128 rhsRate = static_cast<unsigned __int128>(rhs.fee) * static_cast<unsigned __int128>(lhsSize);
+            SynapseU128 lhsRate = static_cast<SynapseU128>(lhs.fee) * static_cast<SynapseU128>(rhsSize);
+            SynapseU128 rhsRate = static_cast<SynapseU128>(rhs.fee) * static_cast<SynapseU128>(lhsSize);
             return lhsRate > rhsRate;
         };
 

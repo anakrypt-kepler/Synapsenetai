@@ -19,7 +19,6 @@
 #include <io.h>
 #pragma comment(lib, "ws2_32.lib")
 #define poll WSAPoll
-#define close closesocket
 #else
 #include <sys/time.h>
 #include <sys/socket.h>

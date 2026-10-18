@@ -187,6 +187,20 @@ pub fn save_setup_config(config: SetupConfig) -> Result<(), String> {
     std::fs::write(config_path(), content)
         .map_err(|e| format!("failed to write config: {}", e))?;
 
+    // The engine reads settings.json, not the wizard toml.
+    let settings = serde_json::json!({
+        "connection_type": conn,
+        "bridge_lines": config.bridge_lines.clone().unwrap_or_default(),
+        "ram_limit_mb": config.ram_limit_mb,
+        "cpu_threads": config.cpu_threads,
+        "disk_limit_mb": config.disk_limit_mb,
+        "gpu_enabled": config.gpu_enabled,
+        "gpu_layers": config.gpu_layers,
+        "naan_enabled": false,
+    });
+    std::fs::write(dir.join("settings.json"), settings.to_string())
+        .map_err(|e| format!("failed to write settings: {}", e))?;
+
     Ok(())
 }
 

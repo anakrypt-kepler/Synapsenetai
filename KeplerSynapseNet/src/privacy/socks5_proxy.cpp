@@ -5,7 +5,6 @@
 #include <io.h>
 #pragma comment(lib, "ws2_32.lib")
 #define poll WSAPoll
-#define close closesocket
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>

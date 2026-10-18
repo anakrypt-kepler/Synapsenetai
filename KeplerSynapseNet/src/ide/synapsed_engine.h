@@ -363,6 +363,8 @@ private:
     mutable uint16_t sessionSocksPort_ = 0;
     mutable uint16_t sessionControlPort_ = 0;
     mutable int64_t sessionTorPid_ = -1;
+    // Windows process HANDLE for the Tor child. Null when Tor was not spawned here.
+    mutable void* sessionTorProcess_ = nullptr;
     mutable std::string sessionTorDataDir_;
     mutable std::string sessionCookiePath_;
     mutable std::thread sessionBootThread_;

@@ -1,3 +1,4 @@
+#include "wide128.h"
 #include <iostream>
 #include <string>
 #include <csignal>
@@ -1351,18 +1352,18 @@ uint64_t parseNgtAtomic(const std::string& value) const {
     if (fracPart.size() > 8) {
         throw std::runtime_error("Too many decimals");
     }
-    unsigned __int128 iv = 0;
+    SynapseU128 iv = 0;
     for (char c : intPart) {
         if (c < '0' || c > '9') throw std::runtime_error("Invalid number");
         iv = iv * 10 + static_cast<unsigned>(c - '0');
     }
-    unsigned __int128 fv = 0;
+    SynapseU128 fv = 0;
     for (char c : fracPart) {
         if (c < '0' || c > '9') throw std::runtime_error("Invalid number");
         fv = fv * 10 + static_cast<unsigned>(c - '0');
     }
     for (size_t i = fracPart.size(); i < 8; ++i) fv *= 10;
-    unsigned __int128 total = iv * 100000000ULL + fv;
+    SynapseU128 total = iv * 100000000ULL + fv;
     if (total > std::numeric_limits<uint64_t>::max()) {
         throw std::runtime_error("Amount too large");
     }

@@ -132,14 +132,40 @@
     } catch {}
   }
 
+  function currentSetup(): SetupConfig {
+    const conn = connectionType === "tor_bridges" ? "tor_bridges" : "tor";
+    return {
+      wallet_mode: walletMode,
+      seed_phrase: walletMode === "restore" ? restoreSeed : null,
+      password: walletPassword || null,
+      connection_type: conn,
+      bridge_lines: bridgeLines || null,
+      ai_model: aiModel,
+      model_path: modelPath || null,
+      cpu_threads: cpuThreads,
+      ram_limit_mb: ramLimitMb,
+      disk_limit_mb: diskLimitMb,
+      gpu_enabled: gpuEnabled,
+      gpu_device: gpuDevice || null,
+      gpu_layers: gpuLayers,
+      launch_at_startup: launchAtStartup,
+      mine_background: false,
+    };
+  }
+
   async function runReadyChecks() {
     readyChecking = true;
     walletOk = walletMode === "create" || walletMode === "restore" || walletMode === "restored";
 
     try {
+      await saveSetupConfig(currentSetup());
       await initEngine();
-      const raw = await getStatus();
-      const status = parseStatus(raw);
+      const deadline = Date.now() + 75000;
+      let status = parseStatus(await getStatus());
+      while (status.connection === "disconnected" && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        status = parseStatus(await getStatus());
+      }
       connectionOk = status.connection !== "disconnected";
       peersFound = status.peers;
       if (status.model_loaded) {
@@ -159,24 +185,8 @@
   }
 
   async function finishSetup() {
-    const conn = connectionType === "tor_bridges" ? "tor_bridges" : "tor";
-    const config: SetupConfig = {
-      wallet_mode: walletMode,
-      seed_phrase: walletMode === "restore" ? restoreSeed : null,
-      password: walletPassword || null,
-      connection_type: conn,
-      bridge_lines: bridgeLines || null,
-      ai_model: aiModel,
-      model_path: modelPath || null,
-      cpu_threads: cpuThreads,
-      ram_limit_mb: ramLimitMb,
-      disk_limit_mb: diskLimitMb,
-      gpu_enabled: gpuEnabled,
-      gpu_device: gpuDevice || null,
-      gpu_layers: gpuLayers,
-      launch_at_startup: launchAtStartup,
-      mine_background: false,
-    };
+    const config = currentSetup();
+    const conn = config.connection_type;
 
     try {
       await saveSetupConfig(config);
