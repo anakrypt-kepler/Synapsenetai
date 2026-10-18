@@ -64,6 +64,10 @@ struct NaanAgentSlot {
     double spent = 0.0;
 };
 
+// False once the process singleton has entered its destructor.
+// FFI entry points must not call instance() after that.
+bool synapsedEngineAlive();
+
 class SynapsedEngine {
 public:
     static SynapsedEngine& instance();

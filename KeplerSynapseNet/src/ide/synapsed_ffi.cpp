@@ -12,6 +12,7 @@ SYNAPSED_API int synapsed_init(const char* config_path) {
 }
 
 SYNAPSED_API void synapsed_shutdown(void) {
+    if (!synapse::ide::synapsedEngineAlive()) return;
     synapse::ide::SynapsedEngine::instance().shutdown();
 }
 

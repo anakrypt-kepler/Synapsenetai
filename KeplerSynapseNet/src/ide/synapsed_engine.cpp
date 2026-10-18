@@ -889,9 +889,24 @@ int64_t parseGetinfoInt(const std::string& resp, const std::string& key) {
 
 }
 
-SynapsedEngine::SynapsedEngine() = default;
+namespace {
+std::atomic<bool> g_synapsedEngineAlive{false};
+}
 
-SynapsedEngine::~SynapsedEngine() { shutdown(); }
+bool synapsedEngineAlive() {
+    return g_synapsedEngineAlive.load(std::memory_order_acquire);
+}
+
+SynapsedEngine::SynapsedEngine() {
+    g_synapsedEngineAlive.store(true, std::memory_order_release);
+}
+
+SynapsedEngine::~SynapsedEngine() {
+    // Drop the FFI gate before members go away. A late atexit handler must
+    // not call instance() on this function-local static after it is destroyed.
+    g_synapsedEngineAlive.store(false, std::memory_order_release);
+    shutdown();
+}
 
 SynapsedEngine& SynapsedEngine::instance() {
     static SynapsedEngine eng;

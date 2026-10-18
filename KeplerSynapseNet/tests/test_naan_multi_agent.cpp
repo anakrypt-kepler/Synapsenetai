@@ -36,10 +36,6 @@ static bool hasDesktopApp() {
     return found;
 }
 
-static void restoreAtExit() {
-    synapsed_shutdown();
-}
-
 int main() {
     std::cerr << std::unitbuf;
     if (hasDesktopApp()) {
@@ -47,7 +43,10 @@ int main() {
         return 0;
     }
 
-    std::atexit(restoreAtExit);
+    // Do not register atexit before synapsed_init. The engine is a
+    // function-local static whose destructor already calls shutdown().
+    // An earlier atexit handler runs after that destructor and would call
+    // instance() on a destroyed object (SIGSEGV in the Docker ctest run).
     const std::string tmp = "/tmp/naan_multi_agent_test";
     (void)std::system(("rm -rf " + tmp + " && mkdir -p " + tmp).c_str());
 
@@ -72,6 +71,7 @@ int main() {
     std::cerr << "init rc=" << initRc << "\n";
     if (initRc != 0) {
         std::cerr << "synapsed_init failed: " << initRc << "\n";
+        synapsed_shutdown();
         return 1;
     }
 
@@ -149,5 +149,8 @@ int main() {
     assert(ramStart.find("not enough RAM") != std::string::npos);
 
     std::cerr << "NaanMultiAgentTests ok\n";
+    // Join harvest threads and Tor while the singleton is still alive.
+    // The destructor shuts down again; that second pass is idempotent.
+    synapsed_shutdown();
     return 0;
 }
