@@ -56,7 +56,6 @@
 #include <signal.h>
 #ifdef __linux__
 #include <sys/prctl.h>
-#include <sys/sysinfo.h>
 #endif
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -8530,11 +8529,14 @@ std::string SynapsedEngine::startNaanAgent(const std::string& agentId) {
                 slot->state = "error";
                 return "{\"error\":\"invalid GGUF file\"}";
             }
-#ifdef __linux__
-            struct stat st{};
-            if (stat(slot->modelPath.c_str(), &st) == 0) {
-                const uint64_t needMb = static_cast<uint64_t>(st.st_size) / (1024 * 1024);
-                uint64_t ramLimit = 0;
+            uint64_t needMb = 0;
+            {
+                std::error_code ec;
+                const auto sz = std::filesystem::file_size(slot->modelPath, ec);
+                if (!ec) needMb = static_cast<uint64_t>(sz) / (1024ull * 1024ull);
+            }
+            uint64_t ramLimit = 0;
+            {
                 std::ifstream sf(dataDir_ + "/settings.json");
                 if (sf.good()) {
                     nlohmann::json sj = nlohmann::json::parse(
@@ -8543,17 +8545,15 @@ std::string SynapsedEngine::startNaanAgent(const std::string& agentId) {
                     if (!sj.is_discarded() && sj.contains("ram_limit_mb") && sj["ram_limit_mb"].is_number())
                         ramLimit = sj["ram_limit_mb"].get<uint64_t>();
                 }
-                struct sysinfo info{};
-                if (ramLimit > 0 && sysinfo(&info) == 0) {
-                    const uint64_t already = modelSizeMb_;
-                    if (already + needMb + 256 > ramLimit) {
-                        slot->error = "not enough RAM; use the primary model";
-                        slot->state = "error";
-                        return "{\"error\":\"not enough RAM; use the primary model\"}";
-                    }
+            }
+            if (ramLimit > 0) {
+                const uint64_t already = modelSizeMb_;
+                if (already + needMb + 256 > ramLimit) {
+                    slot->error = "not enough RAM; use the primary model";
+                    slot->state = "error";
+                    return "{\"error\":\"not enough RAM; use the primary model\"}";
                 }
             }
-#endif
             if (slot->modelPath == modelPath_) {
                 slot->modelMode = "primary";
             } else {
