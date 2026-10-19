@@ -36,14 +36,14 @@
   <img src="https://img.shields.io/badge/Transport-Tor_only-000000?style=for-the-badge&logo=torproject&logoColor=white&labelColor=000000" alt="Tor only" />
 </p>
 
-<table>
+<table align="center">
 <tr>
-<td align="center" width="50%">
-<img src="pictures/windows.png" alt="Windows logo" width="180">
+<td align="center">
+<img src="pictures/windows.png" alt="Windows logo" width="160">
 <br><strong>Windows</strong>
 </td>
-<td align="center" width="50%">
-<img src="pictures/linux.png" alt="Linux penguin" width="180">
+<td align="center">
+<img src="pictures/linux.png" alt="Linux penguin" width="160">
 <br><strong>Linux</strong>
 </td>
 </tr>
