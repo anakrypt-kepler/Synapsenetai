@@ -6,9 +6,7 @@
   import ChatPanel from "../components/ChatPanel.svelte";
   import { rpcCall } from "../../lib/rpc";
   import { activeTab, nodeStatus } from "../../lib/store";
-  import PixelStage from "../components/sprites/PixelStage.svelte";
-  import PixelSprite from "../components/sprites/PixelSprite.svelte";
-  import naanRun from "../../assets/sprites/naan-run.svg";
+  import CoderLoader from "../components/CoderLoader.svelte";
 
   // PoE stores the file as text. Language is only the tab name / extension.
   const langs: { id: string; ext: string; label: string }[] = [
@@ -149,9 +147,9 @@
 
 <div class="content-area ide-page">
   <div class="page-col">
-    <PixelStage height={56}>
-      <PixelSprite src={naanRun} anim="park" size={24} label="agent in the software" />
-    </PixelStage>
+    <div class="ide-hero">
+      <CoderLoader width={420} label="Mining code" />
+    </div>
     <div class="section-title">IDE</div>
     <div class="ide-layout">
       <div class="ide-editor">
@@ -223,7 +221,13 @@
 </div>
 
 <style>
-  /* Parked hero above a 2-col split. Editor well stays readable mono. */
+  /* Coder desk above a 2-col split. Editor well stays readable mono. */
+  .ide-hero {
+    flex-shrink: 0;
+    display: flex;
+    justify-content: center;
+    padding: 4px 0 8px;
+  }
   .ide-page {
     display: flex;
     flex-direction: column;
