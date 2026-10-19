@@ -454,16 +454,7 @@ Native Windows notes live in `KeplerSynapseNet/docker/windows/KEPLER_WRITE_THIS.
 
 If this is worth keeping online — VPS, builds, time — you can send coin. That is optional. It does not buy a feature.
 
-<p align="center">
-  <a href="https://www.blockchain.com/btc/address/bc1q5pkemq7q84ld4rf5kwtafp7jfl9dlf3pc4z9d4"><img src="https://img.shields.io/badge/Bitcoin-000000?style=for-the-badge&logo=bitcoin&logoColor=white" alt="BTC" /></a>
-  <a href="https://www.getmonero.org"><img src="https://img.shields.io/badge/Monero-000000?style=for-the-badge&logo=monero&logoColor=white" alt="XMR" /></a>
-</p>
-
-<p align="center"><strong>Bitcoin (BTC)</strong><br><code>bc1q5pkemq7q84ld4rf5kwtafp7jfl9dlf3pc4z9d4</code></p>
-
-<p align="center"><strong>Monero (XMR)</strong><br><code>86SzreFr7NnPBfx1QsiC8ndAKMsJ6qQmeEBAW1bpfiTAcj3QL4ThwNnUEvZARZtrWs5mZ28T4w4XNSruwuVJkUcPM6XBpFh</code></p>
-
-XMR here is a donation address. It is not a claim that NGT is Monero.
+<p align="center"><strong>Coming soon.</strong></p>
 
 ---
 
