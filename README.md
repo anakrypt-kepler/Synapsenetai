@@ -36,6 +36,21 @@
   <img src="https://img.shields.io/badge/Transport-Tor_only-000000?style=for-the-badge&logo=torproject&logoColor=white&labelColor=000000" alt="Tor only" />
 </p>
 
+<table>
+<tr>
+<td align="center" width="50%">
+<img src="pictures/windows.png" alt="Windows logo" width="180">
+<br><strong>Windows</strong>
+</td>
+<td align="center" width="50%">
+<img src="pictures/linux.png" alt="Linux penguin" width="180">
+<br><strong>Linux</strong>
+</td>
+</tr>
+</table>
+
+The desktop runs on **Windows** and on **Linux**. Same node, same session Tor, same local model. Linux is the scripted install: `lego-linux.sh`, then `run-desktop.sh`. Windows is the native app: the node is `synapsed.dll`, the window is the Tauri shell. Docker is a Linux image on either host.
+
 ---
 
 Desktop screenshots come next. The map stays here.
@@ -457,7 +472,7 @@ cd KeplerSynapseNet
 docker compose -f docker-compose.yml -f docker-compose.windows.yml up --build
 ```
 
-Native Windows notes live in `KeplerSynapseNet/docker/windows/KEPLER_WRITE_THIS.txt`. I left that file empty on purpose. Fill it in your own voice when a Windows-native path exists. It does not exist yet.
+Native Windows notes live in `KeplerSynapseNet/docker/windows/KEPLER_WRITE_THIS.txt`. I left that file empty on purpose. The desktop itself runs on Windows. This compose path is still the Linux image.
 
 ---
 
