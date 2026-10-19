@@ -147,6 +147,7 @@
 
 <div class="content-area ide-page">
   <div class="page-col">
+    <!-- Always on while this tab is open. Not tied to a load or to NAAN. -->
     <div class="ide-hero">
       <CoderLoader width={420} label="Mining code" />
     </div>
