@@ -12,6 +12,7 @@
   import { DUR_TAB_MS, TAB_SLIDE_PX, easeMenuDecel } from "../lib/hyprEase";
   import { pageBusy } from "../lib/pageLoad";
   import TopBar from "./components/TopBar.svelte";
+  import NoticeRail from "./components/NoticeRail.svelte";
   import StatusBar from "./components/StatusBar.svelte";
   import MinerLoader from "./components/MinerLoader.svelte";
   import SetupWizard from "./components/SetupWizard.svelte";
@@ -78,6 +79,7 @@
   </div>
 {:else if $showSetupWizard}
   <SetupWizard on:complete={onSetupComplete} />
+  <NoticeRail />
 {:else}
   <div class="app-layout">
     <TopBar />
@@ -132,6 +134,7 @@
     </div>
     <StatusBar />
   </div>
+  <NoticeRail />
 {/if}
 
 <style>

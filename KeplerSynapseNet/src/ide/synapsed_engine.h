@@ -474,10 +474,23 @@ private:
     std::string cfgSources_ = "tor";
     void loadNaanWebConfig();
     void persistNaanSources() const;
+    // Lifetime harvest counts in naan_career.json. The session counter
+    // naanSubmissions_ still feeds poe.stats and is allowed to start at 0.
+    void loadNaanCareer();
+    void rememberNaanCareer(const std::string& agentId, int submissions, int approved);
+    void persistNaanCareer();
+    int careerCount(const std::string& agentId, bool approved, int live) const;
+    void clearNaanAutostart();
     std::vector<NaanLogEntry> naanLog_;
     std::vector<NaanDraft> naanHist_;
     int naanSubmissions_ = 0;
     int naanApproved_ = 0;
+    struct NaanCareerRow {
+        int submissions = 0;
+        int approved = 0;
+    };
+    std::map<std::string, NaanCareerRow> naanCareer_;
+    mutable std::mutex naanCareerMtx_;
     mutable double naanTotalNgt_ = 0.0;
     std::unique_ptr<synapse::privacy::PrivacyManager> privacy_;
     mutable std::mutex privateWalletMtx_;

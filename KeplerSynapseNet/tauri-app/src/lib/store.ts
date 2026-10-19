@@ -1,5 +1,6 @@
 import { writable, derived } from "svelte/store";
 import { getStatus, parseStatus, type NodeStatus } from "./rpc";
+import { noteStatus } from "./notices";
 
 // Shared UI state. Tabs match the desktop nav. nodeStatus is polled from
 // synapsed_get_status; if polling dies the bars freeze, they do not crash.
@@ -60,8 +61,12 @@ export function startStatusPolling() {
   const tick = async () => {
     try {
       const raw = await getStatus();
-      nodeStatus.set(parseStatus(raw));
-    } catch {}
+      const parsed = parseStatus(raw);
+      nodeStatus.set(parsed);
+      noteStatus(parsed);
+    } catch {
+      noteStatus(null);
+    }
   };
   tick();
   pollInterval = setInterval(tick, 2000);

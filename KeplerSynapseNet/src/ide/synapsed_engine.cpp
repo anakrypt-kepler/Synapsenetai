@@ -1850,19 +1850,9 @@ void SynapsedEngine::bootTorMesh() {
         });
     }
 
-    // After Tor is up. Never start NAAN from init() — that deadlocks mtx_.
-    std::ifstream sf(dataDir_ + "/settings.json");
-    if (sf.good()) {
-        std::string content((std::istreambuf_iterator<char>(sf)),
-                             std::istreambuf_iterator<char>());
-        nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
-        bool want = false;
-        if (!j.is_discarded() && j.is_object() && j.contains("naan_enabled")) {
-            if (j["naan_enabled"].is_boolean()) want = j["naan_enabled"].get<bool>();
-            else if (j["naan_enabled"].is_number()) want = j["naan_enabled"].get<int>() != 0;
-        }
-        if (want) startNaan();
-    }
+    // Tor being up is not a start signal. The operator starts NAAN from the
+    // NAAN tab or the SET checkbox. init() already cleared a saved
+    // naan_enabled bit so a restart cannot resume the harvest loop.
 }
 
 void SynapsedEngine::startOnionService() const {
@@ -2902,7 +2892,9 @@ void SynapsedEngine::compactLocalPoeChain() {
     out.close();
     std::filesystem::rename(tmp, path, ec);
     lastBlockHeight_ = height;
-    naanSubmissions_ = 0;
+    // Do not zero the harvest tally here. Compacting the local chain used to
+    // wipe naanSubmissions_, and the IDE level is that tally, so every launch
+    // dropped the crew back to level 1. The career file is the source of truth.
 }
 
 std::string SynapsedEngine::stealthReceiveAddress() const {
@@ -3265,6 +3257,8 @@ int SynapsedEngine::init(const std::string& configPath) {
     }
     loadNaanWebConfig();
     compactLocalPoeChain();
+    loadNaanCareer();
+    clearNaanAutostart();
 
     {
         std::string walletPath = dataDir_ + "/wallet.key";
@@ -8889,12 +8883,14 @@ std::string SynapsedEngine::naanStatus() const {
         bcounts = bypassCounters_;
     }
     std::ostringstream ss;
+    const int shownSub = careerCount("primary", false, naanSubmissions_);
+    const int shownApp = careerCount("primary", true, naanApproved_);
     ss << "{\"state\":\"" << naanState_
-       << "\",\"submissions\":" << naanSubmissions_
-       << ",\"approved\":" << naanApproved_
+       << "\",\"submissions\":" << shownSub
+       << ",\"approved\":" << shownApp
        << ",\"total_ngt\":0"
        << ",\"budget_remaining\":" << (naanBudgetPerEpoch_ - naanSpentThisEpoch_)
-       << ",\"approval_rate\":" << (naanSubmissions_ > 0 ? (100.0 * naanApproved_ / naanSubmissions_) : 0.0)
+       << ",\"approval_rate\":" << (shownSub > 0 ? (100.0 * shownApp / shownSub) : 0.0)
        << ",\"last_bypass\":{\"cve\":\"" << jsonEscape(br.cveId)
        << "\",\"protection\":\"" << jsonEscape(br.protectionType)
        << "\",\"method\":\"" << jsonEscape(br.bypassMethod)
@@ -9051,8 +9047,8 @@ std::string SynapsedEngine::formatNaanAgentJson(const std::string& agentId) cons
         o["model_path"] = modelPath_;
         o["model_ready"] = inferenceReady_;
         o["inference_state"] = inferenceReady_ ? "ready" : (modelLoaded_ ? "registered" : "idle");
-        o["submissions"] = naanSubmissions_;
-        o["approved"] = naanApproved_;
+        o["submissions"] = careerCount(agentId, false, naanSubmissions_);
+        o["approved"] = careerCount(agentId, true, naanApproved_);
         for (const auto& e : naanLog_) {
             o["log"].push_back({{"ts", e.ts}, {"text", e.text}});
         }
@@ -9061,7 +9057,11 @@ std::string SynapsedEngine::formatNaanAgentJson(const std::string& agentId) cons
         }
         return o.dump();
     }
-    if (!slot) return o.dump();
+    if (!slot) {
+        o["submissions"] = careerCount(agentId, false, 0);
+        o["approved"] = careerCount(agentId, true, 0);
+        return o.dump();
+    }
     o["state"] = slot->state;
     o["error"] = slot->error;
     o["current_task"] = slot->running.load() ? slot->currentTask : "";
@@ -9071,8 +9071,8 @@ std::string SynapsedEngine::formatNaanAgentJson(const std::string& agentId) cons
     o["model_path"] = slot->modelMode == "own" && !slot->modelPath.empty() ? slot->modelPath : modelPath_;
     o["model_ready"] = inferenceReady_;
     o["inference_state"] = slot->inferenceState.empty() ? (inferenceReady_ ? "ready" : "idle") : slot->inferenceState;
-    o["submissions"] = slot->submissions;
-    o["approved"] = slot->approved;
+    o["submissions"] = careerCount(agentId, false, slot->submissions);
+    o["approved"] = careerCount(agentId, true, slot->approved);
     for (const auto& e : slot->log) {
         o["log"].push_back({{"ts", e.ts}, {"text", e.text}});
     }
@@ -9091,7 +9091,13 @@ std::string SynapsedEngine::startNaanAgent(const std::string& agentId) {
     {
         std::lock_guard<std::mutex> lock(mtx_);
         auto& ptr = naanAgents_[agentId];
-        if (!ptr) ptr = std::make_unique<NaanAgentSlot>();
+        if (!ptr) {
+            ptr = std::make_unique<NaanAgentSlot>();
+            // A fresh slot must keep the career. Otherwise the level chip
+            // reads 0 until the next harvest and looks like a reset.
+            ptr->submissions = careerCount(agentId, false, 0);
+            ptr->approved = careerCount(agentId, true, 0);
+        }
         slot = ptr.get();
         slot->id = agentId;
         applyCrewModelSettings(agentId);
@@ -9323,6 +9329,136 @@ std::string SynapsedEngine::naanControl(const std::string& paramsJson) {
         return "{\"ok\":true}";
     }
     return "{\"error\":\"unknown naan action\"}";
+}
+
+void SynapsedEngine::loadNaanCareer() {
+    bool raised = false;
+    {
+        std::ifstream in(dataDir_ + "/naan_career.json");
+        if (in.good()) {
+            const std::string content((std::istreambuf_iterator<char>(in)),
+                                      std::istreambuf_iterator<char>());
+            nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
+            if (!j.is_discarded() && j.is_object()) {
+                const nlohmann::json& agents =
+                    (j.contains("agents") && j["agents"].is_object()) ? j["agents"] : j;
+                std::lock_guard<std::mutex> lock(naanCareerMtx_);
+                for (auto it = agents.begin(); it != agents.end(); ++it) {
+                    if (it.key() == "v" || !it.value().is_object()) continue;
+                    int submissions = it.value().value("submissions", 0);
+                    int approved = it.value().value("approved", 0);
+                    if (submissions < 0) submissions = 0;
+                    if (approved < 0) approved = 0;
+                    NaanCareerRow& row = naanCareer_[it.key()];
+                    if (submissions > row.submissions) row.submissions = submissions;
+                    if (approved > row.approved) row.approved = approved;
+                }
+            }
+        }
+    }
+    // Older builds kept the tally in RAM only. Filed drafts are the floor
+    // we can still see. Failed fetches were never written, so they stay lost.
+    int filed = 0;
+    try {
+        std::error_code ec;
+        const std::filesystem::path dir = std::filesystem::path(dataDir_) / "knowledge";
+        if (std::filesystem::is_directory(dir, ec)) {
+            for (const auto& ent : std::filesystem::directory_iterator(dir, ec)) {
+                std::error_code fec;
+                if (ec || !ent.is_regular_file(fec) || fec) continue;
+                const std::string name = ent.path().filename().string();
+                if (name.rfind("draft_", 0) == 0) filed++;
+            }
+        }
+    } catch (...) {
+        filed = 0;
+    }
+    if (filed > 0) {
+        std::lock_guard<std::mutex> lock(naanCareerMtx_);
+        NaanCareerRow& row = naanCareer_["primary"];
+        if (filed > row.submissions) {
+            row.submissions = filed;
+            raised = true;
+        }
+        if (filed > row.approved) {
+            row.approved = filed;
+            raised = true;
+        }
+    }
+    if (raised) persistNaanCareer();
+}
+
+void SynapsedEngine::rememberNaanCareer(const std::string& agentId, int submissions, int approved) {
+    if (agentId.empty()) return;
+    if (submissions < 0) submissions = 0;
+    if (approved < 0) approved = 0;
+    {
+        std::lock_guard<std::mutex> lock(naanCareerMtx_);
+        NaanCareerRow& row = naanCareer_[agentId];
+        if (submissions > row.submissions) row.submissions = submissions;
+        if (approved > row.approved) row.approved = approved;
+    }
+    persistNaanCareer();
+}
+
+void SynapsedEngine::persistNaanCareer() {
+    nlohmann::json agents = nlohmann::json::object();
+    {
+        std::lock_guard<std::mutex> lock(naanCareerMtx_);
+        for (const auto& kv : naanCareer_) {
+            agents[kv.first] = {
+                {"submissions", kv.second.submissions},
+                {"approved", kv.second.approved},
+            };
+        }
+    }
+    nlohmann::json root;
+    root["v"] = 1;
+    root["agents"] = std::move(agents);
+    const std::string path = dataDir_ + "/naan_career.json";
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        if (!out.good()) return;
+        out << root.dump();
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {
+        std::filesystem::remove(path, ec);
+        std::filesystem::rename(tmp, path, ec);
+    }
+}
+
+int SynapsedEngine::careerCount(const std::string& agentId, bool approved, int live) const {
+    int saved = 0;
+    {
+        std::lock_guard<std::mutex> lock(naanCareerMtx_);
+        auto it = naanCareer_.find(agentId);
+        if (it != naanCareer_.end()) saved = approved ? it->second.approved : it->second.submissions;
+    }
+    if (live < 0) live = 0;
+    return saved > live ? saved : live;
+}
+
+void SynapsedEngine::clearNaanAutostart() {
+    // A checked SET box used to survive restart and bootTorMesh() treated
+    // that bit as "start harvesting as soon as Tor is up".
+    const std::string path = dataDir_ + "/settings.json";
+    std::ifstream sf(path);
+    if (!sf.good()) return;
+    const std::string content((std::istreambuf_iterator<char>(sf)),
+                              std::istreambuf_iterator<char>());
+    sf.close();
+    nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
+    if (j.is_discarded() || !j.is_object() || !j.contains("naan_enabled")) return;
+    bool want = false;
+    if (j["naan_enabled"].is_boolean()) want = j["naan_enabled"].get<bool>();
+    else if (j["naan_enabled"].is_number()) want = j["naan_enabled"].get<int>() != 0;
+    if (!want) return;
+    j["naan_enabled"] = false;
+    std::ofstream out(path, std::ios::trunc);
+    if (out.good()) out << j.dump();
 }
 
 void SynapsedEngine::loadNaanWebConfig() {
@@ -9677,6 +9813,7 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
                 }
                 slot->submissions++;
                 if (filed) slot->approved++;
+                rememberNaanCareer(agentId, slot->submissions, slot->approved);
                 std::string bypassTag;
                 if (!br.cveId.empty() && !html.empty()) {
                     bypassTag = " cve=" + br.cveId +
@@ -9703,8 +9840,11 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
                     naanCurrentTask_ = slot->currentTask;
                     naanLog_ = slot->log;
                     naanHist_ = slot->hist;
-                    naanSubmissions_ = slot->submissions;
-                    naanApproved_ = slot->approved;
+                    // Session counters. The career file holds the lifetime
+                    // tally the level chip reads. Assigning the slot total
+                    // here used to turn one harvest into the whole career.
+                    naanSubmissions_ += 1;
+                    if (filed) naanApproved_ += 1;
                     if (slot->state != "budget_exhausted") naanState_ = "active";
                 }
                 if (filed && !br.cveId.empty() && !html.empty()) {

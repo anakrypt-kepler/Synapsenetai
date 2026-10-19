@@ -24,6 +24,7 @@
   } from "../../lib/naanCrew";
   import { stationCatalog, findAgent, agentPortraitSrc, stationLook } from "../../lib/stationSkins";
   import { harvestLevel } from "../../lib/naanXp";
+  import { pushNotice, syncSticky } from "../../lib/notices";
   import { PRIMARY_NAAN_ID } from "../../lib/synapseHolo";
 
   let agentStatus = "OFF";
@@ -138,9 +139,11 @@
       const parsed = readRpcJson(result);
       if (parsed.error) {
         pollError = String(parsed.error).toUpperCase();
+        syncSticky("naan-status", true, "fault", "NAAN status failed", pollError);
         return;
       }
       pollError = "";
+      syncSticky("naan-status", false, "fault", "", "");
       agentStatus = String(parsed.state || "off").toUpperCase();
       const rate = Number(parsed.approval_rate);
       agentScore = {
@@ -237,6 +240,7 @@
       }
     } catch (e) {
       pollError = fmtErr(e, "NAAN.STATUS FAILED");
+      syncSticky("naan-status", true, "fault", "NAAN status failed", pollError);
     }
   }
 
@@ -263,6 +267,7 @@
     configMsg = "";
     if (!topicPreferences.trim()) {
       actionError = "TOPICS REQUIRED BEFORE START";
+      pushNotice("fault", "NAAN did not start", "Add topics before you start the agent.", 8000);
       return;
     }
     busy = true;
@@ -272,11 +277,13 @@
       const parsed = readRpcJson(raw);
       if (parsed.error) {
         actionError = String(parsed.error).toUpperCase();
+        pushNotice("fault", "NAAN did not start", actionError, 9000);
         return;
       }
       await loadAgentState();
     } catch (e) {
       actionError = fmtErr(e, "START FAILED");
+      pushNotice("fault", "NAAN did not start", actionError, 9000);
     } finally {
       busy = false;
     }
@@ -292,11 +299,13 @@
       const parsed = readRpcJson(raw);
       if (parsed.error) {
         actionError = String(parsed.error).toUpperCase();
+        pushNotice("fault", "NAAN did not stop", actionError, 9000);
         return;
       }
       await loadAgentState();
     } catch (e) {
       actionError = fmtErr(e, "STOP FAILED");
+      pushNotice("fault", "NAAN did not stop", actionError, 9000);
     } finally {
       busy = false;
     }
@@ -313,6 +322,7 @@
       await loadAgentState();
     } catch (e) {
       actionError = fmtErr(e, "CONFIG SAVE FAILED");
+      pushNotice("fault", "NAAN config did not save", actionError, 9000);
     } finally {
       busy = false;
     }

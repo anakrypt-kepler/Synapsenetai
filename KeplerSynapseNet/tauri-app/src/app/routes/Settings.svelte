@@ -11,6 +11,7 @@
     getStatus,
     type SystemInfo,
   } from "../../lib/rpc";
+  import { pushNotice } from "../../lib/notices";
   import ModelCatalog from "../components/ModelCatalog.svelte";
   import MinerLoader from "../components/MinerLoader.svelte";
   import PixelStage from "../components/sprites/PixelStage.svelte";
@@ -238,8 +239,14 @@
   async function persist(patch: Record<string, unknown>): Promise<string> {
     const parsed = parseRpc(await updateSettings(JSON.stringify(patch)));
     const err = rpcErr(parsed);
-    if (err) return err;
-    if (parsed.ok === false) return "SAVE FAILED";
+    if (err) {
+      pushNotice("fault", "A setting did not save", err, 9000);
+      return err;
+    }
+    if (parsed.ok === false) {
+      pushNotice("fault", "A setting did not save", "SAVE FAILED", 9000);
+      return "SAVE FAILED";
+    }
     return "";
   }
 
@@ -644,7 +651,7 @@
   <div class="section-title">NAAN Agent</div>
   <div class="card">
     <div class="chk"><label><input type="checkbox" bind:checked={naanEnabled} /> Enable NAAN</label></div>
-    <div class="hint">This checkbox starts and stops the agent. Topics below are what it searches.</div>
+    <div class="hint">This checkbox starts and stops the agent for this session. A restart leaves it off until you enable it again. Topics below are what it searches.</div>
     <div class="form-group">
       <label>Topics</label>
       <input type="text" bind:value={naanTopics} placeholder="AI, crypto" />

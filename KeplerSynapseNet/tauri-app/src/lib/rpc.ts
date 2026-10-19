@@ -185,6 +185,8 @@ export interface NodeStatus {
   bandwidth_in: number;
   bandwidth_out: number;
   version: string;
+  pqc_backend?: string;
+  kyber_real?: boolean;
 }
 
 export function parseStatus(raw: string): NodeStatus {
