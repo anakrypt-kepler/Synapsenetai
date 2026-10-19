@@ -12,6 +12,7 @@
     type SystemInfo,
   } from "../../lib/rpc";
   import ModelCatalog from "../components/ModelCatalog.svelte";
+  import MinerLoader from "../components/MinerLoader.svelte";
   import PixelStage from "../components/sprites/PixelStage.svelte";
   import PixelSprite from "../components/sprites/PixelSprite.svelte";
   import gearSprite from "../../assets/sprites/gear.svg";
@@ -23,6 +24,7 @@
     loadStationLookFromSettings,
     type StationLook,
   } from "../../lib/stationSkins";
+  import { beginPageLoad } from "../../lib/pageLoad";
 
   let connectionType = "tor";
   let bridgeLines = "";
@@ -159,17 +161,22 @@
   }
 
   async function loadAll() {
+    const done = beginPageLoad();
     loadStatus = "LOADING...";
     loadOk = false;
-    await loadPqc();
+    try {
     let sysNote = "";
+    const sysTask = getSystemInfo()
+      .then((info) => {
+        systemInfo = info;
+      })
+      .catch((e) => {
+        sysNote = "SYSTEM INFO: " + failText(e) + ". ";
+      });
+    const settingsTask = rpcCall("settings.get", "{}");
+    const [, settingsRaw] = await Promise.all([loadPqc(), settingsTask, sysTask]);
     try {
-      systemInfo = await getSystemInfo();
-    } catch (e) {
-      sysNote = "SYSTEM INFO: " + failText(e) + ". ";
-    }
-    try {
-      const parsed = parseRpc(await rpcCall("settings.get", "{}"));
+      const parsed = parseRpc(settingsRaw);
       const err = rpcErr(parsed);
       if (err) {
         loadStatus = sysNote + err;
@@ -223,6 +230,9 @@
       loadOk = !sysNote;
     }
     await loadPqc();
+    } finally {
+      done();
+    }
   }
 
   async function persist(patch: Record<string, unknown>): Promise<string> {
@@ -670,6 +680,9 @@
       {/if}
       <button class="btn-secondary" on:click={selectAvatar}>Set avatar</button>
     </div>
+    {#if avatarStatus === "STRIPPING METADATA..."}
+      <MinerLoader width={168} label="Stripping metadata" />
+    {/if}
     {#if avatarStatus}<div class="flash" class:ok={avatarOk} class:err={!avatarOk && !avatarStatus.endsWith("...")}>{avatarStatus}</div>{/if}
     <div class="form-group">
       <label>Alias (optional)</label>

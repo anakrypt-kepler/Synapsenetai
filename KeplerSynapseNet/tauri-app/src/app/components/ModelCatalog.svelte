@@ -2,6 +2,7 @@
   // Curated HuggingFace GGUF list. Engine allowlists ids; UI never sends a raw URL.
   import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import { rpcCall, modelLoad } from "../../lib/rpc";
+  import MinerLoader from "./MinerLoader.svelte";
 
   const dispatch = createEventDispatcher();
 
@@ -159,12 +160,7 @@
   {#each models as row}
     <div class="row" class:active={dl.id === row.id && dl.running}>
       <div class="meta">
-        <span class="name">
-          {#if busyId === row.id && !(dl.running && dl.id === row.id)}
-            <span class="ks-spinner" aria-hidden="true"></span>
-          {/if}
-          {row.name}
-        </span>
+        <span class="name">{row.name}</span>
         <span class="size">{fmtMb(row.size_bytes)} · ~{row.ram_mb} MB RAM</span>
         <span class="desc">{row.note}</span>
       </div>
@@ -180,7 +176,7 @@
       {#if dl.id === row.id && (dl.running || dl.failed)}
         <div class="dl-line">
           {#if dl.running}
-            <span class="ks-spinner" aria-hidden="true"></span>
+            <MinerLoader width={168} label="Downloading model" />
           {/if}
           <div class="bar-wrap">
             <div class="bar" style="width: {Math.min(100, dl.pct)}%"></div>
@@ -274,7 +270,8 @@
 
   .dl-line {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: stretch;
     gap: 10px;
     width: 100%;
   }
@@ -298,12 +295,6 @@
     font-size: 12px;
     color: var(--text-primary, #f5f5f7);
     width: 100%;
-  }
-
-  .ks-spinner {
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
   }
 
   .catalog :global(button) {

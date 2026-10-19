@@ -25,7 +25,14 @@
 #include <map>
 #include <regex>
 
-#define SYSTEM_IGNORE(cmd) do { (void)!system(cmd); } while(0)
+// system() on Windows is cmd.exe with a real console. This GUI app then
+// flashes a black window for every harvest call. hiddenSystem runs the same
+// command with no console; the Unix path stays system().
+#ifdef _WIN32
+#define SYSTEM_IGNORE(cmd) do { (void)hiddenSystem(cmd); } while (0)
+#else
+#define SYSTEM_IGNORE(cmd) do { (void)!system(cmd); } while (0)
+#endif
 #include <cctype>
 #include <filesystem>
 #include <cstdio>
@@ -44,8 +51,18 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <winhttp.h>
+#include <objidl.h>
+#include <algorithm>
+namespace Gdiplus {
+using std::min;
+using std::max;
+}
+#include <gdiplus.h>
 #include <dirent.h>
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "gdiplus.lib")
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -112,7 +129,121 @@ int64_t nowMillis() {
                std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
+#ifdef _WIN32
+// Run cmd.exe with no console. STARTF_USESHOWWINDOW + SW_HIDE still asks
+// Windows Terminal (the default host on Windows 11) to create a window and
+// then hide it, which is the flash. CREATE_NO_WINDOW plus a NUL stdin and an
+// explicit inherit list does not. A GUI process has no real stdin handle;
+// passing that NULL handle makes the system allocate a console anyway.
+struct HiddenCmd {
+    std::string output;
+    DWORD exitCode = static_cast<DWORD>(-1);
+    bool started = false;
+};
+
+HiddenCmd runCmdHidden(const std::string& cmd) {
+    HiddenCmd result;
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+
+    HANDLE nul = CreateFileA("NUL", GENERIC_READ,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE readPipe = nullptr;
+    HANDLE writePipe = nullptr;
+    if (nul == INVALID_HANDLE_VALUE || !CreatePipe(&readPipe, &writePipe, &sa, 0)) {
+        if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
+        if (readPipe) CloseHandle(readPipe);
+        if (writePipe) CloseHandle(writePipe);
+        return result;
+    }
+    SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
+
+    HANDLE inherit[2] = {nul, writePipe};
+    STARTUPINFOEXA six{};
+    six.StartupInfo.cb = sizeof(six);
+    six.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    six.StartupInfo.hStdInput = nul;
+    six.StartupInfo.hStdOutput = writePipe;
+    six.StartupInfo.hStdError = writePipe;
+
+    SIZE_T attrBytes = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attrBytes);
+    std::vector<unsigned char> attr(attrBytes ? attrBytes : 1);
+    bool haveList = false;
+    bool listed = false;
+    if (attrBytes > 0 &&
+        InitializeProcThreadAttributeList(
+            reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr.data()),
+            1, 0, &attrBytes)) {
+        haveList = true;
+        six.lpAttributeList =
+            reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr.data());
+        listed = UpdateProcThreadAttribute(
+                     six.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                     inherit, sizeof(inherit), nullptr, nullptr) != FALSE;
+    }
+
+    char sysDir[MAX_PATH] = {};
+    const UINT ndir = GetSystemDirectoryA(sysDir, MAX_PATH);
+    std::string exe = (ndir > 0 && ndir < MAX_PATH)
+                          ? (std::string(sysDir) + "\\cmd.exe")
+                          : std::string("cmd.exe");
+    std::string line = "\"" + exe + "\" /d /c " + cmd;
+    std::vector<char> mutableCmd(line.begin(), line.end());
+    mutableCmd.push_back('\0');
+
+    PROCESS_INFORMATION pi{};
+    DWORD flags = CREATE_NO_WINDOW;
+    BOOL ok = FALSE;
+    if (listed) {
+        flags |= EXTENDED_STARTUPINFO_PRESENT;
+        ok = CreateProcessA(nullptr, mutableCmd.data(), nullptr, nullptr, TRUE,
+                            flags, nullptr, nullptr, &six.StartupInfo, &pi);
+    }
+    if (!ok) {
+        STARTUPINFOA si{};
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdInput = nul;
+        si.hStdOutput = writePipe;
+        si.hStdError = writePipe;
+        ok = CreateProcessA(nullptr, mutableCmd.data(), nullptr, nullptr, TRUE,
+                            CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    }
+    if (haveList) DeleteProcThreadAttributeList(six.lpAttributeList);
+    CloseHandle(writePipe);
+    CloseHandle(nul);
+    if (!ok) {
+        CloseHandle(readPipe);
+        return result;
+    }
+    result.started = true;
+    char buf[4096];
+    DWORD n = 0;
+    while (ReadFile(readPipe, buf, sizeof(buf), &n, nullptr) && n > 0)
+        result.output.append(buf, buf + n);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    GetExitCodeProcess(pi.hProcess, &result.exitCode);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    CloseHandle(readPipe);
+    return result;
+}
+
+int hiddenSystem(const char* cmd) {
+    if (!cmd || !cmd[0]) return -1;
+    const HiddenCmd ran = runCmdHidden(cmd);
+    if (!ran.started) return -1;
+    return static_cast<int>(ran.exitCode);
+}
+#endif
+
 std::string execCmd(const std::string& cmd) {
+#ifdef _WIN32
+    return runCmdHidden(cmd).output;
+#else
     std::array<char, 4096> buf;
     std::string out;
     FILE* p = POPEN(cmd.c_str(), "r");
@@ -120,6 +251,7 @@ std::string execCmd(const std::string& cmd) {
     while (fgets(buf.data(), buf.size(), p)) out += buf.data();
     PCLOSE(p);
     return out;
+#endif
 }
 
 std::string trim(const std::string& s) {
@@ -176,6 +308,7 @@ std::vector<std::string> parseTopicCsv(const std::string& csv) {
     return out;
 }
 
+#ifndef _WIN32
 static const char* kStripAvatarPy = R"PY(
 import sys
 from PIL import Image, ImageOps
@@ -200,6 +333,143 @@ png.save(dest_png, format="PNG", optimize=True)
 jpg = sq.resize((48, 48), getattr(Image, "Resampling", Image).LANCZOS)
 jpg.save(dest_jpg, format="JPEG", quality=70, optimize=True)
 )PY";
+#endif
+
+#ifdef _WIN32
+std::wstring utf8ToWidePath(const std::string& s) {
+    if (s.empty()) return L"";
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    if (n <= 0) return L"";
+    std::wstring out(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, out.data(), n);
+    if (!out.empty() && out.back() == L'\0') out.pop_back();
+    return out;
+}
+
+bool ensureGdiplus(std::string& err) {
+    static ULONG_PTR token = 0;
+    static int state = 0;
+    if (state == 1) return true;
+    if (state < 0) {
+        err = "gdiplus unavailable";
+        return false;
+    }
+    Gdiplus::GdiplusStartupInput input;
+    if (Gdiplus::GdiplusStartup(&token, &input, nullptr) != Gdiplus::Ok) {
+        state = -1;
+        err = "gdiplus unavailable";
+        return false;
+    }
+    state = 1;
+    return true;
+}
+
+bool imageEncoderClsid(const wchar_t* mime, CLSID* clsid) {
+    UINT count = 0;
+    UINT bytes = 0;
+    if (Gdiplus::GetImageEncodersSize(&count, &bytes) != Gdiplus::Ok || bytes == 0) return false;
+    std::vector<unsigned char> mem(bytes);
+    auto* info = reinterpret_cast<Gdiplus::ImageCodecInfo*>(mem.data());
+    if (Gdiplus::GetImageEncoders(count, bytes, info) != Gdiplus::Ok) return false;
+    for (UINT i = 0; i < count; ++i) {
+        if (info[i].MimeType && wcscmp(info[i].MimeType, mime) == 0) {
+            *clsid = info[i].Clsid;
+            return true;
+        }
+    }
+    return false;
+}
+
+void applyExifOrientation(Gdiplus::Bitmap& image) {
+    const UINT tag = 0x0112;
+    const UINT bytes = image.GetPropertyItemSize(tag);
+    if (bytes < sizeof(Gdiplus::PropertyItem) + 2) return;
+    std::vector<unsigned char> mem(bytes);
+    auto* item = reinterpret_cast<Gdiplus::PropertyItem*>(mem.data());
+    if (image.GetPropertyItem(tag, bytes, item) != Gdiplus::Ok || item->length < 2 || !item->value)
+        return;
+    const unsigned short orient = *reinterpret_cast<unsigned short*>(item->value);
+    Gdiplus::RotateFlipType flip = Gdiplus::RotateNoneFlipNone;
+    switch (orient) {
+        case 2: flip = Gdiplus::RotateNoneFlipX; break;
+        case 3: flip = Gdiplus::Rotate180FlipNone; break;
+        case 4: flip = Gdiplus::RotateNoneFlipY; break;
+        case 5: flip = Gdiplus::Rotate90FlipX; break;
+        case 6: flip = Gdiplus::Rotate90FlipNone; break;
+        case 7: flip = Gdiplus::Rotate270FlipX; break;
+        case 8: flip = Gdiplus::Rotate270FlipNone; break;
+        default: return;
+    }
+    image.RotateFlip(flip);
+}
+
+bool saveScaledBitmap(Gdiplus::Bitmap& square, int side, const std::wstring& path,
+                      int dim, const wchar_t* mime, bool jpeg) {
+    Gdiplus::Bitmap out(dim, dim, PixelFormat24bppRGB);
+    Gdiplus::Graphics g(&out);
+    g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+    if (g.DrawImage(&square, Gdiplus::Rect(0, 0, dim, dim), 0, 0, side, side, Gdiplus::UnitPixel) != Gdiplus::Ok)
+        return false;
+    CLSID clsid{};
+    if (!imageEncoderClsid(mime, &clsid)) return false;
+    if (!jpeg) return out.Save(path.c_str(), &clsid, nullptr) == Gdiplus::Ok;
+    ULONG quality = 70;
+    Gdiplus::EncoderParameters params;
+    params.Count = 1;
+    params.Parameter[0].Guid = Gdiplus::EncoderQuality;
+    params.Parameter[0].Type = Gdiplus::EncoderParameterValueTypeLong;
+    params.Parameter[0].NumberOfValues = 1;
+    params.Parameter[0].Value = &quality;
+    return out.Save(path.c_str(), &clsid, &params) == Gdiplus::Ok;
+}
+
+// Re-encode a square crop. A fresh bitmap has no EXIF, GPS, or device tags.
+bool stripAvatarWindows(const std::string& src, const std::string& destPng,
+                        const std::string& destJpg, std::string& err) {
+    err.clear();
+    if (!ensureGdiplus(err)) return false;
+    const std::wstring wsrc = utf8ToWidePath(src);
+    const std::wstring wpng = utf8ToWidePath(destPng);
+    const std::wstring wjpg = utf8ToWidePath(destJpg);
+    if (wsrc.empty() || wpng.empty() || wjpg.empty()) {
+        err = "bad path";
+        return false;
+    }
+    std::unique_ptr<Gdiplus::Bitmap> image(Gdiplus::Bitmap::FromFile(wsrc.c_str(), FALSE));
+    if (!image || image->GetLastStatus() != Gdiplus::Ok) {
+        err = "unreadable image";
+        return false;
+    }
+    applyExifOrientation(*image);
+    const int w = static_cast<int>(image->GetWidth());
+    const int h = static_cast<int>(image->GetHeight());
+    const int side = std::min(w, h);
+    if (side < 8) {
+        err = "image too small";
+        return false;
+    }
+    const int left = (w - side) / 2;
+    const int top = (h - side) / 2;
+    Gdiplus::Bitmap square(side, side, PixelFormat24bppRGB);
+    Gdiplus::Graphics g(&square);
+    g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+    Gdiplus::SolidBrush bg(Gdiplus::Color(255, 18, 18, 18));
+    g.FillRectangle(&bg, 0, 0, side, side);
+    if (g.DrawImage(image.get(), Gdiplus::Rect(0, 0, side, side), left, top, side, side, Gdiplus::UnitPixel) != Gdiplus::Ok) {
+        err = "could not strip image metadata";
+        return false;
+    }
+    image.reset();
+    if (!saveScaledBitmap(square, side, wpng, 128, L"image/png", false) ||
+        !saveScaledBitmap(square, side, wjpg, 48, L"image/jpeg", true)) {
+        err = "could not write avatar";
+        return false;
+    }
+    return true;
+}
+#endif
 
 std::string extractDomain(const std::string& url) {
     size_t start = url.find("://");
@@ -4463,17 +4733,25 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         if (!src.good()) return "{\"error\":\"file not found\"}";
         src.close();
 
+        std::string destPng = dataDir_ + "/avatar.png";
+        std::string destJpg = dataDir_ + "/avatar_mesh.jpg";
+#ifdef _WIN32
+        std::string stripErr;
+        if (!stripAvatarWindows(srcPath, destPng, destJpg, stripErr)) {
+            if (stripErr.empty()) stripErr = "could not strip image metadata";
+            return "{\"error\":\"" + jsonEscape(stripErr) + "\"}";
+        }
+#else
         std::string pyPath = dataDir_ + "/strip_avatar.py";
         {
             std::ofstream py(pyPath, std::ios::trunc);
             py << kStripAvatarPy;
         }
-        std::string destPng = dataDir_ + "/avatar.png";
-        std::string destJpg = dataDir_ + "/avatar_mesh.jpg";
         std::string cmd = "python3 " + shQuote(pyPath) + " " + shQuote(srcPath) + " " +
                           shQuote(destPng) + " " + shQuote(destJpg) + " 2>/dev/null";
         int rc = std::system(cmd.c_str());
         if (rc != 0) return "{\"error\":\"could not strip image metadata\"}";
+#endif
         restrictSecretFile(destPng);
         restrictSecretFile(destJpg);
 
@@ -4617,7 +4895,19 @@ std::string SynapsedEngine::getStatus() const {
     j["connection"] = connectionType_;
     j["peers"] = peerCount_;
     j["balance"] = balance_;
+    std::string naanTask;
+    std::string naanTopics;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        naanTask = naanCurrentTask_;
+        for (size_t i = 0; i < cfgTopics_.size(); ++i) {
+            if (i) naanTopics += ", ";
+            naanTopics += cfgTopics_[i];
+        }
+    }
     j["naan_state"] = naanState_;
+    j["naan_task"] = naanTask;
+    j["naan_topics"] = naanTopics;
     j["last_block"] = localChainHeight();
     j["model_loaded"] = modelLoaded_;
     j["model_name"] = modelName_;
@@ -7912,16 +8202,10 @@ std::vector<std::string> SynapsedEngine::extractTitles(const std::string& html) 
 }
 
 std::string SynapsedEngine::sha256Hex(const std::string& data) const {
-    std::string tmpFile = "" + dataDir_ + "/sha_" + std::to_string(nowMillis());
-    {
-        std::ofstream f(tmpFile, std::ios::binary);
-        f.write(data.c_str(), data.size());
-    }
-    std::string result = execCmd("openssl dgst -sha256 -hex " + tmpFile + " 2>/dev/null");
-    std::remove(tmpFile.c_str());
-    size_t eq = result.rfind("= ");
-    if (eq != std::string::npos) return trim(result.substr(eq + 2));
-    return trim(result);
+    // In process. The old path wrote a temp file and ran `openssl dgst`, which
+    // is a console program. Starting NAAN calls this several times in a row,
+    // and each one flashed a window on Windows.
+    return synapse::crypto::sha256Hex(data);
 }
 
 void SynapsedEngine::ensureSigningKey() const {
@@ -7933,6 +8217,48 @@ void SynapsedEngine::ensureSigningKey() const {
 }
 
 std::string SynapsedEngine::ed25519Sign(const std::string& data) const {
+#ifdef _WIN32
+    // openssl genpkey / pkeyutl are console programs and are not on PATH here.
+    // Sign with the libsodium key already linked into this DLL.
+    if (sodium_init() < 0) return "";
+    unsigned char seed[crypto_sign_SEEDBYTES];
+    const std::string seedPath = dataDir_ + "/node_ed25519.seed";
+    bool haveSeed = false;
+    {
+        std::ifstream in(seedPath, std::ios::binary);
+        if (in.good()) {
+            in.read(reinterpret_cast<char*>(seed), sizeof(seed));
+            haveSeed = in.gcount() == static_cast<std::streamsize>(sizeof(seed));
+        }
+    }
+    if (!haveSeed) {
+        randombytes_buf(seed, sizeof(seed));
+        std::ofstream out(seedPath, std::ios::binary | std::ios::trunc);
+        if (out.good()) out.write(reinterpret_cast<const char*>(seed), sizeof(seed));
+    }
+    unsigned char pk[crypto_sign_PUBLICKEYBYTES];
+    unsigned char sk[crypto_sign_SECRETKEYBYTES];
+    if (crypto_sign_seed_keypair(pk, sk, seed) != 0) {
+        sodium_memzero(seed, sizeof(seed));
+        return "";
+    }
+    unsigned char sig[crypto_sign_BYTES];
+    unsigned long long sigLen = 0;
+    const int rc = crypto_sign_detached(
+        sig, &sigLen,
+        reinterpret_cast<const unsigned char*>(data.data()), data.size(), sk);
+    sodium_memzero(sk, sizeof(sk));
+    sodium_memzero(seed, sizeof(seed));
+    if (rc != 0) return "";
+    std::string hex;
+    hex.reserve(static_cast<size_t>(sigLen) * 2);
+    for (unsigned long long i = 0; i < sigLen; ++i) {
+        char tmp[3];
+        snprintf(tmp, sizeof(tmp), "%02x", sig[i]);
+        hex += tmp;
+    }
+    return hex;
+#else
     ensureSigningKey();
     std::string keyPath = dataDir_ + "/node_ed25519.pem";
     std::string tmpIn = "" + dataDir_ + "/sign_in_" + std::to_string(nowMillis());
@@ -7960,12 +8286,14 @@ std::string SynapsedEngine::ed25519Sign(const std::string& data) const {
         hex += tmp;
     }
     return hex;
+#endif
 }
 
 void SynapsedEngine::persistDraft(const NaanDraft& d, const std::string& hash) const {
     std::string dir = dataDir_ + "/knowledge";
-    std::string mkd = "mkdir -p " + dir;
-    SYSTEM_IGNORE(mkd.c_str());
+    // mkdir -p goes through cmd.exe and flashes a console on this GUI app.
+    std::error_code mkEc;
+    std::filesystem::create_directories(dir, mkEc);
     std::string hash12 = hash.size() >= 12 ? hash.substr(0, 12) : hash;
     std::string fname = dir + "/draft_" + std::to_string(nowMillis()) + "_" + hash12 + ".json";
     std::ofstream f(fname);
@@ -8143,7 +8471,8 @@ SynapsedEngine::HarvestPayload SynapsedEngine::extractAssets(
     }
 
     std::string assetsDir = dataDir_ + "/knowledge/assets";
-    SYSTEM_IGNORE(("mkdir -p " + assetsDir).c_str());
+    std::error_code mkEc;
+    std::filesystem::create_directories(assetsDir, mkEc);
     bool isOnion = baseUrl.find(".onion") != std::string::npos;
     int downloaded = 0;
 
@@ -8186,7 +8515,8 @@ SynapsedEngine::HarvestPayload SynapsedEngine::extractAssets(
 
         if (verdict.find("malicious") != std::string::npos) {
             std::string quarDir = dataDir_ + "/knowledge/quarantine";
-            SYSTEM_IGNORE(("mkdir -p " + quarDir).c_str());
+            std::error_code quarEc;
+            std::filesystem::create_directories(quarDir, quarEc);
             std::rename(finalPath.c_str(), (quarDir + "/" + sha + ext).c_str());
             finalPath = quarDir + "/" + sha + ext;
         }
@@ -8319,7 +8649,8 @@ std::string SynapsedEngine::vtScanFile(const std::string& sha256,
 void SynapsedEngine::persistHarvest(const NaanDraft& d, const std::string& hash,
     const HarvestPayload& payload) const {
     std::string dir = dataDir_ + "/knowledge";
-    SYSTEM_IGNORE(("mkdir -p " + dir).c_str());
+    std::error_code mkEc;
+    std::filesystem::create_directories(dir, mkEc);
     std::string hash12 = hash.size() >= 12 ? hash.substr(0, 12) : hash;
     std::string fname = dir + "/harvest_" + std::to_string(nowMillis()) + "_" + hash12 + ".json";
     std::ofstream f(fname);
@@ -8364,23 +8695,38 @@ void SynapsedEngine::persistHarvest(const NaanDraft& d, const std::string& hash,
 }
 
 std::string SynapsedEngine::harvestList(int offset, int limit) const {
-    std::string dir = dataDir_ + "/knowledge";
-    std::string cmd = "ls -1t " + dir + "/harvest_*.json 2>/dev/null";
-    std::string listing = execCmd(cmd);
-    if (listing.empty()) return "[]";
+    // Read the folder directly. `ls` goes through cmd.exe and flashes a console
+    // on every visit to the Harvest tab.
+    if (offset < 0) offset = 0;
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(dataDir_) / "knowledge";
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return "[]";
 
-    std::vector<std::string> files;
-    std::istringstream iss(listing);
-    std::string line;
-    while (std::getline(iss, line)) {
-        if (!line.empty()) files.push_back(line);
+    struct Row {
+        fs::path path;
+        fs::file_time_type stamp;
+    };
+    std::vector<Row> files;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        if (ec) break;
+        std::error_code fec;
+        if (!it->is_regular_file(fec)) continue;
+        const std::string name = it->path().filename().string();
+        if (name.size() < 13 || name.compare(0, 8, "harvest_") != 0) continue;
+        if (name.compare(name.size() - 5, 5, ".json") != 0) continue;
+        files.push_back(Row{it->path(), it->last_write_time(fec)});
     }
+    std::sort(files.begin(), files.end(), [](const Row& a, const Row& b) {
+        if (a.stamp != b.stamp) return a.stamp > b.stamp;
+        return a.path.filename().string() > b.path.filename().string();
+    });
 
     std::ostringstream out;
     out << "[";
     int written = 0;
     for (int i = offset; i < static_cast<int>(files.size()) && written < limit; i++) {
-        std::ifstream f(files[i]);
+        std::ifstream f(files[i].path);
         if (!f.good()) continue;
         std::string content((std::istreambuf_iterator<char>(f)),
                             std::istreambuf_iterator<char>());
@@ -8412,15 +8758,37 @@ std::string SynapsedEngine::harvestList(int offset, int limit) const {
 }
 
 std::string SynapsedEngine::harvestGet(const std::string& sha256) const {
-    std::string dir = dataDir_ + "/knowledge";
-    std::string pattern = "harvest_*" + sha256.substr(0, 12) + ".json";
-    std::string cmd = "ls -1 " + dir + "/" + pattern + " 2>/dev/null | head -1";
-    std::string path = execCmd(cmd);
-    while (!path.empty() && (path.back() == '\n' || path.back() == '\r'))
-        path.pop_back();
-    if (path.empty()) return "{\"error\":\"not found\"}";
+    if (sha256.size() < 12) return "{\"error\":\"not found\"}";
+    const std::string prefix = sha256.substr(0, 12);
+    for (unsigned char c : prefix) {
+        if (!std::isxdigit(c)) return "{\"error\":\"not found\"}";
+    }
+    const std::string suffix = prefix + ".json";
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(dataDir_) / "knowledge";
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return "{\"error\":\"not found\"}";
 
-    std::ifstream f(path);
+    fs::path found;
+    fs::file_time_type newest{};
+    bool any = false;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        if (ec) break;
+        const std::string name = it->path().filename().string();
+        if (name.compare(0, 8, "harvest_") != 0) continue;
+        if (name.size() < suffix.size()) continue;
+        if (name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
+        std::error_code fec;
+        const auto stamp = it->last_write_time(fec);
+        if (!any || stamp >= newest) {
+            any = true;
+            newest = stamp;
+            found = it->path();
+        }
+    }
+    if (!any) return "{\"error\":\"not found\"}";
+
+    std::ifstream f(found);
     if (!f.good()) return "{\"error\":\"read failed\"}";
     std::string content((std::istreambuf_iterator<char>(f)),
                         std::istreambuf_iterator<char>());
@@ -9643,7 +10011,15 @@ std::string SynapsedEngine::modelDownloadStatusJson() const {
 std::string SynapsedEngine::modelDownloadCancel() {
     modelDlStop_.store(true);
     long pid = modelDlPid_.load();
-#ifndef _WIN32
+#ifdef _WIN32
+    if (pid > 0) {
+        HANDLE proc = OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
+        if (proc) {
+            TerminateProcess(proc, 1);
+            CloseHandle(proc);
+        }
+    }
+#else
     if (pid > 1) {
         kill(static_cast<pid_t>(pid), SIGTERM);
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -9660,6 +10036,286 @@ std::string SynapsedEngine::modelDownloadCancel() {
     }
     return "{\"ok\":true}";
 }
+
+#ifdef _WIN32
+namespace {
+
+struct WinHttpHandle {
+    HINTERNET h = nullptr;
+    ~WinHttpHandle() { if (h) WinHttpCloseHandle(h); }
+    WinHttpHandle() = default;
+    WinHttpHandle(const WinHttpHandle&) = delete;
+    WinHttpHandle& operator=(const WinHttpHandle&) = delete;
+    void reset(HINTERNET next = nullptr) {
+        if (h) WinHttpCloseHandle(h);
+        h = next;
+    }
+};
+
+std::wstring utf8ToWide(const std::string& s) {
+    if (s.empty()) return L"";
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    if (n <= 0) return L"";
+    std::wstring out(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, out.data(), n);
+    if (!out.empty() && out.back() == L'\0') out.pop_back();
+    return out;
+}
+
+std::string wideToUtf8(const std::wstring& s) {
+    if (s.empty()) return "";
+    int n = WideCharToMultiByte(CP_UTF8, 0, s.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (n <= 0) return "";
+    std::string out(static_cast<size_t>(n), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, s.c_str(), -1, out.data(), n, nullptr, nullptr);
+    if (!out.empty() && out.back() == '\0') out.pop_back();
+    return out;
+}
+
+// Direct HTTPS into dest.partial. Follows HuggingFace redirects itself so a
+// Range resume still reaches the CDN. No child process, so no console window.
+bool winhttpDownload(const std::string& url, const std::string& partial,
+                     const std::atomic<bool>& stop, std::string& err) {
+    err.clear();
+    std::string current = url;
+    WinHttpHandle ses;
+    ses.reset(WinHttpOpen(L"SynapseNet/0.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                          WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    if (!ses.h) {
+        err = "winhttp open failed";
+        return false;
+    }
+    WinHttpSetTimeouts(ses.h, 15000, 20000, 20000, 20000);
+    DWORD protocols = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
+#ifdef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3
+    protocols |= WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3;
+#endif
+    WinHttpSetOption(ses.h, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols));
+    DWORD never = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+    WinHttpSetOption(ses.h, WINHTTP_OPTION_REDIRECT_POLICY, &never, sizeof(never));
+
+    const uint64_t already = fileSizeOr0(partial);
+    for (int hop = 0; hop < 8; ++hop) {
+        if (stop.load()) {
+            err = "cancelled";
+            return false;
+        }
+        const std::wstring wurl = utf8ToWide(current);
+        if (wurl.empty()) {
+            err = "bad url";
+            return false;
+        }
+        wchar_t host[512];
+        wchar_t path[4096];
+        wchar_t extra[4096];
+        URL_COMPONENTSW parts{};
+        parts.dwStructSize = sizeof(parts);
+        parts.lpszHostName = host;
+        parts.dwHostNameLength = static_cast<DWORD>(sizeof(host) / sizeof(host[0]));
+        parts.lpszUrlPath = path;
+        parts.dwUrlPathLength = static_cast<DWORD>(sizeof(path) / sizeof(path[0]));
+        parts.lpszExtraInfo = extra;
+        parts.dwExtraInfoLength = static_cast<DWORD>(sizeof(extra) / sizeof(extra[0]));
+        if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &parts) || parts.nScheme != INTERNET_SCHEME_HTTPS) {
+            err = "bad url";
+            return false;
+        }
+        std::wstring target(path, parts.dwUrlPathLength);
+        if (parts.dwExtraInfoLength > 0) target.append(extra, parts.dwExtraInfoLength);
+
+        WinHttpHandle con;
+        con.reset(WinHttpConnect(ses.h, host, parts.nPort, 0));
+        if (!con.h) {
+            err = "winhttp connect failed";
+            return false;
+        }
+        WinHttpHandle req;
+        req.reset(WinHttpOpenRequest(con.h, L"GET", target.c_str(), nullptr,
+                                     WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                     WINHTTP_FLAG_SECURE));
+        if (!req.h) {
+            err = "winhttp request failed";
+            return false;
+        }
+        WinHttpSetOption(req.h, WINHTTP_OPTION_REDIRECT_POLICY, &never, sizeof(never));
+        if (already > 0) {
+            const std::wstring range = L"Range: bytes=" + std::to_wstring(already) + L"-\r\n";
+            WinHttpAddRequestHeaders(req.h, range.c_str(), static_cast<DWORD>(-1), WINHTTP_ADDREQ_FLAG_ADD);
+        }
+        if (!WinHttpSendRequest(req.h, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+            !WinHttpReceiveResponse(req.h, nullptr)) {
+            err = "winhttp send failed " + std::to_string(GetLastError());
+            return false;
+        }
+        DWORD status = 0;
+        DWORD statusBytes = sizeof(status);
+        if (!WinHttpQueryHeaders(req.h, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                 WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusBytes,
+                                 WINHTTP_NO_HEADER_INDEX)) {
+            err = "winhttp status failed";
+            return false;
+        }
+        if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
+            wchar_t loc[4096];
+            DWORD locBytes = sizeof(loc);
+            if (!WinHttpQueryHeaders(req.h, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX,
+                                     loc, &locBytes, WINHTTP_NO_HEADER_INDEX)) {
+                err = "redirect without location";
+                return false;
+            }
+            std::wstring wloc(loc);
+            if (wloc.rfind(L"https://", 0) == 0) {
+                current = wideToUtf8(wloc);
+                continue;
+            }
+            if (wloc.rfind(L"http://", 0) == 0) {
+                err = "refusing http redirect";
+                return false;
+            }
+            if (!wloc.empty() && wloc[0] == L'/') {
+                std::wstring abs = L"https://";
+                abs.append(host, parts.dwHostNameLength);
+                if (parts.nPort != 443) abs += L":" + std::to_wstring(parts.nPort);
+                abs += wloc;
+                current = wideToUtf8(abs);
+                continue;
+            }
+            err = "bad redirect";
+            return false;
+        }
+
+        bool append = false;
+        if (status == 206 && already > 0) {
+            append = true;
+        } else if (status == 200) {
+            append = false;
+        } else {
+            err = "http " + std::to_string(status);
+            return false;
+        }
+
+        uint64_t contentLength = 0;
+        bool haveLength = false;
+        DWORD lenValue = 0;
+        DWORD lenBytes = sizeof(lenValue);
+        if (WinHttpQueryHeaders(req.h, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                                WINHTTP_HEADER_NAME_BY_INDEX, &lenValue, &lenBytes,
+                                WINHTTP_NO_HEADER_INDEX)) {
+            contentLength = lenValue;
+            haveLength = true;
+        }
+
+        std::ofstream out(partial, std::ios::binary | (append ? std::ios::app : std::ios::trunc));
+        if (!out) {
+            err = "cannot write partial file";
+            return false;
+        }
+        uint64_t written = 0;
+        uint8_t buf[64 * 1024];
+        for (;;) {
+            if (stop.load()) {
+                err = "cancelled";
+                out.close();
+                return false;
+            }
+            DWORD avail = 0;
+            if (!WinHttpQueryDataAvailable(req.h, &avail)) {
+                err = "winhttp read failed " + std::to_string(GetLastError());
+                out.close();
+                return false;
+            }
+            if (avail == 0) break;
+            while (avail > 0) {
+                if (stop.load()) {
+                    err = "cancelled";
+                    out.close();
+                    return false;
+                }
+                const DWORD chunk = avail > sizeof(buf) ? static_cast<DWORD>(sizeof(buf)) : avail;
+                DWORD got = 0;
+                if (!WinHttpReadData(req.h, buf, chunk, &got)) {
+                    err = "winhttp read failed " + std::to_string(GetLastError());
+                    out.close();
+                    return false;
+                }
+                if (got == 0) {
+                    avail = 0;
+                    break;
+                }
+                out.write(reinterpret_cast<const char*>(buf), got);
+                out.flush();
+                written += got;
+                avail -= got;
+            }
+        }
+        out.close();
+        if (haveLength && written != contentLength) {
+            err = "incomplete download";
+            return false;
+        }
+        return true;
+    }
+    err = "too many redirects";
+    return false;
+}
+
+// Tor downloads stay on the session SOCKS port. curl.exe is hidden so it
+// does not flash a console the way a naked cmd window would.
+bool hiddenCurlDownload(const std::string& url, const std::string& partial, int socksPort,
+                        std::atomic<bool>& stop, std::atomic<long>& pidSlot, std::string& err) {
+    err.clear();
+    char found[MAX_PATH];
+    std::string curl = "C:\\Windows\\System32\\curl.exe";
+    DWORD n = SearchPathA(nullptr, "curl.exe", nullptr, MAX_PATH, found, nullptr);
+    if (n > 0 && n < MAX_PATH) curl = found;
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(curl, ec)) {
+        err = "curl.exe not found";
+        return false;
+    }
+    std::string cmd = "\"" + curl + "\" -L --fail -C - --retry 5 --retry-delay 3 --connect-timeout 30"
+                      " -A SynapseNet/0.1 -o \"" + partial + "\"";
+    if (socksPort > 0)
+        cmd += " --socks5-hostname 127.0.0.1:" + std::to_string(socksPort);
+    cmd += " \"" + url + "\"";
+    std::vector<char> mutableCmd(cmd.begin(), cmd.end());
+    mutableCmd.push_back('\0');
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessA(nullptr, mutableCmd.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        err = "curl start failed";
+        return false;
+    }
+    pidSlot.store(static_cast<long>(pi.dwProcessId));
+    while (WaitForSingleObject(pi.hProcess, 200) == WAIT_TIMEOUT) {
+        if (stop.load()) {
+            TerminateProcess(pi.hProcess, 1);
+            break;
+        }
+    }
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    pidSlot.store(-1);
+    if (stop.load()) {
+        err = "cancelled";
+        return false;
+    }
+    if (code != 0) {
+        err = "curl exit " + std::to_string(code);
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+#endif
 
 void SynapsedEngine::modelDownloadLoop(std::string id, std::string url, std::string dest,
                                        uint64_t expected, bool viaTor) {
@@ -9759,11 +10415,74 @@ void SynapsedEngine::modelDownloadLoop(std::string id, std::string url, std::str
         modelDl_.path = dest;
     }
 #else
-    (void)id; (void)url; (void)dest; (void)expected; (void)viaTor;
-    std::lock_guard<std::mutex> dl(modelDlMtx_);
-    modelDl_.running = false;
-    modelDl_.failed = true;
-    modelDl_.error = "download not implemented on windows";
+    std::string partial = dest + ".partial";
+    std::string err;
+    bool ok = false;
+    if (viaTor) {
+        int sp = sessionSocksPort_ > 0 ? static_cast<int>(sessionSocksPort_) : gSocksPort.load();
+        ok = hiddenCurlDownload(url, partial, sp, modelDlStop_, modelDlPid_, err);
+    } else {
+        ok = winhttpDownload(url, partial, modelDlStop_, err);
+    }
+
+    if (modelDlStop_.load()) {
+        std::lock_guard<std::mutex> dl(modelDlMtx_);
+        modelDl_.running = false;
+        modelDl_.failed = true;
+        modelDl_.done = false;
+        modelDl_.error = "cancelled";
+        return;
+    }
+    if (!ok) {
+        std::lock_guard<std::mutex> dl(modelDlMtx_);
+        modelDl_.running = false;
+        modelDl_.failed = true;
+        modelDl_.error = err.empty() ? "download failed" : err;
+        return;
+    }
+
+    const uint64_t got = fileSizeOr0(partial);
+    if (expected > 0 && got != expected) {
+        std::lock_guard<std::mutex> dl(modelDlMtx_);
+        modelDl_.bytes = got;
+        modelDl_.running = false;
+        modelDl_.failed = true;
+        modelDl_.error = "incomplete download";
+        return;
+    }
+
+    std::error_code ec;
+    std::filesystem::rename(partial, dest, ec);
+    if (ec) {
+        std::lock_guard<std::mutex> dl(modelDlMtx_);
+        modelDl_.running = false;
+        modelDl_.failed = true;
+        modelDl_.error = "rename failed";
+        return;
+    }
+    if (!validateGguf(dest)) {
+        std::filesystem::remove(dest, ec);
+        std::lock_guard<std::mutex> dl(modelDlMtx_);
+        modelDl_.running = false;
+        modelDl_.failed = true;
+        modelDl_.error = "downloaded file is not GGUF";
+        return;
+    }
+
+    nlohmann::json loadParams;
+    loadParams["path"] = dest;
+    (void)modelLoad(loadParams.dump());
+    {
+        std::lock_guard<std::mutex> dl(modelDlMtx_);
+        modelDl_.bytes = fileSizeOr0(dest);
+        modelDl_.total = expected ? expected : modelDl_.bytes;
+        modelDl_.running = false;
+        modelDl_.done = true;
+        modelDl_.failed = false;
+        modelDl_.error.clear();
+        modelDl_.id = id;
+        modelDl_.path = dest;
+    }
 #endif
 }
 

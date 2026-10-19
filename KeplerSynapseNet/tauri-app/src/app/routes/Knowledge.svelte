@@ -2,6 +2,7 @@
   // KNOW tab: one-screen PoE knowledge submit. Status stays pending and NGT is 0 until finalize/votes.
   // knowledge.submit writes knowledge.jsonl and appends a local PoE block. Still pending — not paid.
   import { onMount } from "svelte";
+  import { beginPageLoad } from "../../lib/pageLoad";
   import { submitKnowledge, searchKnowledge, rpcCall } from "../../lib/rpc";
   import PixelStage from "../components/sprites/PixelStage.svelte";
   import PixelSprite from "../components/sprites/PixelSprite.svelte";
@@ -29,8 +30,13 @@
   };
 
   onMount(async () => {
-    await loadMySubmissions();
-    await loadPoeStats();
+    const done = beginPageLoad();
+    try {
+      await loadMySubmissions();
+      await loadPoeStats();
+    } finally {
+      done();
+    }
   });
 
   function pendingBanner(raw: string): { error?: string; ok: string } {

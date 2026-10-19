@@ -4,6 +4,7 @@
   // X25519 seal only when the peer has no kem_pk. Body never goes on the wire.
   // delivered=false means the local log still saved; the onion hop failed.
   import { onMount, onDestroy, tick } from "svelte";
+  import { beginPageLoad } from "../../lib/pageLoad";
   import { rpcCall } from "../../lib/rpc";
   import PixelStage from "../components/sprites/PixelStage.svelte";
   import PixelSprite from "../components/sprites/PixelSprite.svelte";
@@ -41,11 +42,16 @@
   let peerNick: Record<string, string> = {};
 
   onMount(async () => {
+    const done = beginPageLoad();
     try {
-      const q = JSON.parse(await rpcCall("crypto.status", "{}"));
-      kyberReal = q.kyber_real === true;
-    } catch {}
-    await loadConversations();
+      try {
+        const q = JSON.parse(await rpcCall("crypto.status", "{}"));
+        kyberReal = q.kyber_real === true;
+      } catch {}
+      await loadConversations();
+    } finally {
+      done();
+    }
     pollHandle = setInterval(loadConversations, 5000);
   });
 

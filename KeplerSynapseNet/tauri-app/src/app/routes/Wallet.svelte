@@ -2,9 +2,11 @@
   // Wallet tab: stealth receive (SN+hex), RingCT balance from nodeStatus,
   // seed reveal with confirm. Seed stays in libsynapsed, never in the Svelte store.
   import { onMount, onDestroy } from "svelte";
+  import { beginPageLoad } from "../../lib/pageLoad";
   import { nodeStatus, myWalletAddress } from "../../lib/store";
   import { rpcCall } from "../../lib/rpc";
   import { generateQRSvg } from "../../lib/qr";
+  import MinerLoader from "../components/MinerLoader.svelte";
   import PixelStage from "../components/sprites/PixelStage.svelte";
   import PixelSprite from "../components/sprites/PixelSprite.svelte";
   import coinSprite from "../../assets/sprites/coin.svg";
@@ -77,6 +79,7 @@
   }
 
   async function loadWalletInfo() {
+    const done = loading ? beginPageLoad() : null;
     try {
       const result = await rpcCall("wallet.info", "{}");
       if (!alive) return;
@@ -99,6 +102,8 @@
       infoError = (e && e.message) ? String(e.message) : "WALLET INFO FAILED";
       if (!walletAddress) applyAddress("");
       loading = false;
+    } finally {
+      done?.();
     }
   }
 
@@ -298,7 +303,7 @@
     <div class="card-header">STEALTH ADDRESS (SN)</div>
     <div class="address-row">
       <code class="address-text mono">
-        {#if loading}<span class="ks-spinner"></span>{/if}{walletAddress || addressPlaceholder()}
+        {walletAddress || addressPlaceholder()}
       </code>
       {#if walletAddress}
         <button class="btn-secondary" on:click={copyAddress}>
@@ -319,7 +324,7 @@
       {:else}
         <div class="qr-empty">
           {#if loading}
-            <span class="ks-spinner"></span> LOADING...
+            <MinerLoader width={180} label="Loading wallet" />
           {:else}
             NO ADDRESS
           {/if}

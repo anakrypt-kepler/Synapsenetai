@@ -1,6 +1,7 @@
 <script lang="ts">
   // NAAN harvests drafts over Tor. It does not mint NGT. Pay is PoE finalize.
   import { onMount, onDestroy, afterUpdate } from "svelte";
+  import { beginPageLoad } from "../../lib/pageLoad";
   import { naanControl, naanConfigUpdate, rpcCall } from "../../lib/rpc";
   import NaanStation from "../components/sprites/NaanStation.svelte";
   import SynapseHoloLogo from "../components/sprites/SynapseHoloLogo.svelte";
@@ -75,8 +76,13 @@
   let prevLogLen = 0;
 
   onMount(async () => {
-    await loadNaanDeckFromSettings();
-    await loadAgentState();
+    const done = beginPageLoad();
+    try {
+      await loadNaanDeckFromSettings();
+      await loadAgentState();
+    } finally {
+      done();
+    }
     pollHandle = setInterval(loadAgentState, 3000);
   });
 

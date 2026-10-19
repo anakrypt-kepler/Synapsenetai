@@ -14,6 +14,7 @@
     type SystemInfo,
   } from "../../lib/rpc";
   import ModelCatalog from "./ModelCatalog.svelte";
+  import MinerLoader from "./MinerLoader.svelte";
   import SkinPicker from "./SkinPicker.svelte";
   import {
     stationCatalog,
@@ -395,7 +396,7 @@
               <h2 class="step-title">Ready</h2>
               {#if readyChecking}
                 <div class="waiting">
-                  <span class="ks-spinner" aria-hidden="true"></span>
+                  <MinerLoader width={200} label="Checking system" />
                   <p class="step-desc">Checking system…</p>
                 </div>
               {:else}
@@ -746,11 +747,6 @@
     justify-content: center;
     gap: 14px;
     padding: 28px 8px 12px;
-  }
-
-  .waiting .ks-spinner {
-    width: 36px;
-    height: 36px;
   }
 
   .wizard :global(button) {

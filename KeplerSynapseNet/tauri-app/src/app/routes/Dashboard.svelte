@@ -3,12 +3,15 @@
   import { nodeStatus, activeTab } from "../../lib/store";
   import PixelStage from "../components/sprites/PixelStage.svelte";
   import PixelSprite from "../components/sprites/PixelSprite.svelte";
+  import NaanLive from "../components/NaanLive.svelte";
   import nodeSprite from "../../assets/sprites/node.svg";
   import bookSprite from "../../assets/sprites/book.svg";
   import gpuSprite from "../../assets/sprites/gpu.svg";
   import naanWalk from "../../assets/sprites/naan-walk.svg";
 
+  const NAAN_LIVE = new Set(["active", "cooldown", "budget_exhausted", "stopping"]);
   $: isTor = $nodeStatus.connection === "tor";
+  $: agentWorking = NAAN_LIVE.has(($nodeStatus.naan_state || "off").toLowerCase());
   $: hasOnion = !!$nodeStatus.onion;
   $: onionShort = hasOnion ? $nodeStatus.onion.slice(0, 8) : "";
   $: chainEmpty = !$nodeStatus.last_block;
@@ -38,9 +41,13 @@
 
 <div class="content-area">
   <div class="page-col">
-  <PixelStage height={64}>
-    <PixelSprite src={nodeSprite} anim={isTor ? "pulse" : "park"} size={26} label="node" />
-  </PixelStage>
+  {#if agentWorking}
+    <NaanLive kind="main" />
+  {:else}
+    <PixelStage height={64}>
+      <PixelSprite src={nodeSprite} anim={isTor ? "pulse" : "park"} size={26} label="node" />
+    </PixelStage>
+  {/if}
 
   <div class="balance-block card">
     <div class="card-header">BALANCE</div>
@@ -77,9 +84,7 @@
         </div>
         {#if copyMsg}<div class="ok-line">{copyMsg}</div>{/if}
       {:else}
-        <div class="card-value wrap">
-          <span class="ks-spinner"></span>BOOTSTRAPPING TOR
-        </div>
+        <div class="card-value wrap">BOOTSTRAPPING TOR</div>
         {#if $nodeStatus.tor_bootstrap}
           <div class="hint">{$nodeStatus.tor_bootstrap}</div>
         {/if}

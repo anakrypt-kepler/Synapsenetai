@@ -172,6 +172,8 @@ export interface NodeStatus {
   peers: number;
   balance: string;
   naan_state: string;
+  naan_task?: string;
+  naan_topics?: string;
   last_block: number;
   model_loaded: boolean;
   model_name: string;

@@ -2,6 +2,7 @@
   // RENT MVP: local share flag only. rental.list has no live marketplace.
   // rental.rent is a stub (fake id, no my_rentals). Do not invent GPU rows.
   import { onMount, onDestroy } from "svelte";
+  import { beginPageLoad } from "../../lib/pageLoad";
   import { rpcCall } from "../../lib/rpc";
   import { nodeStatus } from "../../lib/store";
   import PixelStage from "../components/sprites/PixelStage.svelte";
@@ -49,7 +50,12 @@
   $: gpuLabel = gpuFromStatus($nodeStatus as unknown as Record<string, unknown>);
 
   onMount(async () => {
-    await loadData();
+    const done = beginPageLoad();
+    try {
+      await loadData();
+    } finally {
+      done();
+    }
     pollHandle = setInterval(loadData, 10000);
   });
 

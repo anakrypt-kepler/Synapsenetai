@@ -219,21 +219,23 @@ pub struct SystemInfo {
 }
 
 #[tauri::command]
-pub fn get_system_info() -> Result<SystemInfo, String> {
-    let cores = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-
-    let ram = sys_ram_mb();
-    let gpu_devices = detect_gpu_devices();
-
-    Ok(SystemInfo {
-        cpu_cores: cores,
-        ram_total_mb: ram,
-        gpu_devices,
+pub async fn get_system_info() -> Result<SystemInfo, String> {
+    // Registry and memory queries stay off the UI thread so SET can scroll while they run.
+    tauri::async_runtime::spawn_blocking(|| {
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        Ok(SystemInfo {
+            cpu_cores: cores,
+            ram_total_mb: sys_ram_mb(),
+            gpu_devices: detect_gpu_devices(),
+        })
     })
+    .await
+    .map_err(|e| format!("system info: {e}"))?
 }
 
+#[cfg(not(target_os = "windows"))]
 fn nvidia_smi_gpus() -> Vec<GpuDevice> {
     let bins = [
         "nvidia-smi",
@@ -279,6 +281,14 @@ fn nvidia_smi_gpus() -> Vec<GpuDevice> {
 }
 
 fn detect_gpu_devices() -> Vec<GpuDevice> {
+    // wmic and nvidia-smi are console programs. A GUI parent flashes a black
+    // window for each of them. Read the display-class registry instead.
+    #[cfg(target_os = "windows")]
+    {
+        return windows_gpu_devices();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
     let mut devices = nvidia_smi_gpus();
     let has_nvidia = !devices.is_empty();
 
@@ -354,29 +364,137 @@ fn detect_gpu_devices() -> Vec<GpuDevice> {
         }
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(output) = std::process::Command::new("wmic")
-            .args(["path", "win32_VideoController", "get", "Name,AdapterRAM", "/format:csv"])
-            .output()
+    devices
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_gpu_devices() -> Vec<GpuDevice> {
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn RegOpenKeyExW(key: isize, sub: *const u16, opts: u32, sam: u32, out: *mut isize) -> i32;
+        fn RegCloseKey(key: isize) -> i32;
+        fn RegEnumKeyExW(
+            key: isize,
+            index: u32,
+            name: *mut u16,
+            name_len: *mut u32,
+            reserved: *mut u32,
+            class: *mut u16,
+            class_len: *mut u32,
+            last_write: *mut u8,
+        ) -> i32;
+        fn RegGetValueW(
+            key: isize,
+            sub: *const u16,
+            value: *const u16,
+            flags: u32,
+            typ: *mut u32,
+            data: *mut u8,
+            data_len: *mut u32,
+        ) -> i32;
+    }
+
+    // Sign-extend. 0x80000002 as usize is not HKEY_LOCAL_MACHINE on 64-bit.
+    const HKEY_LOCAL_MACHINE: isize = 0x8000_0002u32 as i32 as isize;
+    const KEY_READ: u32 = 0x20019;
+    const ERROR_NO_MORE_ITEMS: i32 = 259;
+    const RRF_RT_REG_SZ: u32 = 0x2;
+    const RRF_RT_REG_QWORD: u32 = 0x40;
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    let class_path = wide(
+        "SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}",
+    );
+    let mut class_key: isize = 0;
+    unsafe {
+        if RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            class_path.as_ptr(),
+            0,
+            KEY_READ,
+            &mut class_key,
+        ) != 0
         {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                for (i, line) in stdout.lines().skip(2).enumerate() {
-                    let parts: Vec<&str> = line.split(',').collect();
-                    if parts.len() >= 3 {
-                        let vram_bytes = parts[1].trim().parse::<u64>().unwrap_or(0);
-                        devices.push(GpuDevice {
-                            id: format!("gpu:{}", i),
-                            name: parts[2].trim().to_string(),
-                            vram_mb: vram_bytes / (1024 * 1024),
-                        });
-                    }
-                }
-            }
+            return Vec::new();
         }
     }
 
+    let mut devices = Vec::new();
+    let mut index = 0u32;
+    loop {
+        let mut name = [0u16; 64];
+        let mut name_len = name.len() as u32;
+        let rc = unsafe {
+            RegEnumKeyExW(
+                class_key,
+                index,
+                name.as_mut_ptr(),
+                &mut name_len,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        if rc == ERROR_NO_MORE_ITEMS || rc != 0 {
+            break;
+        }
+        index += 1;
+        let subname = String::from_utf16_lossy(&name[..name_len as usize]);
+        if !subname.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+
+        let desc_value = wide("DriverDesc");
+        let mut desc_buf = [0u16; 256];
+        let mut desc_bytes = (desc_buf.len() * 2) as u32;
+        let desc_ok = unsafe {
+            RegGetValueW(
+                class_key,
+                name.as_ptr(),
+                desc_value.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                desc_buf.as_mut_ptr() as *mut u8,
+                &mut desc_bytes,
+            ) == 0
+        };
+        if !desc_ok || desc_bytes < 2 {
+            continue;
+        }
+        let desc_chars = (desc_bytes as usize / 2).saturating_sub(1);
+        let desc = String::from_utf16_lossy(&desc_buf[..desc_chars]).trim().to_string();
+        if desc.is_empty() {
+            continue;
+        }
+
+        let mem_value = wide("HardwareInformation.qwMemorySize");
+        let mut mem: u64 = 0;
+        let mut mem_bytes = std::mem::size_of::<u64>() as u32;
+        unsafe {
+            let _ = RegGetValueW(
+                class_key,
+                name.as_ptr(),
+                mem_value.as_ptr(),
+                RRF_RT_REG_QWORD,
+                std::ptr::null_mut(),
+                &mut mem as *mut u64 as *mut u8,
+                &mut mem_bytes,
+            );
+        }
+        devices.push(GpuDevice {
+            id: format!("gpu:{subname}"),
+            name: desc,
+            vram_mb: mem / (1024 * 1024),
+        });
+    }
+    unsafe {
+        RegCloseKey(class_key);
+    }
     devices
 }
 
@@ -428,10 +546,51 @@ fn sys_ram_mb() -> u64 {
         }
         8192
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows_ram_mb()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         8192
     }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_ram_mb() -> u64 {
+    #[repr(C)]
+    struct MemoryStatusEx {
+        length: u32,
+        memory_load: u32,
+        total_phys: u64,
+        avail_phys: u64,
+        total_page: u64,
+        avail_page: u64,
+        total_virt: u64,
+        avail_virt: u64,
+        avail_ext: u64,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalMemoryStatusEx(status: *mut MemoryStatusEx) -> i32;
+    }
+    let mut info = MemoryStatusEx {
+        length: std::mem::size_of::<MemoryStatusEx>() as u32,
+        memory_load: 0,
+        total_phys: 0,
+        avail_phys: 0,
+        total_page: 0,
+        avail_page: 0,
+        total_virt: 0,
+        avail_virt: 0,
+        avail_ext: 0,
+    };
+    unsafe {
+        if GlobalMemoryStatusEx(&mut info) != 0 && info.total_phys > 0 {
+            return info.total_phys / (1024 * 1024);
+        }
+    }
+    8192
 }
 
 #[tauri::command]

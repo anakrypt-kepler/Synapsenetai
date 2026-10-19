@@ -1,13 +1,7 @@
-<script lang="ts">
-  // Harvested page assets from NAAN. Local SHA-256 names only; no source URLs.
-  import { onMount } from "svelte";
-  import { harvestList, harvestGet } from "../../lib/rpc";
-  import { convertFileSrc } from "@tauri-apps/api/core";
-  import PixelStage from "../components/sprites/PixelStage.svelte";
-  import PixelSprite from "../components/sprites/PixelSprite.svelte";
-  import naanWalk from "../../assets/sprites/naan-walk.svg";
-
-  interface HarvestAsset {
+<script context="module" lang="ts">
+  // The tab component is destroyed on every switch. Keep the last list so
+  // coming back does not blank the page and reload from scratch.
+  export interface HarvestAsset {
     sha256: string;
     mime: string;
     bytes: number;
@@ -15,7 +9,7 @@
     file: string;
   }
 
-  interface HarvestBypass {
+  export interface HarvestBypass {
     cve: string;
     protection: string;
     method: string;
@@ -24,7 +18,7 @@
     bytes: number;
   }
 
-  interface HarvestEntry {
+  export interface HarvestEntry {
     draft_sha256: string;
     topic: string;
     title: string;
@@ -35,13 +29,30 @@
     timestamp: number;
   }
 
+  let keptEntries: HarvestEntry[] = [];
+  let keptTotal: number | null = null;
+  let keptOffset = 0;
+  let keptReady = false;
+</script>
+
+<script lang="ts">
+  // Harvested page assets from NAAN. Local SHA-256 names only; no source URLs.
+  import { onMount } from "svelte";
+  import { beginPageLoad } from "../../lib/pageLoad";
+  import { harvestList, harvestGet } from "../../lib/rpc";
+  import { convertFileSrc } from "@tauri-apps/api/core";
+  import MinerLoader from "../components/MinerLoader.svelte";
+  import PixelStage from "../components/sprites/PixelStage.svelte";
+  import PixelSprite from "../components/sprites/PixelSprite.svelte";
+  import naanWalk from "../../assets/sprites/naan-walk.svg";
+
   type VtKind = "clean" | "malicious" | "unknown" | "unchecked" | "none";
 
-  let entries: HarvestEntry[] = [];
+  let entries: HarvestEntry[] = keptReady ? keptEntries : [];
   let selected: HarvestEntry | null = null;
-  let loading = true;
-  let offset = 0;
-  let listTotal: number | null = null;
+  let loading = !keptReady;
+  let offset = keptReady ? keptOffset : 0;
+  let listTotal: number | null = keptReady ? keptTotal : null;
   let brokenImgs: Record<string, boolean> = {};
   const limit = 50;
 
@@ -52,19 +63,38 @@
   $: showNext = listTotal != null || entries.length >= limit;
   $: showPager = entries.length > 0 || offset > 0;
 
-  onMount(() => loadEntries());
+  onMount(() => {
+    // First visit shows the bar. A return trip already has the list and only refreshes it.
+    if (keptReady) {
+      void loadEntries();
+      return;
+    }
+    const done = beginPageLoad();
+    void loadEntries().finally(done);
+  });
+
+  function rememberList() {
+    keptEntries = entries;
+    keptTotal = listTotal;
+    keptOffset = offset;
+    keptReady = true;
+  }
 
   async function loadEntries() {
-    loading = true;
+    const firstPaint = !keptReady;
+    if (firstPaint) loading = true;
     try {
       const raw = await harvestList(offset, limit);
       const parsed = parseListPayload(raw);
       entries = parsed.entries;
       listTotal = parsed.total;
       if (offset < 0) offset = 0;
+      rememberList();
     } catch {
-      entries = [];
-      listTotal = null;
+      if (!keptReady) {
+        entries = [];
+        listTotal = null;
+      }
     }
     loading = false;
   }
@@ -422,7 +452,7 @@
     <div class="card">
       <div class="card-header">ENTRIES</div>
       <div class="loading">
-        <span class="ks-spinner"></span>
+        <MinerLoader width={200} label="Loading harvests" />
         <span>Loading harvests</span>
       </div>
     </div>
@@ -668,9 +698,8 @@
     font-size: 12px;
   }
 
-  .loading .ks-spinner {
-    width: 28px;
-    height: 28px;
+  .loading {
+    flex-direction: column;
   }
 
   .pagination {

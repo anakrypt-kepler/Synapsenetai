@@ -2,6 +2,7 @@
   // Built-in editor. Submit a patch as a PoE code contribution (poe.submit_code).
   // NGT is the acceptance reward, not a hash-mining payout.
   import { onMount } from "svelte";
+  import { beginPageLoad } from "../../lib/pageLoad";
   import ChatPanel from "../components/ChatPanel.svelte";
   import { rpcCall } from "../../lib/rpc";
   import { activeTab, nodeStatus } from "../../lib/store";
@@ -88,7 +89,12 @@
   let myCode: { title: string; kind?: string; status: string; ngt_earned: string }[] = [];
 
   onMount(async () => {
-    await loadPoe();
+    const done = beginPageLoad();
+    try {
+      await loadPoe();
+    } finally {
+      done();
+    }
   });
 
   async function loadPoe() {

@@ -1,6 +1,7 @@
 <script lang="ts">
   // NET MVP: you are a Tor cell. Dead directory onions are not peers.
   import { onMount, onDestroy } from "svelte";
+  import { beginPageLoad } from "../../lib/pageLoad";
   import { rpcCall } from "../../lib/rpc";
   import PixelStage from "../components/sprites/PixelStage.svelte";
   import PixelSprite from "../components/sprites/PixelSprite.svelte";
@@ -33,7 +34,12 @@
   let youAvatar = "";
 
   onMount(async () => {
-    await loadNetworkInfo();
+    const done = beginPageLoad();
+    try {
+      await loadNetworkInfo();
+    } finally {
+      done();
+    }
     pollHandle = setInterval(loadNetworkInfo, 4000);
   });
 

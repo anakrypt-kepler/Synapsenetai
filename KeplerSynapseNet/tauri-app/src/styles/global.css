@@ -312,6 +312,8 @@ th {
 .content-area {
   padding: 18px 20px 28px;
   height: 100%;
+  min-height: 0;
+  max-height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--bg);
@@ -319,6 +321,30 @@ th {
   -webkit-overflow-scrolling: touch;
   scroll-behavior: auto;
   font-family: var(--font-mono);
+}
+
+/* Sits on the tab, never on top of the wheel. Scroll keeps working while data arrives. */
+.page-load {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 6;
+  pointer-events: none;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.page-load::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 36%;
+  background: var(--text-primary);
+  animation: ks-indeterminate 1.15s steps(12) infinite;
 }
 
 /* Centered reading column. Wide windows get side void instead of a left-stuck table. */

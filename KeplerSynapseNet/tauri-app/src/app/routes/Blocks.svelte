@@ -2,10 +2,12 @@
   // Local PoE explorer. Height is this node's blocks.jsonl + naan_blocks.jsonl,
   // not a Bitcoin-style network sync and not hash mining.
   import { onMount, onDestroy } from "svelte";
+  import { beginPageLoad } from "../../lib/pageLoad";
   import { rpcCall } from "../../lib/rpc";
   import { nodeStatus, myWalletAddress } from "../../lib/store";
   import PixelStage from "../components/sprites/PixelStage.svelte";
   import PixelBricks from "../components/sprites/PixelBricks.svelte";
+  import NaanLive from "../components/NaanLive.svelte";
 
   interface BlockEntry {
     height: number;
@@ -57,11 +59,16 @@
   $: heightShown = chainHeight > 0 ? chainHeight : ($nodeStatus.last_block || 0);
 
   onMount(async () => {
-    await loadBlocks();
+    const done = beginPageLoad();
     try {
-      const info = JSON.parse(await rpcCall("wallet.info", "{}"));
-      myAddressLocal = info.address || "";
-    } catch {}
+      await loadBlocks();
+      try {
+        const info = JSON.parse(await rpcCall("wallet.info", "{}"));
+        myAddressLocal = info.address || "";
+      } catch {}
+    } finally {
+      done();
+    }
     pollHandle = setInterval(loadBlocks, 5000);
   });
 
@@ -165,6 +172,7 @@
   <PixelStage height={64} floor={false}>
     <PixelBricks count={heightShown} max={16} />
   </PixelStage>
+  <NaanLive kind="blocks" />
   <div class="section-title">BLOCKS</div>
   <div class="grid-4">
     <div class="card">

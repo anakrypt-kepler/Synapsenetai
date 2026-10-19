@@ -2,7 +2,7 @@
   // Root shell: wizard on first launch, then boot libsynapsed and poll status.
   // Each tab is a route component; keep tab ids in sync with lib/store.ts.
   import { onMount, onDestroy } from "svelte";
-  import { fly, fade } from "svelte/transition";
+  import { fly } from "svelte/transition";
   import "../styles/global.css";
   import "../styles/dark.css";
   import { activeTab, tabSlideDir, showSetupWizard, startStatusPolling, stopStatusPolling } from "../lib/store";
@@ -10,9 +10,10 @@
   import { loadStationLookFromSettings } from "../lib/stationSkins";
   import { initCellBgm } from "../lib/cellBgm";
   import { DUR_TAB_MS, TAB_SLIDE_PX, easeMenuDecel } from "../lib/hyprEase";
+  import { pageBusy } from "../lib/pageLoad";
   import TopBar from "./components/TopBar.svelte";
   import StatusBar from "./components/StatusBar.svelte";
-  import KsSpinner from "./components/KsSpinner.svelte";
+  import MinerLoader from "./components/MinerLoader.svelte";
   import SetupWizard from "./components/SetupWizard.svelte";
   import Dashboard from "./routes/Dashboard.svelte";
   import Wallet from "./routes/Wallet.svelte";
@@ -71,7 +72,7 @@
 
 {#if !ready}
   <div class="boot-screen">
-    <KsSpinner size={56} />
+    <MinerLoader width={280} label="Booting node" />
     <div class="boot-word">SYNAPSENET</div>
     <div class="boot-sub">BOOTING NODE</div>
   </div>
@@ -82,11 +83,13 @@
     <TopBar />
     <div class="app-body">
       <main class="app-content">
+        {#if $pageBusy}
+          <div class="page-load" role="status" aria-label="Loading"></div>
+        {/if}
         {#key $activeTab}
           <div
             class="tab-pane"
             in:fly={{ x: slideInX, duration: tabSlideMs, easing: easeMenuDecel, opacity: 1 }}
-            out:fade={{ duration: reduceMotion ? 0 : 80 }}
           >
             {#if $activeTab === "dashboard"}
               <Dashboard />
@@ -177,7 +180,7 @@
     min-height: 0;
     overflow: hidden;
     position: relative;
-    contain: layout paint;
+    background: var(--bg);
   }
 
   .app-body {
@@ -187,11 +190,12 @@
     flex-direction: column;
   }
 
+  /* No outgoing fade and no paint containment: both flash a black layer on WebView2. */
   .tab-pane {
     position: absolute;
     inset: 0;
     overflow: hidden;
-    contain: layout paint;
+    background: var(--bg);
   }
 
   /* Pixel mascot slot: keep header.gif, frame it as a hotbar cell (square, hairline). */

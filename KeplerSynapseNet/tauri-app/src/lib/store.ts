@@ -30,6 +30,8 @@ export const nodeStatus = writable<NodeStatus>({
   peers: 0,
   balance: "0.00",
   naan_state: "off",
+  naan_task: "",
+  naan_topics: "",
   last_block: 0,
   model_loaded: false,
   model_name: "",

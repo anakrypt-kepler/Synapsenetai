@@ -2,6 +2,7 @@
   // Desktop send is always private: stealth dest + MLSAG-2 RingCT + 64-bit range proofs + Tor.
   // Memo is local only. No clearnet send path.
   import { onMount } from "svelte";
+  import { beginPageLoad } from "../../lib/pageLoad";
   import { sendNgt, getTransactions, rpcCall, privacyStatus } from "../../lib/rpc";
   import { nodeStatus } from "../../lib/store";
   import { generateQRSvg } from "../../lib/qr";
@@ -43,14 +44,19 @@
   $: sendLocked = !onTor || privacyFailClosed;
 
   onMount(async () => {
-    await loadTransactions();
-    await loadPrivacyStatus();
+    const done = beginPageLoad();
     try {
-      const result = await rpcCall("wallet.info", "{}");
-      const info = JSON.parse(result);
-      walletAddress = info.address || "";
-      if (walletAddress) qrSvg = generateQRSvg(walletAddress, 2);
-    } catch {}
+      await loadTransactions();
+      await loadPrivacyStatus();
+      try {
+        const result = await rpcCall("wallet.info", "{}");
+        const info = JSON.parse(result);
+        walletAddress = info.address || "";
+        if (walletAddress) qrSvg = generateQRSvg(walletAddress, 2);
+      } catch {}
+    } finally {
+      done();
+    }
   });
 
   async function loadPrivacyStatus() {
