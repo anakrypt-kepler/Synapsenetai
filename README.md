@@ -123,6 +123,22 @@ That is the help: a common organism grown by people, not a rented brain.
     <img src="pictures/art/hd-mine-dark.svg" alt="Mine intelligence" width="100%">
   </picture>
 </p>
+
+<table>
+<tr>
+<td align="center" width="50%">
+<img src="pictures/loaders/miner-loader.svg" alt="Pixel miner swinging a pick at a machine. Mining knowledge." width="100%">
+<br><strong>Mining knowledge</strong>
+</td>
+<td align="center" width="50%">
+<img src="pictures/loaders/coder-loader.svg" alt="Pixel coder at a desk, code scrolling on the monitor. Mining code." width="100%">
+<br><strong>Mining code</strong>
+</td>
+</tr>
+</table>
+
+The miner is the knowledge walk: NAAN pulls pages and files drafts. The desk is for programmers: local code, the IDE, the same node.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/know-light.svg">
