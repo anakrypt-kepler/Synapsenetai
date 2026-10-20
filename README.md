@@ -49,7 +49,9 @@
 </tr>
 </table>
 
-The desktop runs on **Windows** and on **Linux**. Same node, same session Tor, same local model. Linux is the scripted install: `lego-linux.sh`, then `run-desktop.sh`. Windows is the native app: the node is `synapsed.dll`, the window is the Tauri shell. Docker is a Linux image on either host.
+The desktop runs on **Windows** and on **Linux**. Same node, same session Tor, same local model. Linux is the scripted install: `lego-linux.sh`, then `run-desktop.sh`. Windows for a normal user is one setup program: `SynapseNet_0.1.0_x64-setup.exe`. Double-click it. It installs the window, `synapsed.dll`, and the libraries that DLL needs. You do not compile anything. If WebView2 is missing, the setup downloads it. The local model is not inside the setup; the app downloads that later from the SET catalog. Tor still comes from a `tor.exe` already on the machine.
+
+Someone building that setup runs `KeplerSynapseNet/scripts/package-windows.ps1`. The file is about 140 MB, past what git will store, so it is not in this tree. Docker is still a Linux image on either host.
 
 ---
 

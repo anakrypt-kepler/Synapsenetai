@@ -44,7 +44,6 @@ static std::string engineToString(SearchEngine engine) {
         case SearchEngine::BRAVE: return "brave";
         case SearchEngine::AHMIA: return "ahmia";
         case SearchEngine::TORCH: return "torch";
-        case SearchEngine::NOTEVIL: return "notevil";
         case SearchEngine::DARKSEARCH: return "darksearch";
         case SearchEngine::DEEPSEARCH: return "deepsearch";
         case SearchEngine::CUSTOM: return "custom";
@@ -60,7 +59,6 @@ static bool parseEngine(const std::string& value, SearchEngine& engine) {
     if (v == "brave") { engine = SearchEngine::BRAVE; return true; }
     if (v == "ahmia") { engine = SearchEngine::AHMIA; return true; }
     if (v == "torch") { engine = SearchEngine::TORCH; return true; }
-    if (v == "notevil") { engine = SearchEngine::NOTEVIL; return true; }
     if (v == "darksearch") { engine = SearchEngine::DARKSEARCH; return true; }
     if (v == "deepsearch") { engine = SearchEngine::DEEPSEARCH; return true; }
     if (v == "custom") { engine = SearchEngine::CUSTOM; return true; }
@@ -105,7 +103,6 @@ static bool isDarknetEngine(SearchEngine engine) {
     switch (engine) {
         case SearchEngine::AHMIA:
         case SearchEngine::TORCH:
-        case SearchEngine::NOTEVIL:
         case SearchEngine::DARKSEARCH:
         case SearchEngine::DEEPSEARCH:
         case SearchEngine::CUSTOM:

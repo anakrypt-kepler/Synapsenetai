@@ -22,7 +22,6 @@ enum class SearchEngine {
     BRAVE,
     AHMIA,
     TORCH,
-    NOTEVIL,
     DARKSEARCH,
     DEEPSEARCH,
     CUSTOM

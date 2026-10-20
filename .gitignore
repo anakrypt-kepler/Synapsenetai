@@ -72,6 +72,9 @@ __MACOSX/
 .obsidian/
 .synapsenet/
 
+# Windows installer staging (DLLs copied by package-windows.ps1)
+KeplerSynapseNet/tauri-app/src-tauri/windows-runtime/
+
 # Wallets and node runtime
 wallet.dat
 **/wallet.dat

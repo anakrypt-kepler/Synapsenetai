@@ -46,7 +46,6 @@ const char* searchEngineToString(web::SearchEngine engine) {
         case web::SearchEngine::BRAVE: return "brave";
         case web::SearchEngine::AHMIA: return "ahmia";
         case web::SearchEngine::TORCH: return "torch";
-        case web::SearchEngine::NOTEVIL: return "notevil";
         case web::SearchEngine::DARKSEARCH: return "darksearch";
         case web::SearchEngine::DEEPSEARCH: return "deepsearch";
         case web::SearchEngine::CUSTOM: return "custom";

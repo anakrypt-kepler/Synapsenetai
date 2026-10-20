@@ -35,6 +35,10 @@ fn lib_search_paths() -> Vec<std::path::PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             paths.push(dir.to_path_buf());
+            // The Windows setup copies the node next to the exe and also
+            // leaves a copy under resources/, depending on the bundler layout.
+            paths.push(dir.join("resources"));
+            paths.push(dir.join("resources").join("windows-runtime"));
             paths.push(dir.join("lib"));
             #[cfg(target_os = "macos")]
             {

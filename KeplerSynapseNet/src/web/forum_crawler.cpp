@@ -87,8 +87,7 @@ std::vector<SearchResult> ForumCrawler::crawl(const std::string& query,
     extractor.setRiskPolicy(riskPolicy);
 
     std::vector<ForumSource> sources = {
-        {"Dread", "http://dreadytofatroptsdj6io7l3xptbet6onoyno2yv7jicoxknyazubrad.onion/d/DarkSearch", ""},
-        {"NotEvil", "http://hss3uro2hsxfogfq.onion/", ""}
+        {"Dread", "http://dreadytofatroptsdj6io7l3xptbet6onoyno2yv7jicoxknyazubrad.onion/d/DarkSearch", ""}
     };
     
     std::vector<SearchResult> results;
