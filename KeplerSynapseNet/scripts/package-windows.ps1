@@ -24,7 +24,9 @@ Get-ChildItem $crt -Filter "*.dll" | ForEach-Object {
 $app = Join-Path $root "tauri-app"
 Push-Location $app
 try {
-    & npm run tauri -- build --bundles nsis
+    # runtime-resources.json is applied only here. CI cargo builds must not
+    # require DLLs that are not stored in git.
+    & npm run tauri -- build --bundles nsis --config src-tauri/windows/runtime-resources.json
     if ($LASTEXITCODE -ne 0) { throw "tauri build failed: $LASTEXITCODE" }
 } finally {
     Pop-Location
