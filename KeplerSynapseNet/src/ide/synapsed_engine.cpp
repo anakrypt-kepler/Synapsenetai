@@ -34,6 +34,7 @@
 #define SYSTEM_IGNORE(cmd) do { (void)!system(cmd); } while (0)
 #endif
 #include <cctype>
+#include <cwctype>
 #include <filesystem>
 #include <cstdio>
 #include <cstdlib>
@@ -51,6 +52,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <tlhelp32.h>
 #include <winhttp.h>
 #include <objidl.h>
 #include <algorithm>
@@ -1384,6 +1386,60 @@ void killTorUsingRc(const std::string& rcPath) {
 }
 #endif
 
+#ifdef _WIN32
+// ProcessCommandLineInformation. UNICODE_STRING is pointer-aligned, so the
+// buffer pointer sits at byte 8, not byte 4.
+std::wstring torProcessCommandLine(DWORD pid) {
+    using NtQueryInformationProcessFn = LONG (WINAPI *)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    static auto query = reinterpret_cast<NtQueryInformationProcessFn>(
+        GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess"));
+    if (!query) return {};
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!proc) return {};
+    ULONG bytes = 0;
+    query(proc, 60, nullptr, 0, &bytes);
+    if (bytes < 64) bytes = 4096;
+    std::vector<unsigned char> buf(static_cast<size_t>(bytes) + 8);
+    LONG st = query(proc, 60, buf.data(), static_cast<ULONG>(buf.size() - 8), &bytes);
+    CloseHandle(proc);
+    if (st < 0 || buf.size() < 16) return {};
+    struct CmdLine {
+        USHORT Length;
+        USHORT MaximumLength;
+        PWSTR Buffer;
+    };
+    auto* line = reinterpret_cast<CmdLine*>(buf.data());
+    if (!line->Buffer || line->Length < sizeof(wchar_t)) return {};
+    const auto* begin = reinterpret_cast<const unsigned char*>(line->Buffer);
+    if (begin < buf.data() || begin + line->Length > buf.data() + buf.size()) return {};
+    return std::wstring(line->Buffer, line->Buffer + (line->Length / sizeof(wchar_t)));
+}
+
+// A previous app exit can leave tor.exe holding session-tor/data/lock.
+// The next launch then dies in five seconds and never retries.
+void killOrphanSessionTors() {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    if (Process32FirstW(snap, &entry)) {
+        do {
+            if (_wcsicmp(entry.szExeFile, L"tor.exe") != 0) continue;
+            if (entry.th32ProcessID == GetCurrentProcessId()) continue;
+            std::wstring cmd = torProcessCommandLine(entry.th32ProcessID);
+            for (wchar_t& ch : cmd) ch = static_cast<wchar_t>(towlower(ch));
+            if (cmd.find(L"session-tor") == std::wstring::npos) continue;
+            HANDLE proc = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, entry.th32ProcessID);
+            if (!proc) continue;
+            TerminateProcess(proc, 1);
+            WaitForSingleObject(proc, 5000);
+            CloseHandle(proc);
+        } while (Process32NextW(snap, &entry));
+    }
+    CloseHandle(snap);
+}
+#endif
+
 void SynapsedEngine::stopSessionTor() const {
 #ifndef _WIN32
     if (controlFd_ >= 0 && !onionServiceId_.empty()) {
@@ -1420,11 +1476,18 @@ void SynapsedEngine::stopSessionTor() const {
         sessionTorProcess_ = nullptr;
     }
     sessionTorPid_ = -1;
-    if (!sessionTorDataDir_.empty()) {
-        std::error_code ec;
-        std::filesystem::remove_all(sessionTorDataDir_, ec);
-        sessionTorDataDir_.clear();
+    killOrphanSessionTors();
+    const std::string dir = sessionTorDataDir_.empty()
+        ? (dataDir_ + "/session-tor")
+        : sessionTorDataDir_;
+    std::error_code ec;
+    for (int attempt = 0; attempt < 15; ++attempt) {
+        std::filesystem::remove_all(dir, ec);
+        if (!std::filesystem::exists(dir, ec)) break;
+        killOrphanSessionTors();
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
+    sessionTorDataDir_.clear();
 #endif
     sessionSocksPort_ = 0;
     sessionControlPort_ = 0;
@@ -1441,8 +1504,13 @@ bool SynapsedEngine::startSessionTor() const {
         WSADATA wsa{};
         if (WSAStartup(MAKEWORD(2, 2), &wsa) == 0) winsockReady = true;
     }
-    stopSessionTor();
-
+    auto waitOrStop = [&](int ms) {
+        const int step = 100;
+        for (int spent = 0; spent < ms && !sessionBootStop_.load(); spent += step) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(step));
+        }
+        return !sessionBootStop_.load();
+    };
     auto tcpOpen = [&](uint16_t port) {
         int sfd = connectLocalPort(port, 1);
         if (sfd < 0) return false;
@@ -1466,8 +1534,18 @@ bool SynapsedEngine::startSessionTor() const {
         return false;
     };
 
+    // Keep launching our own Tor until bootstrap hits 100%. One dead start
+    // used to fall through to "disconnected" and stay there.
+    while (!sessionBootStop_.load()) {
+    stopSessionTor();
+    if (sessionBootStop_.load()) return false;
+
     std::string torBin = findTorBinary();
-    if (torBin.empty()) return useExistingSocks();
+    if (torBin.empty()) {
+        if (useExistingSocks()) return true;
+        if (!waitOrStop(2000)) return false;
+        continue;
+    }
 
     uint16_t socks = pickFreeLocalPort();
     uint16_t ctrl = pickFreeLocalPort();
@@ -1502,7 +1580,10 @@ bool SynapsedEngine::startSessionTor() const {
     };
     {
         std::ofstream f(rcPath);
-        if (!f) return useExistingSocks();
+        if (!f) {
+            if (!waitOrStop(2000)) return false;
+            continue;
+        }
         f << "SocksPort 127.0.0.1:" << socks << "\n"
           << "ControlPort 127.0.0.1:" << ctrl << "\n"
           << "CookieAuthentication 1\n"
@@ -1556,9 +1637,26 @@ bool SynapsedEngine::startSessionTor() const {
     if (!CreateProcessA(nullptr, cmdline.data(), nullptr, nullptr, FALSE,
                         CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, nullptr,
                         work.empty() ? nullptr : work.c_str(), &si, &pi)) {
-        return useExistingSocks();
+        if (!waitOrStop(2000)) return false;
+        continue;
     }
     CloseHandle(pi.hThread);
+    // Closing the app closes this job, which kills the Tor child with it.
+    // Otherwise the next launch finds the old tor.exe still holding the lock.
+    static HANDLE sessionJob = nullptr;
+    if (!sessionJob) {
+        sessionJob = CreateJobObjectW(nullptr, nullptr);
+        if (sessionJob) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION lim{};
+            lim.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if (!SetInformationJobObject(sessionJob, JobObjectExtendedLimitInformation,
+                                         &lim, sizeof(lim))) {
+                CloseHandle(sessionJob);
+                sessionJob = nullptr;
+            }
+        }
+    }
+    if (sessionJob) AssignProcessToJobObject(sessionJob, pi.hProcess);
     sessionTorProcess_ = pi.hProcess;
     sessionTorPid_ = static_cast<int64_t>(pi.dwProcessId);
     sessionSocksPort_ = socks;
@@ -1567,17 +1665,14 @@ bool SynapsedEngine::startSessionTor() const {
     gControlPort.store(ctrl);
     gCookiePath = sessionCookiePath_;
 
-    bool socksUp = false;
+    int lastProgress = -1;
+    auto lastChange = std::chrono::steady_clock::now();
     bool bootOk = false;
-    for (int i = 0; i < 150 && !sessionBootStop_.load(); ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    while (!sessionBootStop_.load()) {
+        if (!waitOrStop(500)) break;
         DWORD code = 0;
         HANDLE proc = static_cast<HANDLE>(sessionTorProcess_);
-        if (!proc || !GetExitCodeProcess(proc, &code) || code != STILL_ACTIVE) {
-            stopSessionTor();
-            return useExistingSocks();
-        }
-        if (!socksUp && tcpOpen(socks)) socksUp = true;
+        if (!proc || !GetExitCodeProcess(proc, &code) || code != STILL_ACTIVE) break;
         if (!std::filesystem::exists(sessionCookiePath_)) continue;
         int cfd = connectLocalPort(ctrl, 1);
         if (cfd < 0) continue;
@@ -1591,22 +1686,41 @@ bool SynapsedEngine::startSessionTor() const {
         int progress = 0;
         if (pos != std::string::npos) progress = std::atoi(resp.c_str() + pos + 9);
         torBootstrap_ = std::to_string(progress) + "%";
-        if (progress >= 100 || (socksUp && progress >= 90 && i > 40)) {
+        if (progress != lastProgress) {
+            lastProgress = progress;
+            lastChange = std::chrono::steady_clock::now();
+        }
+        if (progress >= 100) {
             bootOk = true;
             break;
         }
+        // 50% can sit still for several minutes while descriptors download.
+        // Only a dead start (still 0%) is worth killing quickly.
+        const auto stalled = std::chrono::steady_clock::now() - lastChange;
+        if (lastProgress <= 0 && stalled > std::chrono::seconds(180)) break;
+        if (lastProgress > 0 && stalled > std::chrono::minutes(10)) break;
     }
-    if (!bootOk && !socksUp) {
+    if (bootOk) {
+        connectionType_ = "tor";
+        return true;
+    }
+    if (sessionBootStop_.load()) {
         stopSessionTor();
-        return useExistingSocks();
+        return false;
     }
-    connectionType_ = "tor";
-    return true;
+    if (!waitOrStop(1000)) return false;
+    }
+    return false;
 #else
+    while (!sessionBootStop_.load()) {
     stopSessionTor();
+    if (sessionBootStop_.load()) return false;
 
     std::string torBin = findTorBinary();
-    if (torBin.empty()) return false;
+    if (torBin.empty()) {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        continue;
+    }
 
     uint16_t socks = pickFreeLocalPort();
     uint16_t ctrl = pickFreeLocalPort();
@@ -1625,7 +1739,10 @@ bool SynapsedEngine::startSessionTor() const {
     std::string logPath = sessionTorDataDir_ + "/tor.log";
     {
         std::ofstream f(rcPath);
-        if (!f) return false;
+        if (!f) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            continue;
+        }
         f << "SocksPort 127.0.0.1:" << socks << "\n"
           << "ControlPort 127.0.0.1:" << ctrl << "\n"
           << "CookieAuthentication 1\n"
@@ -1671,7 +1788,10 @@ bool SynapsedEngine::startSessionTor() const {
     }
 
     pid_t child = fork();
-    if (child < 0) return false;
+    if (child < 0) {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        continue;
+    }
     if (child == 0) {
         int nullfd = open("/dev/null", O_RDWR);
         if (nullfd >= 0) {
@@ -1687,7 +1807,8 @@ bool SynapsedEngine::startSessionTor() const {
 
     int st = 0;
     if (waitpid(child, &st, 0) < 0 || !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
-        return false;
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        continue;
     }
 
     std::string pidPath = sessionTorDataDir_ + "/tor.pid";
@@ -1701,7 +1822,10 @@ bool SynapsedEngine::startSessionTor() const {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
-    if (sessionTorPid_ <= 1) return false;
+    if (sessionTorPid_ <= 1) {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        continue;
+    }
 
     sessionSocksPort_ = socks;
     sessionControlPort_ = ctrl;
@@ -1709,20 +1833,15 @@ bool SynapsedEngine::startSessionTor() const {
     gControlPort.store(ctrl);
     gCookiePath = sessionCookiePath_;
 
-    bool socksUp = false;
+    int lastProgress = -1;
+    auto lastChange = std::chrono::steady_clock::now();
     bool bootOk = false;
-    for (int i = 0; i < 150 && !sessionBootStop_.load(); ++i) {
+    while (!sessionBootStop_.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        if (sessionBootStop_.load()) break;
         if (kill(static_cast<pid_t>(sessionTorPid_), 0) < 0 && errno == ESRCH) {
             sessionTorPid_ = -1;
-            return false;
-        }
-        if (!socksUp) {
-            int sfd = connectLocalPort(socks, 1);
-            if (sfd >= 0) {
-                CLOSESOCK(sfd);
-                socksUp = true;
-            }
+            break;
         }
         if (!std::filesystem::exists(sessionCookiePath_)) continue;
         int cfd = connectLocalPort(ctrl, 1);
@@ -1737,22 +1856,30 @@ bool SynapsedEngine::startSessionTor() const {
         int progress = 0;
         if (pos != std::string::npos) progress = std::atoi(resp.c_str() + pos + 9);
         torBootstrap_ = std::to_string(progress) + "%";
+        if (progress != lastProgress) {
+            lastProgress = progress;
+            lastChange = std::chrono::steady_clock::now();
+        }
         if (progress >= 100) {
             bootOk = true;
             break;
         }
-        if (socksUp && progress >= 90 && i > 40) {
-            bootOk = true;
-            break;
-        }
+        const auto stalled = std::chrono::steady_clock::now() - lastChange;
+        if (lastProgress <= 0 && stalled > std::chrono::seconds(180)) break;
+        if (lastProgress > 0 && stalled > std::chrono::minutes(10)) break;
     }
 
-    if (!bootOk && !socksUp) {
+    if (bootOk) {
+        connectionType_ = "tor";
+        return true;
+    }
+    if (sessionBootStop_.load()) {
         stopSessionTor();
         return false;
     }
-    connectionType_ = "tor";
-    return true;
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    return false;
 #endif
 }
 
