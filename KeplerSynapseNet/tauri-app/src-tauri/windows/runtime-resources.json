@@ -14,7 +14,14 @@
       "windows-runtime/vccorlib140.dll": "vccorlib140.dll",
       "windows-runtime/vcruntime140.dll": "vcruntime140.dll",
       "windows-runtime/vcruntime140_1.dll": "vcruntime140_1.dll",
-      "windows-runtime/vcruntime140_threads.dll": "vcruntime140_threads.dll"
+      "windows-runtime/vcruntime140_threads.dll": "vcruntime140_threads.dll",
+      "windows-runtime/vcomp140.dll": "vcomp140.dll",
+      "windows-runtime/llama.dll": "llama.dll",
+      "windows-runtime/ggml.dll": "ggml.dll",
+      "windows-runtime/ggml-base.dll": "ggml-base.dll",
+      "windows-runtime/ggml-cpu.dll": "ggml-cpu.dll",
+      "windows-runtime/oqs.dll": "oqs.dll",
+      "windows-runtime/libsecp256k1-7.dll": "libsecp256k1-7.dll"
     }
   }
 }

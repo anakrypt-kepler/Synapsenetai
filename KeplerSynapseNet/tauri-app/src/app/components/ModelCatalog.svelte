@@ -7,6 +7,7 @@
   const dispatch = createEventDispatcher();
 
   export let compact = false;
+  export let activePath = "";
 
   interface CatalogRow {
     id: string;
@@ -15,6 +16,8 @@
     size_bytes: number;
     ram_mb: number;
     note: string;
+    gpus?: string;
+    vram_gb?: number;
     installed: boolean;
     path: string;
   }
@@ -39,7 +42,15 @@
   let emittedPath = "";
 
   onMount(() => {
-    refresh();
+    let tries = 0;
+    const boot = () => {
+      refresh().then((ready) => {
+        if (ready || tries >= 20) return;
+        tries += 1;
+        setTimeout(boot, 1000);
+      });
+    };
+    boot();
   });
 
   onDestroy(() => {
@@ -64,17 +75,32 @@
     return (n / (1024 * 1024)).toFixed(0) + " MB";
   }
 
-  async function refresh() {
+  function leaf(path: string): string {
+    const norm = path.replace(/\\/g, "/");
+    const cut = norm.lastIndexOf("/");
+    return (cut >= 0 ? norm.slice(cut + 1) : norm).toLowerCase();
+  }
+
+  function isCurrent(path: string, row: CatalogRow): boolean {
+    if (!path || !row.installed) return false;
+    const want = leaf(path);
+    return !!want && (want === leaf(row.path || "") || want === leaf(row.filename || ""));
+  }
+
+  async function refresh(): Promise<boolean> {
     try {
       const cat = JSON.parse(await rpcCall("model.catalog", "{}"));
+      if (cat.error === "not initialized") return false;
       models = Array.isArray(cat.models) ? cat.models : [];
       dir = typeof cat.dir === "string" ? cat.dir : "";
       note = typeof cat.note === "string" ? cat.note : "";
       err = cat.error ? String(cat.error) : "";
+      await tick();
+      return models.length > 0;
     } catch (e) {
       err = e instanceof Error ? e.message : String(e);
+      return false;
     }
-    await tick();
   }
 
   async function tick() {
@@ -91,12 +117,14 @@
         error: typeof st.error === "string" ? st.error : "",
         path: typeof st.path === "string" ? st.path : "",
       };
-      if (dl.done && !dl.failed && dl.path && dl.path !== emittedPath) {
+      const finished = dl.done && !dl.failed && !!dl.path && dl.path !== emittedPath;
+      if (finished) {
         emittedPath = dl.path;
         dispatch("ready", { path: dl.path, id: dl.id });
       }
       if (dl.running) ensurePoll();
       else stopPollIfIdle();
+      if (finished) await refresh();
     } catch {
       // Engine may still be booting.
     }
@@ -107,12 +135,13 @@
     busyId = id;
     try {
       const raw = JSON.parse(await rpcCall("model.download", JSON.stringify({ id, via: "direct" })));
-      if (raw.error) {
-        err = String(raw.error).toUpperCase();
-        return;
-      }
       if (raw.already && raw.path) {
         dispatch("ready", { path: raw.path, id });
+        await refresh();
+        return;
+      }
+      if (raw.error) {
+        err = String(raw.error).toUpperCase();
         await refresh();
         return;
       }
@@ -158,14 +187,19 @@
   {#if err}<p class="err">{err}</p>{/if}
 
   {#each models as row}
-    <div class="row" class:active={dl.id === row.id && dl.running}>
+    <div class="row" class:active={dl.id === row.id && dl.running} class:current={isCurrent(activePath, row)}>
       <div class="meta">
         <span class="name">{row.name}</span>
-        <span class="size">{fmtMb(row.size_bytes)} · ~{row.ram_mb} MB RAM</span>
+        {#if row.gpus}
+          <span class="gpus">{row.vram_gb ? row.vram_gb + " GB · " : ""}{row.gpus}</span>
+        {/if}
+        <span class="size">{fmtMb(row.size_bytes)}{#if row.ram_mb} · ~{row.ram_mb} MB RAM{/if}</span>
         <span class="desc">{row.note}</span>
       </div>
       <div class="actions">
-        {#if row.installed}
+        {#if isCurrent(activePath, row)}
+          <button class="btn-secondary" type="button" disabled>Selected</button>
+        {:else if row.installed}
           <button class="btn-secondary" disabled={busyId === row.id} on:click={() => useInstalled(row)}>Use</button>
         {:else if dl.running && dl.id === row.id}
           <button class="btn-secondary" on:click={cancelDownload}>Cancel</button>
@@ -239,6 +273,10 @@
     background: transparent;
   }
 
+  .row.current {
+    border-color: #39ff14;
+  }
+
   .meta {
     display: flex;
     flex-direction: column;
@@ -256,6 +294,17 @@
     font-weight: 400;
     line-height: 1.6;
     color: var(--text-primary, #f5f5f7);
+  }
+
+  .gpus {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.45;
+    color: #f5f5f7;
+    background: rgba(57, 255, 20, 0.12);
+    box-shadow: inset 0 -1px 0 #39ff14;
+    padding: 1px 4px;
+    width: fit-content;
   }
 
   .size, .desc {

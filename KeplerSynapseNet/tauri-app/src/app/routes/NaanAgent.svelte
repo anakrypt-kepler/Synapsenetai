@@ -8,6 +8,7 @@
   import NaanAgentHud from "../components/naan/NaanAgentHud.svelte";
   import NaanCrewRoster from "../components/naan/NaanCrewRoster.svelte";
   import NaanHoldStash from "../components/naan/NaanHoldStash.svelte";
+  import InstalledModelSelect from "../components/InstalledModelSelect.svelte";
   import {
     naanRooms,
     naanCrew,
@@ -493,6 +494,9 @@
     </div>
     <div class="card">
       <div class="card-header">CONTROL</div>
+      {#if focusedId === PRIMARY_NAAN_ID}
+        <InstalledModelSelect settingKey="naan_model_path" label="AGENT MODEL" />
+      {/if}
       <div class="ctrl-actions">
         {#if focusedId !== PRIMARY_NAAN_ID}
           <button class="btn-secondary" type="button" disabled={busy} on:click={() => selectOwnModel(focusedId)}>

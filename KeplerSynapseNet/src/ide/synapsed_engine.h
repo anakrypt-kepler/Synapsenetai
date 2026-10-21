@@ -2,7 +2,8 @@
 
 // SynapsedEngine is the in-process node used by the Tauri desktop app and TUI.
 // Singleton. init() boots lib internals; rpcCall() is the JSON-RPC surface
-// (wallet, blocks, naan.*, harvest.*, exploit.*).
+// (wallet, blocks, naan.*, harvest.*, exploit.*, guide.*, find.*).
+// guide is the desk helper. It talks and proposes. It does not harvest.
 // NAAN harvest loop (naanLoop), fetchWithRetry, harvest, and exploit chain
 // are private methods on this class — see synapsed_engine.cpp.
 
@@ -117,6 +118,7 @@ private:
     std::string formatNaanAgentJson(const std::string& agentId) const;
     std::vector<std::string> extractTitles(const std::string& html) const;
     std::string topicToUrl(const std::string& topic) const;
+    std::string findRpc(const std::string& op, const std::string& paramsJson);
     std::string sha256Hex(const std::string& data) const;
 
     struct CaptchaResult {
@@ -306,8 +308,12 @@ private:
     void modelDownloadLoop(std::string id, std::string url, std::string dest,
                            uint64_t expected, bool viaTor);
     std::string aiCompleteRpc(const std::string& paramsJson);
+    std::string guideRpc(const std::string& op, const std::string& paramsJson);
     std::string cryptoStatusJson() const;
     bool ensureLlamaLoaded() const;
+    // Loads one GGUF under a llama.cpp model id. "desktop" is the SET model.
+    // "guide" and "naan-primary" are the chat and harvest choices.
+    bool ensureRoleModel(const std::string& role, const std::string& path) const;
     void applyDesktopConfig();
 
     mutable std::mutex mtx_;
@@ -430,6 +436,9 @@ private:
     bool modelLoaded_ = false;
     std::string modelName_;
     std::string modelPath_;
+    // Empty means that role uses the SET model above.
+    std::string guideModelPath_;
+    std::string naanModelPath_;
     size_t modelSizeMb_ = 0;
     mutable bool inferenceReady_ = false;
     mutable std::string profileAlias_;
@@ -437,6 +446,17 @@ private:
     mutable std::string profileAvatarMesh_;
     mutable std::unique_ptr<synapse::model::InferenceEngine> llamaEngine_;
     mutable std::mutex llamaMtx_;
+    // Role id -> GGUF path currently resident. Guarded by llamaMtx_.
+    mutable std::map<std::string, std::string> roleLoadedPath_;
+    // Desk helper transcript. The file is append-only and is not trimmed.
+    mutable std::mutex guideMtx_;
+    std::atomic<bool> guideBusy_{false};
+    std::string guidePendingId_;
+    std::string guidePendingAction_;
+    std::string guidePendingArg_;
+    // Result URLs from the last FIND search. The client opens one by index.
+    mutable std::mutex findMtx_;
+    mutable std::vector<std::string> findOpenUrls_;
 
     mutable std::mutex modelDlMtx_;
     std::thread modelDlThread_;

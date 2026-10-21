@@ -4,6 +4,7 @@
 
 #include "ide/synapsed_engine.h"
 #include "core/naan_harvest_plan.h"
+#include "core/work_code.h"
 #include "crypto/keys.h"
 #include "crypto/crypto.h"
 #include "crypto/ring_signature.h"
@@ -526,26 +527,106 @@ struct GgufOffer {
     uint64_t sizeBytes;
     int ramMb;
     const char* note;
+    const char* gpus;
+    int vramGb;
 };
 
-// Curated HuggingFace GGUF files. URLs are allowlisted in the engine; the UI
-// cannot pass an arbitrary download target.
+// Curated HuggingFace GGUF files, weak card to strongest. URLs are allowlisted
+// in the engine; the UI cannot pass an arbitrary download target. sizeBytes is
+// the exact Content-Length. Windows rejects a file whose size does not match.
+// Larger Qwen files are the single-file quant. The official repos split those.
 static const GgufOffer kGgufCatalog[] = {
     {"qwen25-0.5b-q4", "Qwen2.5 0.5B Instruct Q4_K_M",
      "qwen2.5-0.5b-instruct-q4_k_m.gguf",
      "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
      491400032ull, 900,
-     "Smallest. Fits 4 GB RAM. Recommended first download."},
+     "Weakest chat. Fits a 4 GB card or a small CPU.",
+     "RX 580 4 GB and weaker",
+     4},
     {"qwen25-1.5b-q4", "Qwen2.5 1.5B Instruct Q4_K_M",
      "qwen2.5-1.5b-instruct-q4_k_m.gguf",
      "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
      1117320736ull, 2200,
-     "Better chat quality. Needs about 3 GB RAM."},
+     "Better replies. Comfortable on a 4 GB card.",
+     "RX 580 4 GB, GTX 1650",
+     4},
     {"qwen25-3b-q4", "Qwen2.5 3B Instruct Q4_K_M",
      "qwen2.5-3b-instruct-q4_k_m.gguf",
      "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
      2104932768ull, 4000,
-     "Stronger. Needs about 5 GB RAM."},
+     "Solid local chat. Fits an 8 GB card. Tight on 6 GB.",
+     "RX 580 8 GB, GTX 1060 6 GB, RTX 2060 6 GB, GTX 1660",
+     6},
+    {"qwen3-4b-q4", "Qwen3 4B Q4_K_M",
+     "Qwen3-4B-Q4_K_M.gguf",
+     "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
+     2497280256ull, 4500,
+     "Qwen3. Newer than Qwen2.5 at this size.",
+     "RX 580 8 GB, GTX 1060 6 GB, RTX 2060 6 GB",
+     6},
+    {"qwen3-4b-q4-free", "Qwen3 4B Uncensored Q4_K_M",
+     "Qwen3-4B-abliterated.Q4_K_M.gguf",
+     "https://huggingface.co/mradermacher/Qwen3-4B-abliterated-GGUF/resolve/main/Qwen3-4B-abliterated.Q4_K_M.gguf",
+     2497280704ull, 4500,
+     "Uncensored Qwen3. Refusal tuning is removed.",
+     "RX 580 8 GB, GTX 1060 6 GB, RTX 2060 6 GB",
+     6},
+    {"qwen25-7b-q4", "Qwen2.5 7B Instruct Q4_K_M",
+     "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+     "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+     4683074240ull, 7000,
+     "Clear step up from 3B. Fits an 8 GB card.",
+     "GTX 1070 8 GB, RTX 2070, RTX 3060 8 GB, RTX 4060, RX 6600",
+     8},
+    {"qwen3-8b-q4", "Qwen3 8B Q4_K_M",
+     "Qwen3-8B-Q4_K_M.gguf",
+     "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
+     5027783488ull, 7500,
+     "Qwen3 8B. Stronger than Qwen2.5 7B. Also runs easily on a 16 GB card.",
+     "RTX 3060 8 GB, RTX 4060, RTX 5080 16 GB",
+     8},
+    {"qwen3-8b-q4-free", "Qwen3 8B Uncensored Q4_K_M",
+     "Qwen3-8B-abliterated.Q4_K_M.gguf",
+     "https://huggingface.co/mradermacher/Qwen3-8B-abliterated-GGUF/resolve/main/Qwen3-8B-abliterated.Q4_K_M.gguf",
+     5027783936ull, 7500,
+     "Uncensored Qwen3 8B. Refusal tuning is removed.",
+     "RTX 3060 8 GB, RTX 4060, RTX 5080 16 GB",
+     8},
+    {"qwen25-14b-q4", "Qwen2.5 14B Instruct Q4_K_M",
+     "Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+     "https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+     8988110976ull, 12000,
+     "Strong chat. 12 GB is tight. 16 GB is comfortable.",
+     "RTX 3060 12 GB, RTX 3080, RTX 4070, RTX 4080, RTX 5080 16 GB, RX 6700 XT",
+     12},
+    {"qwen3-14b-q5", "Qwen3 14B Q5_K_M",
+     "Qwen3-14B-Q5_K_M.gguf",
+     "https://huggingface.co/Qwen/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q5_K_M.gguf",
+     10514569568ull, 14000,
+     "Best stock Qwen3 for a 16 GB card.",
+     "RTX 5080 16 GB, RTX 4080, RTX 4060 Ti 16 GB",
+     16},
+    {"qwen3-14b-q5-free", "Qwen3 14B Uncensored Q5_K_M",
+     "Qwen3-14B-abliterated.Q5_K_M.gguf",
+     "https://huggingface.co/mradermacher/Qwen3-14B-abliterated-GGUF/resolve/main/Qwen3-14B-abliterated.Q5_K_M.gguf",
+     10514570048ull, 14000,
+     "Uncensored Qwen3 for a 16 GB card. Refusal tuning is removed.",
+     "RTX 5080 16 GB, RTX 4080, RTX 4060 Ti 16 GB",
+     16},
+    {"qwen25-32b-q4", "Qwen2.5 32B Instruct Q4_K_M",
+     "Qwen2.5-32B-Instruct-Q4_K_M.gguf",
+     "https://huggingface.co/bartowski/Qwen2.5-32B-Instruct-GGUF/resolve/main/Qwen2.5-32B-Instruct-Q4_K_M.gguf",
+     19851336576ull, 23000,
+     "Best quality that fits a 24 GB card.",
+     "RTX 3090 24 GB, RTX 4090",
+     24},
+    {"qwen25-32b-q6", "Qwen2.5 32B Instruct Q6_K",
+     "Qwen2.5-32B-Instruct-Q6_K.gguf",
+     "https://huggingface.co/bartowski/Qwen2.5-32B-Instruct-GGUF/resolve/main/Qwen2.5-32B-Instruct-Q6_K.gguf",
+     26886155136ull, 30000,
+     "Strongest file in this list. Fits a 32 GB card.",
+     "RTX 5090 32 GB",
+     32},
 };
 
 static const GgufOffer* findGgufOffer(const std::string& id) {
@@ -1135,6 +1216,20 @@ std::string controlTransact(int fd, const std::string& command) {
         }
     }
     return resp;
+}
+
+// One fresh circuit when a Tor fetch comes back empty. Tor ignores a second
+// request inside its own ten-second window, and that answer is not 250.
+bool signalSessionNewnym() {
+    const int port = gControlPort.load();
+    if (port <= 0 || port > 65535) return false;
+    const int fd = connectLocalPort(static_cast<uint16_t>(port), 3);
+    if (fd < 0) return false;
+    const bool authed = controlAuthenticate(fd, gCookiePath);
+    std::string resp;
+    if (authed) resp = controlTransact(fd, "SIGNAL NEWNYM");
+    CLOSESOCK(fd);
+    return authed && resp.find("250") != std::string::npos;
 }
 
 uint16_t pickFreeLocalPort() {
@@ -3547,6 +3642,15 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             if (patch.is_discarded() || !patch.is_object()) {
                 return "{\"error\":\"invalid settings json\"}";
             }
+            auto rolePathOk = [&](const char* key) {
+                if (!patch.contains(key)) return true;
+                if (!patch[key].is_string()) return false;
+                const std::string p = patch[key].get<std::string>();
+                return p.empty() || validateGguf(p);
+            };
+            if (!rolePathOk("guide_model_path") || !rolePathOk("naan_model_path")) {
+                return "{\"error\":\"model file is not a GGUF\"}";
+            }
             if (!base.is_object()) base = nlohmann::json::object();
             for (auto it = patch.begin(); it != patch.end(); ++it) {
                 base[it.key()] = it.value();
@@ -3566,6 +3670,10 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             }
             if (base.contains("profile_alias") && base["profile_alias"].is_string())
                 profileAlias_ = base["profile_alias"].get<std::string>();
+            if (patch.contains("guide_model_path") && patch["guide_model_path"].is_string())
+                guideModelPath_ = patch["guide_model_path"].get<std::string>();
+            if (patch.contains("naan_model_path") && patch["naan_model_path"].is_string())
+                naanModelPath_ = patch["naan_model_path"].get<std::string>();
             if (patch.contains("naan_enabled")) {
                 bool wantNaan = false;
                 if (base.contains("naan_enabled")) {
@@ -3607,6 +3715,15 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
     if (method == "ai.complete") {
         if (!isInitialized()) return "{\"error\":\"not initialized\"}";
         return aiCompleteRpc(paramsJson);
+    }
+    if (method == "guide.history" || method == "guide.say" || method == "guide.observe" ||
+        method == "guide.confirm" || method == "guide.refuse" || method == "guide.clear") {
+        if (!isInitialized()) return "{\"error\":\"not initialized\"}";
+        return guideRpc(method.substr(6), paramsJson);
+    }
+    if (method == "find.engines" || method == "find.search" || method == "find.read") {
+        if (!isInitialized()) return "{\"error\":\"not initialized\"}";
+        return findRpc(method.substr(5), paramsJson);
     }
     if (method == "crypto.status") {
         if (!isInitialized()) return "{\"error\":\"not initialized\"}";
@@ -4535,10 +4652,17 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         }
         std::string patch = p.value("patch", "");
         if (patch.empty()) patch = p.value("body", "");
+        std::string tests = p.value("tests", "");
         std::string title = p.value("title", "");
         if (title.empty()) title = p.value("filename", "patch");
         if (patch.empty()) return "{\"error\":\"patch required\"}";
-        return submitPoeKnowledge(title, patch, synapse::core::poe_v1::ContentType::CODE);
+        const std::string marker = "SYNAPSE_WORK_V1\n";
+        std::string body = patch;
+        if (patch.compare(0, marker.size(), marker) != 0) {
+            if (tests.empty()) return "{\"error\":\"work_tests_required\"}";
+            body = synapse::core::workBundle(patch, tests);
+        }
+        return submitPoeKnowledge(title, body, synapse::core::poe_v1::ContentType::CODE);
     }
 
     if (method == "msg.list") {
@@ -5032,6 +5156,12 @@ std::string SynapsedEngine::getStatus() const {
     j["last_block"] = localChainHeight();
     j["model_loaded"] = modelLoaded_;
     j["model_name"] = modelName_;
+    j["guide"] = {
+        {"id", "guide"},
+        {"role", "helper"},
+        {"state", "on"},
+        {"speaks", "en-US"}
+    };
     j["model_path"] = modelPath_;
     j["inference"] = inferenceReady_;
     j["tor_bootstrap"] = torBootstrap_;
@@ -5178,11 +5308,16 @@ std::string SynapsedEngine::fetchViaTor(const std::string& url, const std::strin
     const std::string cookieFile = tag.empty()
         ? (dataDir_ + "/tor_cookies.txt")
         : (dataDir_ + "/tor_cookies_" + tag + ".txt");
-    std::string cmd = "curl -s -k --max-time " + std::to_string(timeout) +
+    std::string cmd = "curl -s -k --compressed --max-time " + std::to_string(timeout) +
         " --socks5-hostname 127.0.0.1:" + std::to_string(socksPort) + " -L "
         "-H \"User-Agent: " + ua + "\" "
         "-c " + cookieFile + " -b " + cookieFile + " "
-        "\"" + url + "\" 2>/dev/null";
+        "\"" + url + "\""
+#ifdef _WIN32
+        " 2>NUL";
+#else
+        " 2>/dev/null";
+#endif
     return execCmd(cmd);
 }
 
@@ -7963,12 +8098,23 @@ std::string SynapsedEngine::solveCaptchaViaLLM(const std::string& html,
     }
 
     std::string answer;
-    if (ensureLlamaLoaded()) {
+    std::string file;
+    std::string role = "desktop";
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (!naanModelPath_.empty()) {
+            file = naanModelPath_;
+            if (naanModelPath_ != modelPath_) role = "naan-primary";
+        } else {
+            file = modelPath_;
+        }
+    }
+    if (ensureRoleModel(role, file)) {
         std::map<std::string, float> params;
         params["max_tokens"] = 32.f;
         params["temperature"] = 0.1f;
         std::lock_guard<std::mutex> llama(llamaMtx_);
-        if (llamaEngine_) answer = llamaEngine_->runSyncText("desktop", prompt, params);
+        if (llamaEngine_) answer = llamaEngine_->runSyncText(role, prompt, params);
     }
     std::remove(tmpPrompt.c_str());
     while (!answer.empty() && (answer.back() == '\n' || answer.back() == '\r' || answer.back() == ' '))
@@ -8926,20 +9072,17 @@ bool SynapsedEngine::validateGguf(const std::string& path) const {
 }
 
 std::string SynapsedEngine::modelLoad(const std::string& paramsJson) {
-    size_t pp = paramsJson.find("\"path\"");
-    if (pp == std::string::npos) return "{\"error\":\"missing path\"}";
-    size_t qs = paramsJson.find('"', pp + 6);
-    if (qs == std::string::npos) return "{\"error\":\"bad json\"}";
-    size_t qe = paramsJson.find('"', qs + 1);
-    if (qe == std::string::npos) return "{\"error\":\"bad json\"}";
-    std::string path = paramsJson.substr(qs + 1, qe - qs - 1);
+    nlohmann::json p = nlohmann::json::parse(paramsJson.empty() ? "{}" : paramsJson, nullptr, false);
+    if (p.is_discarded() || !p.is_object() || !p.contains("path") || !p["path"].is_string())
+        return "{\"error\":\"missing path\"}";
+    std::string path = p["path"].get<std::string>();
 
     if (!validateGguf(path)) return "{\"error\":\"invalid GGUF file\"}";
 
     std::ifstream f(path, std::ios::ate | std::ios::binary);
-    size_t sz = f.tellg();
+    size_t sz = f ? static_cast<size_t>(f.tellg()) : 0;
 
-    size_t slash = path.rfind('/');
+    size_t slash = path.find_last_of("/\\");
     std::string name = (slash != std::string::npos) ? path.substr(slash + 1) : path;
 
     {
@@ -8949,6 +9092,18 @@ std::string SynapsedEngine::modelLoad(const std::string& paramsJson) {
         modelPath_ = path;
         modelSizeMb_ = sz / (1024 * 1024);
         inferenceReady_ = false;
+    }
+    {
+        std::ifstream sf(dataDir_ + "/settings.json");
+        std::string content((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+        nlohmann::json saved = nlohmann::json::parse(content, nullptr, false);
+        const bool keep = !saved.is_discarded() && saved.is_object();
+        if (keep || content.empty()) {
+            if (!keep) saved = nlohmann::json::object();
+            saved["model_path"] = path;
+            std::ofstream settingsOut(dataDir_ + "/settings.json", std::ios::trunc);
+            if (settingsOut.good()) settingsOut << saved.dump();
+        }
     }
 
     bool inference = ensureLlamaLoaded();
@@ -8981,6 +9136,7 @@ std::string SynapsedEngine::modelUnloadRpc() {
         if (llamaEngine_ && llamaEngine_->isModelLoaded("desktop")) {
             llamaEngine_->unloadModel("desktop");
         }
+        roleLoadedPath_.erase("desktop");
         inferenceReady_ = false;
     }
     std::lock_guard<std::mutex> lock(mtx_);
@@ -9172,6 +9328,13 @@ std::string SynapsedEngine::formatNaanAgentJson(const std::string& agentId) cons
         o["current_task"] = naanRunning_.load() ? naanCurrentTask_ : "";
         o["model_name"] = modelName_;
         o["model_path"] = modelPath_;
+        if (!naanModelPath_.empty()) {
+            const size_t slash = naanModelPath_.find_last_of("/\\");
+            o["model_mode"] = "own";
+            o["model_path"] = naanModelPath_;
+            o["model_name"] = (slash != std::string::npos)
+                ? naanModelPath_.substr(slash + 1) : naanModelPath_;
+        }
         o["model_ready"] = inferenceReady_;
         o["inference_state"] = inferenceReady_ ? "ready" : (modelLoaded_ ? "registered" : "idle");
         o["submissions"] = careerCount(agentId, false, naanSubmissions_);
@@ -9196,6 +9359,13 @@ std::string SynapsedEngine::formatNaanAgentJson(const std::string& agentId) cons
     o["model_mode"] = slot->modelMode;
     o["model_name"] = slot->modelMode == "own" && !slot->modelName.empty() ? slot->modelName : modelName_;
     o["model_path"] = slot->modelMode == "own" && !slot->modelPath.empty() ? slot->modelPath : modelPath_;
+    if (agentId == kPrimaryNaanId && !naanModelPath_.empty()) {
+        const size_t slash = naanModelPath_.find_last_of("/\\");
+        o["model_mode"] = "own";
+        o["model_path"] = naanModelPath_;
+        o["model_name"] = (slash != std::string::npos)
+            ? naanModelPath_.substr(slash + 1) : naanModelPath_;
+    }
     o["model_ready"] = inferenceReady_;
     o["inference_state"] = slot->inferenceState.empty() ? (inferenceReady_ ? "ready" : "idle") : slot->inferenceState;
     o["submissions"] = careerCount(agentId, false, slot->submissions);
@@ -9346,8 +9516,17 @@ std::string SynapsedEngine::startNaanAgent(const std::string& agentId) {
         if (agentId == kPrimaryNaanId) naanState_ = "active";
     }
 
-    if (agentId == kPrimaryNaanId && !modelPath_.empty()) {
-        std::thread([this]() { ensureLlamaLoaded(); }).detach();
+    if (agentId == kPrimaryNaanId) {
+        std::thread([this]() {
+            ensureLlamaLoaded();
+            std::string extra;
+            {
+                std::lock_guard<std::mutex> lock(mtx_);
+                extra = naanModelPath_;
+                if (extra == modelPath_) extra.clear();
+            }
+            if (!extra.empty()) ensureRoleModel("naan-primary", extra);
+        }).detach();
     }
 
     slot->thread = std::thread(&SynapsedEngine::naanLoopFor, this, agentId);
@@ -10076,7 +10255,7 @@ void SynapsedEngine::applyDesktopConfig() {
         std::ifstream f(path, std::ios::ate | std::ios::binary);
         if (!f.good()) return;
         size_t sz = static_cast<size_t>(f.tellg());
-        size_t slash = path.rfind('/');
+        size_t slash = path.find_last_of("/\\");
         modelName_ = (slash != std::string::npos) ? path.substr(slash + 1) : path;
         modelPath_ = path;
         modelSizeMb_ = sz / (1024 * 1024);
@@ -10108,6 +10287,14 @@ void SynapsedEngine::applyDesktopConfig() {
             if (j.contains("model_path") && j["model_path"].is_string()) {
                 takeModelPath(j["model_path"].get<std::string>());
             }
+            auto takeRolePath = [&](const char* key, std::string& dest) {
+                if (!j.contains(key) || !j[key].is_string()) return;
+                const std::string p = j[key].get<std::string>();
+                if (p.empty() || !validateGguf(p)) return;
+                dest = p;
+            };
+            takeRolePath("guide_model_path", guideModelPath_);
+            takeRolePath("naan_model_path", naanModelPath_);
             if (j.contains("naan_topics") && j["naan_topics"].is_string()) {
                 auto topics = parseTopicCsv(j["naan_topics"].get<std::string>());
                 if (!topics.empty()) cfgTopics_ = topics;
@@ -10143,6 +10330,8 @@ std::string SynapsedEngine::modelCatalogJson() const {
         row["size_bytes"] = o.sizeBytes;
         row["ram_mb"] = o.ramMb;
         row["note"] = o.note;
+        row["gpus"] = o.gpus;
+        row["vram_gb"] = o.vramGb;
         row["installed"] = installed;
         row["path"] = installed ? dest : "";
         arr.push_back(std::move(row));
@@ -10157,7 +10346,7 @@ std::string SynapsedEngine::modelCatalogJson() const {
                 std::string dest = pth.string();
                 bool known = false;
                 for (const auto& o : kGgufCatalog) {
-                    if (modelsDir + "/" + o.filename == dest) {
+                    if (pth.filename() == o.filename) {
                         known = true;
                         break;
                     }
@@ -10172,6 +10361,8 @@ std::string SynapsedEngine::modelCatalogJson() const {
                 row["size_bytes"] = static_cast<uint64_t>(ent.file_size(ec));
                 row["ram_mb"] = 0;
                 row["note"] = "Local GGUF in ~/.synapsenet/models";
+                row["gpus"] = "";
+                row["vram_gb"] = 0;
                 row["installed"] = true;
                 row["path"] = dest;
                 arr.push_back(std::move(row));
@@ -10182,7 +10373,7 @@ std::string SynapsedEngine::modelCatalogJson() const {
     out["models"] = arr;
     out["dir"] = modelsDir;
     out["via_default"] = "direct";
-    out["note"] = "Catalog files download from HuggingFace over HTTPS. Mesh traffic stays on Tor. Harvest works without a GGUF; IDE chat and hard captchas need one.";
+    out["note"] = "Rows run from a weak card to the strongest. Download the row that matches your VRAM. Files come from HuggingFace over HTTPS. This build runs them on the CPU; the card name is the VRAM the file is sized for. Harvest works without a GGUF.";
     return out.dump();
 }
 
@@ -10753,57 +10944,63 @@ void SynapsedEngine::modelDownloadLoop(std::string id, std::string url, std::str
 #endif
 }
 
-bool SynapsedEngine::ensureLlamaLoaded() const {
-    std::string path;
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
-        path = modelPath_;
-        if (inferenceReady_ && llamaEngine_ && llamaEngine_->isModelLoaded("desktop"))
-            return true;
-    }
-    if (path.empty() || !validateGguf(path)) return false;
-
+static int desktopGpuLayers(const std::string& dataDir) {
     int nGpuLayers = 0;
-    {
-        std::ifstream sf(dataDir_ + "/settings.json");
-        if (sf.good()) {
-            std::string content((std::istreambuf_iterator<char>(sf)),
-                                 std::istreambuf_iterator<char>());
-            nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
-            if (!j.is_discarded() && j.is_object()) {
-                bool gpuOn = false;
-                if (j.contains("gpu_enabled")) {
-                    if (j["gpu_enabled"].is_boolean()) gpuOn = j["gpu_enabled"].get<bool>();
-                    else if (j["gpu_enabled"].is_number()) gpuOn = j["gpu_enabled"].get<int>() != 0;
-                }
-                if (gpuOn) {
-                    nGpuLayers = 32;
-                    if (j.contains("gpu_layers") && j["gpu_layers"].is_number())
-                        nGpuLayers = std::max(0, j["gpu_layers"].get<int>());
-                }
-            }
-        }
+    std::ifstream sf(dataDir + "/settings.json");
+    if (!sf.good()) return 0;
+    std::string content((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+    nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
+    if (j.is_discarded() || !j.is_object()) return 0;
+    bool gpuOn = false;
+    if (j.contains("gpu_enabled")) {
+        if (j["gpu_enabled"].is_boolean()) gpuOn = j["gpu_enabled"].get<bool>();
+        else if (j["gpu_enabled"].is_number()) gpuOn = j["gpu_enabled"].get<int>() != 0;
     }
+    if (!gpuOn) return 0;
+    nGpuLayers = 32;
+    if (j.contains("gpu_layers") && j["gpu_layers"].is_number())
+        nGpuLayers = std::max(0, j["gpu_layers"].get<int>());
+    return nGpuLayers;
+}
 
+bool SynapsedEngine::ensureRoleModel(const std::string& role, const std::string& path) const {
+    if (role.empty() || path.empty() || !validateGguf(path)) return false;
+    const int nGpuLayers = desktopGpuLayers(dataDir_);
     std::lock_guard<std::mutex> llama(llamaMtx_);
     try {
         if (!llamaEngine_) {
             llamaEngine_ = std::make_unique<synapse::model::InferenceEngine>();
             llamaEngine_->initialize(1);
             llamaEngine_->setDefaultTimeout(120000);
-        } else if (llamaEngine_->isModelLoaded("desktop")) {
-            llamaEngine_->unloadModel("desktop");
         }
-        if (!llamaEngine_->loadModel("desktop", path, nGpuLayers)) {
-            inferenceReady_ = false;
+        const auto known = roleLoadedPath_.find(role);
+        if (llamaEngine_->isModelLoaded(role) && known != roleLoadedPath_.end() && known->second == path) {
+            if (role == "desktop") inferenceReady_ = true;
+            return true;
+        }
+        if (llamaEngine_->isModelLoaded(role)) llamaEngine_->unloadModel(role);
+        if (!llamaEngine_->loadModel(role, path, nGpuLayers)) {
+            roleLoadedPath_.erase(role);
+            if (role == "desktop") inferenceReady_ = false;
             return false;
         }
-        inferenceReady_ = true;
+        roleLoadedPath_[role] = path;
+        if (role == "desktop") inferenceReady_ = true;
         return true;
     } catch (...) {
-        inferenceReady_ = false;
+        roleLoadedPath_.erase(role);
+        if (role == "desktop") inferenceReady_ = false;
         return false;
     }
+}
+
+bool SynapsedEngine::ensureLlamaLoaded() const {
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        path = modelPath_;
+    }
+    return ensureRoleModel("desktop", path);
 }
 
 // Qwen2.5 Instruct needs ChatML. Raw "hi" continues coding dumps from the corpus.
@@ -10890,6 +11087,416 @@ std::string SynapsedEngine::cryptoStatusJson() const {
     j["symmetric"] = "AES-256-GCM";
     j["hash"] = "SHA3-512";
     return j.dump();
+}
+
+namespace {
+
+struct DeskEngine {
+    const char* id;
+    const char* name;
+    const char* prefix;
+    bool queryable;
+};
+
+// Same hosts as the darknet branch of topicToUrl. The desk does not add engines.
+// The Pirate Bay host stays on the harvest list and is not offered here.
+const DeskEngine kDeskEngines[] = {
+    {"torch", "Torch", "http://torchdeedp3i2jigzjdmfpn5ttjhthh5wbmda2rr3jvqjg5p77c54dqd.onion/search?query=", true},
+    {"torch-legacy", "Torch legacy", "http://xmh57jrknzkhv6y3ls3ubitzfqnkrwxhopf5aygthi7d6rplyvk3noyd.onion/cgi-bin/omega/omega?P=", true},
+    {"ahmia", "Ahmia", "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/search/?q=", true},
+    {"duckduckgo", "DuckDuckGo", "http://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/?q=", true},
+    {"tordex", "Tordex", "http://tordexpmg4xy32rfp4ovnz7zq5ujoejwq2u26uxxtkscgo5u3losmeid.onion/search?query=", true},
+    {"tor66", "Tor66", "http://tor66sewebgixwhcqfnp5inzp5x5uohhdy3kvtnyfxc2e5mxiuh34iid.onion/search?q=", true},
+    {"darksearch", "DarkSearch", "http://darkzqtmbdeauwq5mzcmgeeuhet42fhfjj4p5wbak3ofx2yqgecoeqyd.onion/search?query=", true},
+    {"onionland", "OnionLand", "http://3bbad7fauom4d6sgppalyqddsqbf5u5p56b5k5uk2zxsy3d6ey2jobad.onion/search?q=", true},
+    {"deepsearch", "DeepSearch", "http://search7tdrcvri22rieiwgi5g46qnwsesvnubqav2xakhezv4hjzkkad.onion/result.php?search=", true},
+    {"dread", "Dread", "http://dreadytofatroptsdj6io7l3xptbet6onoyno2yv7jicoxknyazubrad.onion/d/DarkSearch", false},
+    {"wiki", "Hidden Wiki", "http://zqktlwiuavvvqqt4ybvgvi7tyo4hjl5xgfuvpdf6otjiycgwqbym2qad.onion/", false},
+    {"bbc", "BBC", "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/search?q=", true},
+    {"haystak", "Haystak", "http://haystak5njsmn2hqkewecpaxetahtwhsbsa64jom2k22z5afxhnpxfid.onion/?q=", true},
+};
+
+std::string findEncode(const std::string& in) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(in.size() * 3);
+    for (unsigned char c : in) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else if (c == ' ') {
+            out += "%20";
+        } else {
+            out.push_back('%');
+            out.push_back(hex[c >> 4]);
+            out.push_back(hex[c & 0x0f]);
+        }
+    }
+    return out;
+}
+
+std::string findLower(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+void findReplace(std::string& s, const std::string& from, const std::string& to) {
+    size_t pos = 0;
+    while ((pos = s.find(from, pos)) != std::string::npos) {
+        s.replace(pos, from.size(), to);
+        pos += to.size();
+    }
+}
+
+std::string findDecode(std::string s) {
+    findReplace(s, "&amp;", "&");
+    findReplace(s, "&lt;", "<");
+    findReplace(s, "&gt;", ">");
+    findReplace(s, "&quot;", "\"");
+    findReplace(s, "&#39;", "'");
+    findReplace(s, "&apos;", "'");
+    findReplace(s, "&nbsp;", " ");
+    return s;
+}
+
+std::string findDropBlocks(std::string html, const std::string& openTag, const std::string& closeTag) {
+    const std::string lower = findLower(html);
+    std::string out;
+    size_t i = 0;
+    while (i < html.size()) {
+        const size_t open = lower.find(openTag, i);
+        if (open == std::string::npos) {
+            out.append(html, i, std::string::npos);
+            break;
+        }
+        out.append(html, i, open - i);
+        const size_t close = lower.find(closeTag, open + openTag.size());
+        if (close == std::string::npos) break;
+        i = close + closeTag.size();
+    }
+    return out;
+}
+
+std::string findPlain(std::string html) {
+    html = findDropBlocks(std::move(html), "<script", "</script>");
+    html = findDropBlocks(std::move(html), "<style", "</style>");
+    std::string text;
+    text.reserve(html.size() / 4 + 1);
+    bool tag = false;
+    for (unsigned char c : html) {
+        if (c == '<') { tag = true; continue; }
+        if (c == '>') { tag = false; text.push_back(' '); continue; }
+        if (!tag) text.push_back(static_cast<char>(c < 32 || c == 127 ? ' ' : c));
+    }
+    text = findDecode(std::move(text));
+    std::string collapsed;
+    bool space = false;
+    for (unsigned char c : text) {
+        if (c < 32 || c == 127) c = ' ';
+        if (c == ' ') {
+            if (space) continue;
+            space = true;
+            collapsed.push_back(' ');
+        } else {
+            space = false;
+            collapsed.push_back(static_cast<char>(c));
+        }
+    }
+    const size_t a = collapsed.find_first_not_of(' ');
+    if (a == std::string::npos) return "";
+    const size_t b = collapsed.find_last_not_of(' ');
+    collapsed = collapsed.substr(a, b - a + 1);
+    if (collapsed.size() > 2200) collapsed.resize(2200);
+    return collapsed;
+}
+
+std::string findOrigin(const std::string& url) {
+    const auto scheme = url.find("://");
+    if (scheme == std::string::npos) return url;
+    const size_t path = url.find('/', scheme + 3);
+    if (path == std::string::npos) return url;
+    return url.substr(0, path);
+}
+
+std::string findHostOf(const std::string& url) {
+    const auto scheme = url.find("://");
+    if (scheme == std::string::npos) return "";
+    const size_t start = scheme + 3;
+    size_t end = url.find('/', start);
+    if (end == std::string::npos) end = url.size();
+    const auto port = url.find(':', start);
+    if (port != std::string::npos && port < end) end = port;
+    return url.substr(start, end - start);
+}
+
+std::string findShortHost(const std::string& host) {
+    if (host.size() <= 22) return host;
+    if (host.size() > 6 && host.compare(host.size() - 6, 6, ".onion") == 0) {
+        return host.substr(0, 12) + "….onion";
+    }
+    return host.substr(0, 18) + "…";
+}
+
+// The desk shows a hint, not the address. A v3 onion in a title or path is masked.
+std::string findMaskOnions(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size();) {
+        const auto dot = in.find(".onion", i);
+        if (dot == std::string::npos) {
+            out.append(in, i, std::string::npos);
+            break;
+        }
+        size_t start = dot;
+        while (start > i) {
+            const unsigned char c = static_cast<unsigned char>(in[start - 1]);
+            const bool onion = (c >= 'a' && c <= 'z') || (c >= '2' && c <= '7');
+            if (!onion) break;
+            --start;
+        }
+        out.append(in, i, start - i);
+        const size_t label = dot - start;
+        if (label >= 16) {
+            out.append(in, start, 8);
+            out += "….onion";
+        } else {
+            out.append(in, start, dot + 6 - start);
+        }
+        i = dot + 6;
+    }
+    return out;
+}
+
+bool findUrlCharsOk(const std::string& url) {
+    if (url.empty()) return false;
+    for (unsigned char c : url) {
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == ':' || c == '/' ||
+              c == '.' || c == '_' || c == '?' || c == '&' ||
+              c == '=' || c == '%' || c == '+' || c == '#' || c == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string findResolve(const std::string& base, const std::string& href) {
+    if (href.rfind("http://", 0) == 0 || href.rfind("https://", 0) == 0) return href;
+    const std::string origin = findOrigin(base);
+    if (!href.empty() && href[0] == '/') return origin + href;
+    if (href.rfind("./", 0) == 0) {
+        const auto slash = base.rfind('/');
+        if (slash == std::string::npos) return origin + "/" + href.substr(2);
+        return base.substr(0, slash + 1) + href.substr(2);
+    }
+    return "";
+}
+
+bool findSkipHref(const std::string& href) {
+    if (href.empty() || href[0] == '#') return true;
+    const std::string low = findLower(href);
+    if (low.rfind("javascript:", 0) == 0 || low.rfind("mailto:", 0) == 0) return true;
+    if (low.find(".png") != std::string::npos || low.find(".jpg") != std::string::npos ||
+        low.find(".jpeg") != std::string::npos || low.find(".gif") != std::string::npos ||
+        low.find(".css") != std::string::npos || low.find(".svg") != std::string::npos) {
+        return true;
+    }
+    return false;
+}
+
+struct DeskHit {
+    std::string title;
+    std::string url;
+    std::string host;
+    std::string path;
+};
+
+std::vector<DeskHit> findHitsFromHtml(const std::string& htmlIn, const std::string& pageUrl) {
+    const std::string html = htmlIn.size() > 500000 ? htmlIn.substr(0, 500000) : htmlIn;
+    const std::string lower = findLower(html);
+    const std::string pageHost = findLower(findHostOf(pageUrl));
+    std::vector<DeskHit> off;
+    std::vector<DeskHit> same;
+    std::vector<std::string> seen;
+    size_t pos = 0;
+    while (off.size() + same.size() < 40) {
+        const size_t a = lower.find("<a", pos);
+        if (a == std::string::npos) break;
+        const size_t tagEnd = html.find('>', a);
+        if (tagEnd == std::string::npos) break;
+        const std::string tag = html.substr(a, tagEnd - a);
+        const std::string tagLow = findLower(tag);
+        const size_t hrefAt = tagLow.find("href=");
+        pos = tagEnd + 1;
+        if (hrefAt == std::string::npos) continue;
+        size_t q = hrefAt + 5;
+        while (q < tag.size() && std::isspace(static_cast<unsigned char>(tag[q]))) ++q;
+        if (q >= tag.size()) continue;
+        std::string href;
+        const char quote = tag[q];
+        if (quote == '"' || quote == '\'') {
+            const size_t end = tag.find(quote, q + 1);
+            if (end == std::string::npos) continue;
+            href = tag.substr(q + 1, end - q - 1);
+        } else {
+            const size_t end = tag.find_first_of(" \t", q);
+            href = tag.substr(q, end == std::string::npos ? std::string::npos : end - q);
+        }
+        href = findDecode(href);
+        if (findSkipHref(href)) continue;
+        std::string url = findResolve(pageUrl, href);
+        const auto hash = url.find('#');
+        if (hash != std::string::npos) url.resize(hash);
+        if (!findUrlCharsOk(url)) continue;
+        const size_t close = lower.find("</a>", tagEnd);
+        if (close == std::string::npos) continue;
+        std::string title = findMaskOnions(findPlain(html.substr(tagEnd + 1, close - tagEnd - 1)));
+        if (title.size() > 140) title.resize(140);
+        if (title.size() < 2) continue;
+        const std::string host = findHostOf(url);
+        if (host.empty()) continue;
+        const std::string key = findLower(url);
+        if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
+        seen.push_back(key);
+        std::string path;
+        const auto scheme = url.find("://");
+        if (scheme != std::string::npos) {
+            const size_t slash = url.find('/', scheme + 3);
+            if (slash != std::string::npos) path = url.substr(slash);
+        }
+        auto qmark = path.find('?');
+        if (qmark != std::string::npos) path.resize(qmark);
+        path = findMaskOnions(path);
+        if (path.size() > 72) path.resize(72);
+        DeskHit hit{title, url, findShortHost(host), path};
+        if (findLower(host) == pageHost) {
+            if (path.empty() || path == "/" || path.rfind("/search", 0) == 0 ||
+                path.rfind("/cgi-bin/omega", 0) == 0) {
+                pos = close + 4;
+                continue;
+            }
+            same.push_back(std::move(hit));
+        } else {
+            off.push_back(std::move(hit));
+        }
+        pos = close + 4;
+    }
+    std::vector<DeskHit> out;
+    for (auto& hit : off) {
+        if (out.size() >= 12) break;
+        out.push_back(std::move(hit));
+    }
+    for (auto& hit : same) {
+        if (out.size() >= 12) break;
+        out.push_back(std::move(hit));
+    }
+    return out;
+}
+
+std::string findTrim(const std::string& in) {
+    size_t a = 0;
+    size_t b = in.size();
+    while (a < b && std::isspace(static_cast<unsigned char>(in[a]))) ++a;
+    while (b > a && std::isspace(static_cast<unsigned char>(in[b - 1]))) --b;
+    return in.substr(a, b - a);
+}
+
+}  // namespace
+
+std::string SynapsedEngine::findRpc(const std::string& op, const std::string& paramsJson) {
+    if (op == "engines") {
+        nlohmann::json engines = nlohmann::json::array();
+        for (const auto& engine : kDeskEngines) {
+            engines.push_back({{"id", engine.id}, {"name", engine.name}, {"query", engine.queryable}});
+        }
+        nlohmann::json out;
+        out["ok"] = true;
+        out["engines"] = std::move(engines);
+        return out.dump();
+    }
+
+    nlohmann::json params = nlohmann::json::parse(paramsJson.empty() ? "{}" : paramsJson, nullptr, false);
+    if (params.is_discarded() || !params.is_object()) return "{\"error\":\"bad params\"}";
+
+    if (op == "read") {
+        const int index = params.value("index", -1);
+        std::string url;
+        {
+            std::lock_guard<std::mutex> lock(findMtx_);
+            if (index < 0 || static_cast<size_t>(index) >= findOpenUrls_.size()) {
+                return "{\"error\":\"That result is gone. Search again.\"}";
+            }
+            url = findOpenUrls_[static_cast<size_t>(index)];
+        }
+        if (gSocksPort.load() <= 0) return "{\"error\":\"Tor is not ready\"}";
+        std::string html = fetchViaTor(url, "find");
+        if (html.find('<') == std::string::npos && signalSessionNewnym()) {
+            html = fetchViaTor(url, "find");
+        }
+        if (html.empty() || html.find('<') == std::string::npos) {
+            return "{\"error\":\"That page did not answer\"}";
+        }
+        const std::string text = findMaskOnions(findPlain(std::move(html)));
+        if (text.empty()) return "{\"error\":\"That page had no text\"}";
+        nlohmann::json out;
+        out["ok"] = true;
+        out["text"] = text;
+        return out.dump();
+    }
+
+    if (op != "search") return "{\"error\":\"unknown find op\"}";
+
+    const std::string id = params.value("engine", "");
+    const DeskEngine* engine = nullptr;
+    for (const auto& candidate : kDeskEngines) {
+        if (id == candidate.id) {
+            engine = &candidate;
+            break;
+        }
+    }
+    if (!engine) return "{\"error\":\"unknown engine\"}";
+
+    std::string query = findTrim(params.value("query", ""));
+    if (query.size() > 160) query.resize(160);
+    std::string url = engine->prefix;
+    if (engine->queryable) {
+        if (query.empty()) return "{\"error\":\"Type a query\"}";
+        url += findEncode(query);
+    }
+    if (!isUrlSafe(url)) return "{\"error\":\"query rejected\"}";
+    if (gSocksPort.load() <= 0) return "{\"error\":\"Tor is not ready\"}";
+
+    std::string html = fetchViaTor(url, "find");
+    if (html.find('<') == std::string::npos && signalSessionNewnym()) {
+        html = fetchViaTor(url, "find");
+    }
+    const bool page = html.find('<') != std::string::npos;
+    if (html.empty() || !page) {
+        return "{\"error\":\"That engine did not answer. The Tor circuit may be stuck. Try the search again.\"}";
+    }
+    const bool captcha = findLower(html).find("captcha") != std::string::npos;
+    const auto hits = findHitsFromHtml(html, url);
+    if (hits.empty() && captcha) {
+        return "{\"error\":\"That engine asked for a captcha. Pick another.\"}";
+    }
+
+    nlohmann::json rows = nlohmann::json::array();
+    std::vector<std::string> urls;
+    urls.reserve(hits.size());
+    for (const auto& hit : hits) {
+        rows.push_back({{"title", hit.title}, {"host", hit.host}, {"path", hit.path}});
+        urls.push_back(hit.url);
+    }
+    {
+        std::lock_guard<std::mutex> lock(findMtx_);
+        findOpenUrls_ = std::move(urls);
+    }
+    nlohmann::json out;
+    out["ok"] = true;
+    out["engine"] = engine->id;
+    out["count"] = rows.size();
+    if (rows.empty()) out["note"] = "The page came back with no result links.";
+    out["results"] = std::move(rows);
+    return out.dump();
 }
 
 }

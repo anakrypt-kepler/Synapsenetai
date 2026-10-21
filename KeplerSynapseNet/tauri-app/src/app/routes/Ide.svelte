@@ -1,6 +1,6 @@
 <script lang="ts">
-  // Built-in editor. Submit a patch as a PoE code contribution (poe.submit_code).
-  // NGT is the acceptance reward, not a hash-mining payout.
+  // Built-in editor. Submit a patch plus tests (poe.submit_code).
+  // NGT mints only when cells run that bundle and agree on the result hash.
   import { onMount } from "svelte";
   import { beginPageLoad } from "../../lib/pageLoad";
   import ChatPanel from "../components/ChatPanel.svelte";
@@ -8,8 +8,9 @@
   import { activeTab, nodeStatus } from "../../lib/store";
   import CoderLoader from "../components/CoderLoader.svelte";
 
-  // PoE stores the file as text. Language is only the tab name / extension.
+  // Consensus runs the Work language. Other labels are file extensions only.
   const langs: { id: string; ext: string; label: string }[] = [
+    { id: "work", ext: "syn", label: "Work" },
     { id: "rust", ext: "rs", label: "Rust" },
     { id: "python", ext: "py", label: "Python" },
     { id: "javascript", ext: "js", label: "JavaScript" },
@@ -33,11 +34,12 @@
   ];
 
   let files: { name: string; content: string }[] = [
-    { name: "snippet.rs", content: '// SynapseNet code\nfn main() {\n    println!("Hello, SynapseNet!");\n}' },
+    { name: "snippet.syn", content: "fn add(a, b) = a + b\n" },
   ];
+  let tests = "assert add(2, 3) == 5\n";
   let activeFile = 0;
   let nextUntitled = 2;
-  let langId = "rust";
+  let langId = "work";
 
   function extOf(name: string): string {
     const i = name.lastIndexOf(".");
@@ -122,12 +124,16 @@
       submitResult = "EMPTY PATCH";
       return;
     }
+    if (!file.content.startsWith("SYNAPSE_WORK_V1\n") && !tests.trim()) {
+      submitResult = "TESTS REQUIRED";
+      return;
+    }
     submitting = true;
     submitResult = "";
     try {
       const result = await rpcCall(
         "poe.submit_code",
-        JSON.stringify({ title: poeTitle(file.name), patch: file.content })
+        JSON.stringify({ title: poeTitle(file.name), patch: file.content, tests })
       );
       const parsed = JSON.parse(result);
       if (parsed.error) {
@@ -170,6 +176,8 @@
               bind:value={files[activeFile].content}
               spellcheck="false"
             ></textarea>
+            <div class="tests-label">TESTS</div>
+            <textarea class="code-textarea tests-area" bind:value={tests} spellcheck="false"></textarea>
           {/if}
         </div>
         <div class="ide-earn">
@@ -179,7 +187,7 @@
             <span>Epoch {poeStats.current_epoch}</span>
           </div>
           <div class="earn-hint">
-            Any language. PoE stores text, it does not compile. Submit → chain → NGT on finalize. Author stays public.
+            NGT mints only when cells run this patch and its tests and agree on the same result hash. The model does not vote.
           </div>
           {#if myCode.length > 0}
             <div class="code-subs">
@@ -312,6 +320,8 @@
 
   .editor-content {
     flex: 1;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
     margin: 8px 0;
     border-top: 1px solid var(--border);
@@ -319,9 +329,19 @@
     min-height: 0;
   }
 
+  .tests-label {
+    flex: 0 0 auto;
+    padding: 6px 10px 0;
+    font-size: 11px;
+    color: var(--text-secondary);
+    letter-spacing: 0;
+  }
+
   .code-textarea {
     width: 100%;
-    height: 100%;
+    height: auto;
+    flex: 1 1 auto;
+    min-height: 0;
     resize: none;
     border: none;
     border-radius: 0;
@@ -342,6 +362,12 @@
   .code-textarea:focus {
     outline: none;
     border: none;
+  }
+
+  .tests-area {
+    flex: 0 0 88px;
+    height: 88px;
+    border-top: 1px solid var(--border);
   }
 
   .editor-status {

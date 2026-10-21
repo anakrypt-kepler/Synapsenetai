@@ -20,6 +20,22 @@ foreach ($name in @("libcrypto-3-x64.dll", "libsodium.dll", "sqlite3.dll")) {
 Get-ChildItem $crt -Filter "*.dll" | ForEach-Object {
     Copy-Item $_.FullName (Join-Path $stage $_.Name) -Force
 }
+$omp = "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Redist\MSVC\14.51.36231\onecore\x64\Microsoft.VC145.OpenMP\vcomp140.dll"
+if (-not (Test-Path $omp)) { throw "Missing $omp" }
+Copy-Item $omp (Join-Path $stage "vcomp140.dll") -Force
+$llamaBin = Join-Path $root "build\bin\Release"
+foreach ($name in @("llama.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu.dll")) {
+    $src = Join-Path $llamaBin $name
+    if (-not (Test-Path $src)) { throw "Missing $src" }
+    Copy-Item $src (Join-Path $stage $name) -Force
+}
+foreach ($src in @(
+    (Join-Path $root "build\Release\oqs.dll"),
+    (Join-Path $root "build\_deps\secp256k1-build\bin\Release\libsecp256k1-7.dll")
+)) {
+    if (-not (Test-Path $src)) { throw "Missing $src" }
+    Copy-Item $src (Join-Path $stage (Split-Path $src -Leaf)) -Force
+}
 
 $app = Join-Path $root "tauri-app"
 Push-Location $app

@@ -80,6 +80,18 @@ export async function harvestGet(sha256: string): Promise<string> {
   return rpcCall("harvest.get", JSON.stringify({ sha256 }));
 }
 
+export async function findEngines(): Promise<string> {
+  return rpcCall("find.engines", "{}");
+}
+
+export async function findSearch(engine: string, query: string): Promise<string> {
+  return rpcCall("find.search", JSON.stringify({ engine, query }));
+}
+
+export async function findRead(index: number): Promise<string> {
+  return rpcCall("find.read", JSON.stringify({ index }));
+}
+
 export async function naanControl(action: string, agentId?: string): Promise<string> {
   if (agentId) return invoke<string>("naan_control", { action, agentId });
   return invoke<string>("naan_control", { action });

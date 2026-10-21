@@ -354,13 +354,12 @@
   }
 
   function onCatalogReady(ev: CustomEvent<{ path: string }>) {
-    if (ev.detail?.path) {
-      modelPath = ev.detail.path;
-      modelName = modelPath.split("/").pop() || modelPath;
-      modelLoaded = true;
-      modelOk = true;
-      modelStatusMsg = "MODEL READY: " + modelName;
-    }
+    if (!ev.detail?.path) return;
+    modelPath = ev.detail.path;
+    const norm = modelPath.replace(/\\/g, "/");
+    const cut = norm.lastIndexOf("/");
+    modelName = cut >= 0 ? norm.slice(cut + 1) : norm;
+    void handleModelLoad();
   }
 
   async function selectModelFile() {
@@ -605,7 +604,7 @@
       </div>
     </div>
     <p class="hint">Harvest works without a GGUF. Download one here for IDE chat and hard captchas.</p>
-    <ModelCatalog on:ready={onCatalogReady} />
+    <ModelCatalog activePath={modelPath} on:ready={onCatalogReady} />
     <button class="btn-primary" on:click={handleModelLoad} disabled={!modelPath || modelBusy}>Load</button>
     {#if modelStatusMsg}<div class="flash" class:ok={modelOk} class:err={!modelOk && !modelStatusMsg.endsWith("...")}>{modelStatusMsg}</div>{/if}
   </div>

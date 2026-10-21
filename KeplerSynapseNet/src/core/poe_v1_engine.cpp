@@ -2,6 +2,7 @@
 // All numbers here must stay integer/deterministic — no floating LLM scores.
 
 #include "core/poe_v1_engine.h"
+#include "core/work_code.h"
 #include "wide128.h"
 #include "core/poe_v1_layers.h"
 #include "database/database.h"
@@ -447,7 +448,10 @@ static bool passesNoveltyGate(database::Database& db, const PoeV1Config& cfg, ui
 
 uint64_t PoeV1Engine::calculateAcceptanceReward(const poe_v1::KnowledgeEntryV1& entry) const {
     PoeV1Config cfg = getConfig();
+    const bool workingCode = entry.contentType == poe_v1::ContentType::CODE;
+    if (workingCode && !executeWork(entry.body).passed) return 0;
     uint64_t reward = cfg.acceptanceBaseReward;
+    if (workingCode) reward += cfg.acceptanceWorkingCodeBonus;
     if (entry.powBits > cfg.limits.minPowBits) {
         uint32_t extra = entry.powBits - cfg.limits.minPowBits;
         uint64_t bonus = static_cast<uint64_t>(extra) * static_cast<uint64_t>(cfg.acceptanceBonusPerPowBit);
@@ -514,6 +518,15 @@ PoeSubmitResult PoeV1Engine::submit(
     if (!poe_v1::consensusPayloadClean(entry.title, entry.body, &res.error)) {
         res.ok = false;
         return res;
+    }
+    // CODE is not prose. Cells re-run the bundle before this entry can exist.
+    if (type == poe_v1::ContentType::CODE) {
+        WorkExecution work = executeWork(body);
+        if (!work.passed) {
+            res.ok = false;
+            res.error = work.reason.empty() ? "work_tests_failed" : work.reason;
+            return res;
+        }
     }
 
     // Fast fail checks (fail-before expensive PoW)
@@ -701,6 +714,15 @@ PoeSubmitResult PoeV1Engine::submit(
                 v.prevBlockHash = chainSeed();
                 v.flags = 0;
                 v.scores = {100, 100, 100};
+                if (entry.contentType == poe_v1::ContentType::CODE) {
+                    WorkExecution work = executeWork(entry.body);
+                    if (!work.passed) {
+                        res.finalized = false;
+                        res.acceptanceReward = 0;
+                        return res;
+                    }
+                    bindWorkVote(v, work.resultHash);
+                }
                 poe_v1::signValidationVoteV1(v, authorKey);
                 addVote(v);
             }
@@ -748,6 +770,13 @@ bool PoeV1Engine::precheckEntry(const poe_v1::KnowledgeEntryV1& entry, std::stri
 
     if (!entry.verifyAll(cfg.limits, reason)) return false;
     if (!poe_v1::consensusPayloadClean(entry.title, entry.body, reason)) return false;
+    if (entry.contentType == poe_v1::ContentType::CODE) {
+        WorkExecution work = executeWork(entry.body);
+        if (!work.passed) {
+            if (reason) *reason = work.reason.empty() ? "work_tests_failed" : work.reason;
+            return false;
+        }
+    }
 
     crypto::Hash256 sid = entry.submitId();
     crypto::Hash256 cid = entry.contentId();
@@ -772,6 +801,13 @@ bool PoeV1Engine::importEntry(const poe_v1::KnowledgeEntryV1& entry, std::string
     PoeV1Config cfg = getConfig();
     if (!entry.verifyAll(cfg.limits, reason)) return false;
     if (!poe_v1::consensusPayloadClean(entry.title, entry.body, reason)) return false;
+    if (entry.contentType == poe_v1::ContentType::CODE) {
+        WorkExecution work = executeWork(entry.body);
+        if (!work.passed) {
+            if (reason) *reason = work.reason.empty() ? "work_tests_failed" : work.reason;
+            return false;
+        }
+    }
 
     crypto::Hash256 sid = entry.submitId();
     crypto::Hash256 cid = entry.contentId();
@@ -814,6 +850,13 @@ bool PoeV1Engine::addVote(const poe_v1::ValidationVoteV1& vote) {
     if ((vote.flags & poe_v1::kVoteFlagInference) != 0) return false;
     if (!poe_v1::voteNoteClean(vote.note)) return false;
     if (!vote.verifySignature()) return false;
+    {
+        auto entry = getEntry(vote.submitId);
+        if (entry && entry->contentType == poe_v1::ContentType::CODE) {
+            WorkExecution work = executeWork(entry->body);
+            if (!work.passed || !workVoteMatches(vote, work.resultHash)) return false;
+        }
+    }
 
     crypto::Hash256 seed{};
     std::vector<crypto::PublicKey> validators;
@@ -1062,6 +1105,17 @@ std::optional<poe_v1::FinalizationRecordV1> PoeV1Engine::finalize(const crypto::
     votes.erase(std::unique(votes.begin(), votes.end(), [](const poe_v1::ValidationVoteV1& a, const poe_v1::ValidationVoteV1& b) {
         return a.validatorPubKey == b.validatorPubKey;
     }), votes.end());
+
+    if (entryOpt->contentType == poe_v1::ContentType::CODE) {
+        WorkExecution work = executeWork(entryOpt->body);
+        if (!work.passed) return std::nullopt;
+        std::vector<poe_v1::ValidationVoteV1> agreed;
+        agreed.reserve(votes.size());
+        for (const auto& v : votes) {
+            if (workVoteMatches(v, work.resultHash)) agreed.push_back(v);
+        }
+        votes.swap(agreed);
+    }
 
     if (votes.size() < requiredVotes) return std::nullopt;
 
@@ -2032,6 +2086,7 @@ bool PoeV1Engine::shouldMintAcceptanceReward(const crypto::Hash256& submitId) co
         auto rid = getRecipeIdForSubmit(submitId);
         if (!rid || !hasMatchingReplay(*rid)) return false;
     }
+    if (entry->contentType == poe_v1::ContentType::CODE && !executeWork(entry->body).passed) return false;
     return true;
 }
 

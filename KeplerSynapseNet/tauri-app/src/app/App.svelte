@@ -21,6 +21,7 @@
   import Transfers from "./routes/Transfers.svelte";
   import Blocks from "./routes/Blocks.svelte";
   import Knowledge from "./routes/Knowledge.svelte";
+  import Find from "./routes/Find.svelte";
   import NaanAgent from "./routes/NaanAgent.svelte";
   import Harvest from "./routes/Harvest.svelte";
   import Exploits from "./routes/Exploits.svelte";
@@ -29,6 +30,7 @@
   import Network from "./routes/Network.svelte";
   import Rental from "./routes/Rental.svelte";
   import Settings from "./routes/Settings.svelte";
+  import GuideDock from "./components/GuideDock.svelte";
 
   let ready = false;
 
@@ -103,6 +105,8 @@
               <Blocks />
             {:else if $activeTab === "knowledge"}
               <Knowledge />
+            {:else if $activeTab === "find"}
+              <Find />
             {:else if $activeTab === "naan"}
               <NaanAgent />
             {:else if $activeTab === "harvest"}
@@ -132,6 +136,7 @@
         draggable="false"
       />
     </div>
+    <GuideDock />
     <StatusBar />
   </div>
   <NoticeRail />

@@ -1,6 +1,7 @@
 #include "core/poe_v1_engine.h"
 #include "core/poe_v1_layers.h"
 #include "core/poe_v1_objects.h"
+#include "core/work_code.h"
 #include "crypto/crypto.h"
 
 #include <algorithm>
@@ -46,6 +47,12 @@ static std::filesystem::path tmpPoe(const std::string& name) {
     std::filesystem::remove_all(dir, ec);
     std::filesystem::create_directories(dir, ec);
     return dir;
+}
+
+static std::string passingWork(int n) {
+    return synapse::core::workBundle(
+        "fn add(a, b) = a + b\n",
+        "assert add(" + std::to_string(n) + ", 1) == " + std::to_string(n + 1) + "\n");
 }
 
 static PoeV1Config testCfg() {
@@ -115,7 +122,7 @@ static void testMouthIsolation() {
     auto clean = engine.submit(
         ContentType::CODE,
         "patch_title_ok",
-        std::string(80, 'c'),
+        passingWork(80),
         {},
         sk,
         true);
@@ -241,7 +248,7 @@ static void testHalfLifeAndWitness() {
     openSolo(engine, (dir / "poe.db").string(), pk);
     engine.setNowUnix(1000);
 
-    auto r = engine.submit(ContentType::CODE, "legacy_code_patch", std::string(80, 'p'), {}, sk, true);
+    auto r = engine.submit(ContentType::CODE, "legacy_code_patch", passingWork(11), {}, sk, true);
     assert(r.ok);
     assert(r.finalized);
     assert(engine.knowStatus(r.submitId) == KnowStatus::ACTIVE);
@@ -257,7 +264,7 @@ static void testHalfLifeAndWitness() {
     PoeV1Engine engine2;
     openSolo(engine2, (dir2 / "poe.db").string(), pk);
     engine2.setNowUnix(2000);
-    auto r2 = engine2.submit(ContentType::CODE, "legacy_code_kept", std::string(80, 'q'), {}, sk, true);
+    auto r2 = engine2.submit(ContentType::CODE, "legacy_code_kept", passingWork(12), {}, sk, true);
     assert(r2.finalized);
     WitnessV1 w;
     w.version = 1;
@@ -284,7 +291,7 @@ static void testRetraction() {
     PoeV1Engine engine;
     openSolo(engine, (dir / "poe.db").string(), pk);
 
-    auto r = engine.submit(ContentType::CODE, "code_to_retract", std::string(80, 'r'), {}, sk, true);
+    auto r = engine.submit(ContentType::CODE, "code_to_retract", passingWork(13), {}, sk, true);
     assert(r.finalized);
     assert(engine.shouldMintAcceptanceReward(r.submitId));
 
@@ -330,7 +337,7 @@ static void testAnonymousSeniority() {
         auto r = engine.submit(
             ContentType::CODE,
             std::string("senior_patch_") + std::to_string(i) + "xx",
-            std::string(80, static_cast<char>('a' + i)),
+            passingWork(20 + i),
             {},
             sk,
             true);
@@ -345,7 +352,7 @@ static void testAnonymousSeniority() {
     auto other = engine.submit(
         ContentType::CODE,
         "decoy_patch_xx",
-        std::string(80, 'z'),
+        passingWork(90),
         {},
         sk2,
         true);
@@ -490,10 +497,20 @@ static void testLiveCodePathUntouched() {
     PoeV1Engine engine;
     openSolo(engine, (dir / "poe.db").string(), pk);
 
-    auto r = engine.submit(
+    auto raw = engine.submit(
         ContentType::CODE,
         "ide_patch_title",
         std::string("// Kepler IDE patch body stays mineable\n") + std::string(50, 'k'),
+        {},
+        sk,
+        true);
+    assert(!raw.ok);
+    assert(raw.error == "work_bundle_required");
+
+    auto r = engine.submit(
+        ContentType::CODE,
+        "ide_patch_title",
+        passingWork(7),
         {},
         sk,
         true);

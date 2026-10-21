@@ -49,7 +49,7 @@
 </tr>
 </table>
 
-The desktop runs on **Windows** and on **Linux**. Same node, same session Tor, same local model. Linux is the scripted install: `lego-linux.sh`, then `run-desktop.sh`. Windows for a normal user is one setup program: `SynapseNet_0.1.0_x64-setup.exe`. Double-click it. It installs the window, `synapsed.dll`, and the libraries that DLL needs. You do not compile anything. If WebView2 is missing, the setup downloads it. The local model is not inside the setup; the app downloads that later from the SET catalog. Tor still comes from a `tor.exe` already on the machine.
+The desktop runs on **Windows** and on **Linux**. Same node, same session Tor, same local model. Linux is the scripted install: `lego-linux.sh`, then `run-desktop.sh`. Windows for a normal user is one setup program. The packager writes `SynapseNet-Setup.exe` on the desktop. The bundle name is `SynapseNet_0.1.0_x64-setup.exe`. Double-click it. It installs the window, `synapsed.dll`, and the libraries that DLL needs, including the GGUF runtime and liboqs. You do not compile anything. If WebView2 is missing, the setup downloads it. The weights are not inside the setup. SET downloads a catalog file later. Tor still comes from a `tor.exe` already on the machine. This setup is the current desk: the FIND tab, the Guide dock, and the card catalog are in it.
 
 Someone building that setup runs `KeplerSynapseNet/scripts/package-windows.ps1`. The file is about 140 MB, past what git will store, so it is not in this tree. Docker is still a Linux image on either host.
 
@@ -373,7 +373,7 @@ Five steps. Do them in order.
 
 1. **Wallet** — Create new or restore 24 words. Data dir `~/.synapsenet/`. File `wallet.dat`. Optional password. Save the seed before you click through.
 2. **Connection** — **Tor** (default) or **Tor + Bridges**. Paste obfs4 lines if you picked bridges. Mesh, wallet, MSG, harvest all go through Tor.
-3. **AI Model** — Download a catalog GGUF (Qwen2.5 Instruct into `~/.synapsenet/models`), pick a local `.gguf`, or skip. Harvest does not require a model.
+3. **AI Model** — Download a catalog GGUF into `~/.synapsenet/models`, pick a local `.gguf`, or skip. The list runs from a small Qwen2.5 up through Qwen3 files sized for cards from an RX 580 to an RTX 5090. Harvest does not require a model.
 4. **Resources** — CPU threads default to about half your cores. RAM default is about 25% of the box, capped at 4096 MB. Disk limit. GPU on if the wizard saw a device; set layers if you offload.
 5. **Ready** — Engine comes up after this. The yellow "engine not available" line during the wallet step is normal.
 
@@ -393,14 +393,23 @@ Five steps. Do them in order.
 | **SEND** | Private RingCT spend over Tor. |
 | **BLOCKS** | Local chain. |
 | **KNOW** | Knowledge the ledger accepted. |
-| **NAAN** | The miner. Topics, tick, budget. Starts/stops the attached agent. |
+| **FIND** | Tor search. Pick an engine already built into the node. The query goes out through Tor. This does not start the harvest agent. |
+| **NAAN** | The miner. Topics, tick, budget. Starts/stops the attached agent. Pick which local model that agent uses. |
 | **HARVEST** | What the agent pulled. Tor SOCKS only. |
 | **INTEL** | Defensive write-ups on the local chain. Empty counters mean empty chain, not a crash. |
 | **MSG** | Sealed messages to a peer onion. |
-| **IDE** | Talk to the local GGUF. |
+| **IDE** | Talk to the local GGUF. A CODE bundle mints only after its tests pass. |
 | **NET** | YOU in the center. Wheel zooms. Drag pans. Share the session onion; it is new each launch. |
 | **RENT** | Local GPU price note. Not a marketplace yet. |
-| **SET** | Tor, model, resources, NAAN, profile, quantum status. |
+| **SET** | Tor, model, resources, NAAN, profile, quantum status. The Guide dock sits on the right of every tab. |
+
+**FIND.** The picker is the darknet list already in the node: Torch, Torch legacy, Ahmia, DuckDuckGo, Tordex, Tor66, DarkSearch, OnionLand, DeepSearch, Haystak, and the BBC onion. Dread and the Hidden Wiki are directories, so the query is not sent. The torrent index stays on the harvest list and is not offered here. A result opens by index. The desk shows a short host, not the full onion. If the circuit hangs, the node asks Tor for a new one and tries once more.
+
+**Guide.** A helper docked on the right. It is a separate agent from harvest. It speaks US English, sees the tab you are on, and keeps the chat on disk. CLEAR wipes that log. It can open a tab or start or stop the harvest agent only after you confirm. Typed questions go to the chat model. The page note itself does not load the weights.
+
+**SET catalog.** Rows run from a weak card to a strong one, RX 580 through RTX 5090. Qwen2.5 and Qwen3 are both listed. Each Qwen3 size has an uncensored twin: the refusal tuning is removed. This Windows build runs the file on the CPU. The card name is the VRAM the file is sized for. A file you already have shows as selected.
+
+**CODE.** A code entry is a patch plus tests. Every cell runs that bundle in-process, with no clock, no files, and no network, then hashes the transcript. NGT for CODE is minted only when the tests pass and a majority signs that same hash. Text keeps the old reward path. A passing bundle adds 0.05 NGT on top of the base acceptance reward.
 
 ---
 

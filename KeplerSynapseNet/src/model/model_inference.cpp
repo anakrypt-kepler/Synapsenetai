@@ -141,6 +141,10 @@ std::string InferenceEngine::runSyncText(const std::string& modelId, const std::
      req.inputType = InputType::TEXT;
      req.inputText = prompt;
      req.parameters = params;
+     auto timeoutIt = params.find("timeout_ms");
+     if (timeoutIt != params.end() && timeoutIt->second > 0.f) {
+         req.timeout = static_cast<uint64_t>(timeoutIt->second);
+     }
 
      std::string requestId = submitRequest(req);
      if (requestId.empty()) return "";
@@ -152,7 +156,9 @@ std::string InferenceEngine::runSyncText(const std::string& modelId, const std::
      while (true) {
          InferenceResult r = getResult(requestId);
          if (r.status == InferenceStatus::COMPLETED) return r.outputText;
-         if (r.status == InferenceStatus::FAILED) return "";
+         if (r.status == InferenceStatus::FAILED) {
+             return r.outputText.empty() ? r.errorMessage : r.outputText;
+         }
          if (r.status == InferenceStatus::CANCELLED) return "";
 
          if (timeoutMs > 0) {
@@ -293,7 +299,15 @@ bool InferenceEngine::loadModel(const std::string& modelId, const std::string& p
         return false;
     }
     llama_context_params ctxParams = llama_context_default_params();
-    ctxParams.n_ctx = 0;
+    // A 32k training context allocates a huge KV cache. 4096 is enough for
+    // the guide and the IDE chat, and a 3B GGUF stays loadable on CPU.
+    uint32_t trainCtx = static_cast<uint32_t>(std::max<int32_t>(0, llama_model_n_ctx_train(model)));
+    uint32_t wantCtx = 4096;
+    if (trainCtx > 0 && trainCtx < wantCtx) wantCtx = trainCtx;
+    ctxParams.n_ctx = wantCtx;
+    // The guide prompt is decoded in one batch. A batch smaller than the
+    // prompt makes llama abort on the second turn.
+    ctxParams.n_batch = wantCtx;
     llama_context* ctx = llama_init_from_model(model, ctxParams);
     if (!ctx) {
         llama_model_free(model);
@@ -441,15 +455,19 @@ InferenceResult InferenceEngine::Impl::processRequest(const InferenceRequest& re
     result.startTime = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     
-    auto modelIt = models.find(request.modelId);
-    if (modelIt == models.end() || !modelIt->second.isLoaded) {
-        result.status = InferenceStatus::FAILED;
-        result.errorMessage = "Model not loaded: " + request.modelId;
-        result.endTime = result.startTime;
-        return result;
+    LoadedModelState model;
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        auto modelIt = models.find(request.modelId);
+        if (modelIt == models.end() || !modelIt->second.isLoaded) {
+            result.status = InferenceStatus::FAILED;
+            result.errorMessage = "Model not loaded: " + request.modelId;
+            result.outputText = result.errorMessage;
+            result.endTime = result.startTime;
+            return result;
+        }
+        model = modelIt->second;
     }
-    
-    const LoadedModelState& model = modelIt->second;
     
     try {
         if (request.inputType == InputType::TEXT) {
@@ -482,7 +500,11 @@ InferenceResult InferenceEngine::Impl::processRequest(const InferenceRequest& re
                 result.confidence = conf;
             }
             // If backend is not available the generators will return a specific error string and zero tokens
-            if (result.tokensGenerated == 0 && result.outputText.rfind("[Model backend not enabled", 0) == 0) {
+            if (result.outputText.empty() && result.tokensGenerated == 0) {
+                result.status = InferenceStatus::FAILED;
+                result.errorMessage = "empty model output";
+                result.outputText = result.errorMessage;
+            } else if (result.tokensGenerated == 0 && result.outputText.rfind("[Model backend not enabled", 0) == 0) {
                 result.status = InferenceStatus::FAILED;
                 result.errorMessage = result.outputText;
             } else {
@@ -516,6 +538,7 @@ InferenceResult InferenceEngine::Impl::processRequest(const InferenceRequest& re
     } catch (const std::exception& e) {
         result.status = InferenceStatus::FAILED;
         result.errorMessage = e.what();
+        result.outputText = result.errorMessage;
     }
     
     result.endTime = std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -261,11 +261,12 @@ static void testAcceptanceRewardIgnoresNormalPatchSize() {
     e.version = 1;
     e.timestamp = 1;
     e.authorPubKey = makePk(1);
-    e.contentType = synapse::core::poe_v1::ContentType::CODE;
+    e.contentType = synapse::core::poe_v1::ContentType::TEXT;
     e.title = "patch.rs";
     e.powBits = 12;
 
-    // 3 KiB patch used to pay 0.09 at the old 2 KiB step. Now full base.
+    // Size schedule is for text. Untested CODE pays 0 and is covered in test_work_code.
+    // 3 KiB used to pay 0.09 at the old 2 KiB step. Now full base.
     e.body = std::string(3000, 'a');
     uint64_t shortish = engine.calculateAcceptanceReward(e);
     assert(shortish == cfg.acceptanceBaseReward);

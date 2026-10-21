@@ -11,6 +11,7 @@ export type TabId =
   | "transfers"
   | "blocks"
   | "knowledge"
+  | "find"
   | "naan"
   | "harvest"
   | "exploits"
@@ -85,6 +86,7 @@ export const tabs: { id: TabId; label: string }[] = [
   { id: "transfers", label: "SEND" },
   { id: "blocks", label: "BLOCKS" },
   { id: "knowledge", label: "KNOW" },
+  { id: "find", label: "FIND" },
   { id: "naan", label: "NAAN" },
   { id: "harvest", label: "HARVEST" },
   { id: "exploits", label: "INTEL" },

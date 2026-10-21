@@ -333,6 +333,7 @@ set(CORE_SOURCES
     src/core/poe_v1_engine.cpp
     src/core/poe_v1_layers.cpp
     src/core/poe_v1_objects.cpp
+    src/core/work_code.cpp
     src/core/ringct.cpp
     src/core/state_manager.cpp
     src/core/tor_bridge_provider.cpp
@@ -618,7 +619,11 @@ target_link_libraries(synapsed PRIVATE synapsed_core)
 add_executable(synapsed-poe-mesh src/cli/synapsed_poe_mesh.cpp)
 target_link_libraries(synapsed-poe-mesh PRIVATE synapsed_core)
 
-add_library(synapsed_lib SHARED src/ide/synapsed_engine.cpp src/ide/synapsed_ffi.cpp src/ide/synapsed_mesh_poe.cpp)
+add_library(synapsed_lib SHARED
+    src/ide/synapsed_engine.cpp
+    src/ide/synapsed_guide.cpp
+    src/ide/synapsed_ffi.cpp
+    src/ide/synapsed_mesh_poe.cpp)
 target_link_libraries(synapsed_lib PRIVATE synapsed_core)
 if(WIN32)
     target_link_libraries(synapsed_lib PRIVATE gdiplus)

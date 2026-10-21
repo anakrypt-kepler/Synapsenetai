@@ -1,7 +1,9 @@
 #pragma once
 
 // PoE v1 engine: submit → PoW gate → validator votes → epoch reward.
-// powBits is a small spam filter, not Bitcoin-style mining.
+// CODE mints only after a deterministic work run: cells execute the patch
+// and tests, and a majority must sign the same result hash. Text stays on
+// the vote path. powBits is a small spam filter, not Bitcoin-style mining.
 // Novelty uses SimHash Hamming distance (noveltyMaxHamming). Rewards are in
 // NGT atoms: base 0.10 until acceptanceSizePenaltyBytes, then -0.01 per
 // extra chunk. Length is not a bonus. Clamped to min/max.
@@ -50,6 +52,8 @@ struct PoeV1Config {
     // First 8 KiB of title+body pays the full base. Dumps pay 0.01 NGT per extra 8 KiB.
     uint32_t acceptanceSizePenaltyBytes = 8192;
     uint32_t acceptancePenaltyPerChunk = 1000000U;
+    // Extra atoms paid only when a CODE bundle's tests pass. Untested code pays 0.
+    uint64_t acceptanceWorkingCodeBonus = 5000000ULL;
     uint32_t noveltyBands = 16;
     uint32_t noveltyMaxHamming = 8;
     uint32_t maxCitations = 10;
