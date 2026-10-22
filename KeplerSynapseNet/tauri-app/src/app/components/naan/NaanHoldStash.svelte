@@ -6,10 +6,12 @@
   export let name: string = "";
   export let submissions: number = 0;
   export let level: number | null = null;
+  export let history: { title: string; topic: string; result: string; ngt: string }[] = [];
 
   const SLOT_CAP = 8;
   let flashSlot = -1;
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
+  let note = "";
 
   $: packed = Math.max(0, Math.floor(Number(submissions) || 0));
   $: overflow = Math.max(0, packed - SLOT_CAP);
@@ -21,13 +23,30 @@
   }
 
   function tapSlot(i: number) {
-    if (i >= filledSlots) return;
     flashSlot = i;
     if (flashTimer) clearTimeout(flashTimer);
     flashTimer = setTimeout(() => {
       flashSlot = -1;
       flashTimer = null;
     }, 160);
+    if (i >= filledSlots) {
+      note = "Empty locker. A filed harvest fills the next crate. Nothing is stored in this slot yet.";
+      return;
+    }
+    const newestFirst = history.slice().reverse();
+    const item = newestFirst[i];
+    const extra = overflow > 0 && i === SLOT_CAP - 1
+      ? ` ${overflow} more filed pages are counted on this last crate.`
+      : "";
+    if (!item) {
+      note = `Crate ${i + 1} counts a filed harvest. The title is not in this session list.${extra}`;
+      return;
+    }
+    const title = item.title || "Untitled page";
+    const topic = item.topic ? ` Topic ${item.topic}.` : "";
+    const result = item.result ? ` Status ${item.result}.` : "";
+    const ngt = item.ngt ? ` ${item.ngt} NGT.` : "";
+    note = `Crate ${i + 1}: ${title}.${topic}${result}${ngt}${extra}`;
   }
 
   onDestroy(() => {
@@ -35,6 +54,7 @@
   });
 </script>
 
+<div class="hold-wrap">
 <section class="hold" aria-label="HOLD stash">
   <div class="hold-meta">
     <div class="hold-title">HOLD</div>
@@ -83,13 +103,21 @@
     {/each}
   </div>
 </section>
+{#if note}
+  <div class="hold-note">{note}</div>
+{/if}
+</div>
 
 <style>
+  .hold-wrap {
+    margin: 6px 0 10px;
+  }
+
   .hold {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin: 6px 0 10px;
+    margin: 0;
     padding: 4px 8px;
     max-height: 52px;
     background: #050301;
@@ -139,6 +167,16 @@
     min-width: 0;
   }
 
+  .hold-note {
+    margin-top: 6px;
+    padding: 8px 10px;
+    border: 1px solid rgba(0, 229, 255, 0.35);
+    color: var(--text-secondary);
+    font-family: var(--font);
+    font-size: 8px;
+    line-height: 1.6;
+  }
+
   .slot {
     position: relative;
     flex: 1 1 0;
@@ -150,7 +188,7 @@
     border: 1px solid rgba(0, 229, 255, 0.16);
     border-radius: 0;
     color: inherit;
-    cursor: default;
+    cursor: pointer;
     font: inherit;
   }
 

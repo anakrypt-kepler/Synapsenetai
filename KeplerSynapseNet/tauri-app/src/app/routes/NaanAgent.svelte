@@ -27,6 +27,7 @@
   import { harvestLevel } from "../../lib/naanXp";
   import { pushNotice, syncSticky } from "../../lib/notices";
   import { PRIMARY_NAAN_ID } from "../../lib/synapseHolo";
+  import { NAAN_ENGINES, type NaanEngineChoice } from "../../lib/naanEngines";
 
   let agentStatus = "OFF";
   let agentScore = { band: "-", submissions: 0, approval_rate: "0%" };
@@ -58,10 +59,13 @@
     submissions: number;
     approved: number;
     log: { ts: number; msg: string }[];
-    history: { title: string; result: string; ngt_earned: string }[];
+    history: { title: string; topic: string; result: string; ngt_earned: string }[];
+    engine: string;
   };
   let engineAgents: Record<string, EngineAgent> = {};
 
+  let engineChoices: NaanEngineChoice[] = NAAN_ENGINES;
+  let agentEngines: Record<string, string> = {};
   let topicPreferences = "";
   let researchSources = "tor";
   let tickInterval = 60;
@@ -132,6 +136,36 @@
     if (cfg.budget_limit != null && cfg.budget_limit !== "") {
       budgetLimit = String(cfg.budget_limit);
     }
+    if (Array.isArray(cfg.engines) && cfg.engines.length) {
+      engineChoices = cfg.engines
+        .filter((row: NaanEngineChoice) => row && typeof row.id === "string" && typeof row.name === "string")
+        .map((row: NaanEngineChoice) => ({ id: row.id, name: row.name }));
+    }
+  }
+
+  function rememberEngines(nextAgents: Record<string, EngineAgent>, cfg: Record<string, any>) {
+    const picked: Record<string, string> = {};
+    for (const id of Object.keys(nextAgents)) picked[id] = nextAgents[id].engine || "auto";
+    if (cfg.agent_engines && typeof cfg.agent_engines === "object") {
+      for (const [id, val] of Object.entries(cfg.agent_engines)) {
+        if (typeof val === "string" && val) picked[id] = val;
+      }
+    }
+    agentEngines = picked;
+  }
+
+  function engineOf(id: string): string {
+    return agentEngines[id] || "auto";
+  }
+
+  function setEngine(id: string, value: string) {
+    agentEngines = { ...agentEngines, [id]: value };
+    markDirty();
+  }
+
+  function selectValue(e: Event): string {
+    const el = e.currentTarget;
+    return el instanceof HTMLSelectElement ? el.value : "auto";
   }
 
   async function loadAgentState() {
@@ -210,10 +244,12 @@
             history: Array.isArray(row.history)
               ? row.history.map((h: any) => ({
                   title: h?.title || "",
+                  topic: h?.topic || "",
                   result: h?.status || h?.result || "",
                   ngt_earned: fmtNgt(h?.ngt ?? h?.ngt_earned),
                 }))
               : [],
+            engine: typeof row.engine === "string" && row.engine ? row.engine : "auto",
           };
         }
       }
@@ -232,12 +268,14 @@
           submissions: agentScore.submissions,
           approved,
           log: agentLog,
-          history: submissionHistory,
+          history: submissionHistory.map((h) => ({ title: h.title, topic: "", result: h.result, ngt_earned: h.ngt_earned })),
+          engine: "auto",
         };
       }
       engineAgents = nextAgents;
       if (!configDirty && parsed.config && typeof parsed.config === "object") {
         applyConfigFromStatus(parsed.config);
+        rememberEngines(nextAgents, parsed.config);
       }
     } catch (e) {
       pollError = fmtErr(e, "NAAN.STATUS FAILED");
@@ -253,6 +291,7 @@
       sources,
       tick_interval: Number.isFinite(tick) ? Math.min(600, Math.max(10, tick)) : 60,
       budget_limit: String(budgetLimit),
+      naan_agent_engines: agentEngines,
     }));
     const parsed = readRpcJson(raw);
     if (parsed.error) {
@@ -455,6 +494,12 @@
     name={findAgent(focusSkin).label}
     submissions={focusAgent?.submissions ?? (harvestFocus ? agentScore.submissions : 0)}
     level={xp.level}
+    history={(focusAgent?.history || []).map((h) => ({
+      title: h.title,
+      topic: h.topic,
+      result: h.result,
+      ngt: h.ngt_earned,
+    }))}
   />
 
   <div class="hud-row">
@@ -603,7 +648,19 @@
             · {engineAgents[c.id].state}
           {/if}
         </p>
-        <p class="hint">Crew rooms are station layout only. They do not split the harvest job.</p>
+        <div class="form-group">
+          <label for={"crew-engine-" + c.id}>SEARCH ENGINE</label>
+          <select
+            id={"crew-engine-" + c.id}
+            value={engineOf(c.id)}
+            on:change={(e) => setEngine(c.id, selectValue(e))}
+          >
+            {#each engineChoices as engine}
+              <option value={engine.id}>{engine.name}</option>
+            {/each}
+          </select>
+        </div>
+        <p class="hint">Crew rooms are station layout only. They do not split the harvest job. The search engine does: this body uses the engine you pick. Auto follows the default in Settings when that switch is on.</p>
         <div class="blk-row">
           {#each ROOM_META as r}
             <button
@@ -671,6 +728,19 @@
 
   <div class="section-title">CONFIG</div>
   <div class="card">
+    <div class="form-group">
+      <label for="naan-engine">SEARCH ENGINE</label>
+      <select
+        id="naan-engine"
+        value={engineOf(focusedId)}
+        on:change={(e) => setEngine(focusedId, selectValue(e))}
+      >
+        {#each engineChoices as engine}
+          <option value={engine.id}>{engine.name}</option>
+        {/each}
+      </select>
+      <p class="hint">This pick belongs to the focused agent. Auto uses the Settings default while that switch is on. SAVE stores it.</p>
+    </div>
     <div class="form-group">
       <label>TOPICS</label>
       <input

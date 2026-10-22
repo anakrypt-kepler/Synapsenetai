@@ -162,6 +162,23 @@ static void testUsefulness() {
     assert(plain.passed);
 }
 
+static void testNamedEngine() {
+    using synapse::core::pickNaanHarvestTarget;
+    auto brave = pickNaanHarvestTarget("crypto", 1, "brave");
+    assert(brave.url.find("search.brave.com") != std::string::npos);
+    assert(brave.engine == "brave");
+    assert(!brave.onion);
+    auto torch = pickNaanHarvestTarget("darknet", 4, "torch");
+    assert(torch.url.find("torchdeed") != std::string::npos);
+    assert(torch.engine == "torch");
+    assert(torch.onion);
+    auto rotated = pickNaanHarvestTarget("crypto", 2);
+    auto automatic = pickNaanHarvestTarget("crypto", 2, "auto");
+    assert(automatic.url == rotated.url);
+    auto unknown = pickNaanHarvestTarget("crypto", 2, "not-an-engine");
+    assert(unknown.url == rotated.url);
+}
+
 int main() {
     testLoopActions();
     testClearnetNotFunneledToAhmia();
@@ -170,5 +187,6 @@ int main() {
     testJunkAndHrefs();
     testSearchSurfaceAndRelativeHrefs();
     testUsefulness();
+    testNamedEngine();
     return 0;
 }

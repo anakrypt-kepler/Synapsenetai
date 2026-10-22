@@ -111,6 +111,39 @@ NaanHarvestTarget pickNaanHarvestTarget(const std::string& topic, uint64_t tick)
     return out;
 }
 
+std::vector<NaanEngineOption> naanEngineCatalog() {
+    const auto clear = naanClearnetSearchEngines();
+    const auto dark = naanDarknetSearchEngines();
+    std::vector<NaanEngineOption> rows = {
+        {"duckduckgo", "DuckDuckGo", clear.size() > 0 ? clear[0] : "", true, false},
+        {"brave", "Brave", clear.size() > 1 ? clear[1] : "", true, false},
+        {"wikipedia", "Wikipedia", clear.size() > 2 ? clear[2] : "", true, false},
+        {"arxiv", "arXiv", clear.size() > 3 ? clear[3] : "", true, false},
+        {"ahmia", "Ahmia", dark.size() > 0 ? dark[0] : "", true, true},
+        {"torch", "Torch", dark.size() > 1 ? dark[1] : "", true, true},
+        {"duckduckgo-onion", "DuckDuckGo onion", dark.size() > 2 ? dark[2] : "", true, true},
+        {"darksearch", "DarkSearch", dark.size() > 3 ? dark[3] : "", true, true},
+        {"deepsearch", "DeepSearch", dark.size() > 4 ? dark[4] : "", true, true},
+        {"haystak", "Haystak", dark.size() > 5 ? dark[5] : "", true, true},
+    };
+    return rows;
+}
+
+NaanHarvestTarget pickNaanHarvestTarget(const std::string& topic, uint64_t tick,
+                                        const std::string& engineId) {
+    if (engineId.empty() || engineId == "auto") return pickNaanHarvestTarget(topic, tick);
+    const std::string q = queryEncode(topic);
+    for (const auto& row : naanEngineCatalog()) {
+        if (row.id != engineId || row.prefix.empty()) continue;
+        NaanHarvestTarget out;
+        out.url = row.queryable ? row.prefix + q : row.prefix;
+        out.engine = row.id;
+        out.onion = row.onion;
+        return out;
+    }
+    return pickNaanHarvestTarget(topic, tick);
+}
+
 bool isJunkHarvestHtml(const std::string& html) {
     if (html.size() < 80) return true;
     const std::string h = lowerCopy(html.substr(0, std::min<size_t>(html.size(), 8000)));

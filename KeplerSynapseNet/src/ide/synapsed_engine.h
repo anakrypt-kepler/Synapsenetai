@@ -492,6 +492,13 @@ private:
     };
     // tor | both | clearnet. Default tor: no clearnet destinations unless the operator picks them.
     std::string cfgSources_ = "tor";
+    // Per-agent search id. "auto" keeps the rotating harvest policy.
+    // The settings switch is the fallback for agents that stay on auto.
+    std::string naanDefaultEngine_ = "auto";
+    bool naanDefaultEngineOn_ = true;
+    std::map<std::string, std::string> naanAgentEngines_;
+    void loadNaanEngineSettings(const std::string& settingsJson);
+    std::string naanEngineFor(const std::string& agentId) const;
     void loadNaanWebConfig();
     void persistNaanSources() const;
     // Lifetime harvest counts in naan_career.json. The session counter

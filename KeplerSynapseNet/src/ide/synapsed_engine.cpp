@@ -19,6 +19,7 @@
 
 #include <sodium.h>
 
+#include <cstdio>
 #include <stdexcept>
 #include <algorithm>
 #include <array>
@@ -3716,6 +3717,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                 auto topics = parseTopicCsv(base["naan_topics"].get<std::string>());
                 if (!topics.empty()) cfgTopics_ = topics;
             }
+            loadNaanEngineSettings(base.dump());
             if (base.contains("profile_alias") && base["profile_alias"].is_string())
                 profileAlias_ = base["profile_alias"].get<std::string>();
             if (patch.contains("guide_model_path") && patch["guide_model_path"].is_string())
@@ -5010,6 +5012,25 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         }
         cfgSources_ = "tor";
         persistNaanSources();
+        {
+            // rpcCall already holds mtx_ for this method.
+            loadNaanEngineSettings(paramsJson);
+            nlohmann::json settings = nlohmann::json::object();
+            {
+                std::ifstream sf(dataDir_ + "/settings.json");
+                if (sf.good()) {
+                    auto parsed = nlohmann::json::parse(
+                        std::string((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>()),
+                        nullptr, false);
+                    if (!parsed.is_discarded() && parsed.is_object()) settings = std::move(parsed);
+                }
+            }
+            settings["naan_default_engine"] = naanDefaultEngine_;
+            settings["naan_default_engine_on"] = naanDefaultEngineOn_;
+            settings["naan_agent_engines"] = naanAgentEngines_;
+            std::ofstream out(dataDir_ + "/settings.json", std::ios::trunc);
+            if (out.good()) out << settings.dump();
+        }
         return "{\"ok\":true}";
     }
 
@@ -9258,9 +9279,26 @@ std::string SynapsedEngine::naanStatus() const {
         if (i) ss << ", ";
         ss << cfgTopics_[i];
     }
+    std::string defEngine = "auto";
+    bool defOn = true;
+    nlohmann::json agentEngineJson = nlohmann::json::object();
+    nlohmann::json engineCatalog = nlohmann::json::array();
+    engineCatalog.push_back({{"id", "auto"}, {"name", "Auto"}});
+    for (const auto& row : synapse::core::naanEngineCatalog()) {
+        engineCatalog.push_back({{"id", row.id}, {"name", row.name}});
+    }
+    // rpcCall already holds mtx_ around naan.status.
+    defEngine = naanDefaultEngine_;
+    defOn = naanDefaultEngineOn_;
+    for (const auto& kv : naanAgentEngines_) agentEngineJson[kv.first] = kv.second;
     ss << "\",\"sources\":\"" << jsonEscape(cfgSources_) << "\""
        << ",\"tick_interval\":" << naanTickInterval_
-       << ",\"budget_limit\":\"" << std::fixed << naanBudgetPerEpoch_ << "\"}"
+       << ",\"budget_limit\":\"" << std::fixed << naanBudgetPerEpoch_ << "\""
+       << ",\"default_engine\":\"" << jsonEscape(defEngine) << "\""
+       << ",\"default_engine_on\":" << (defOn ? "true" : "false")
+       << ",\"agent_engines\":" << agentEngineJson.dump()
+       << ",\"engines\":" << engineCatalog.dump()
+       << "}"
        << ",\"model_loaded\":" << (modelLoaded_ ? "true" : "false")
        << ",\"inference\":" << (inferenceReady_ ? "true" : "false")
        << ",\"model_name\":\"" << jsonEscape(modelName_) << "\""
@@ -9356,6 +9394,9 @@ void SynapsedEngine::applyCrewModelSettings(const std::string& agentId) {
 std::string SynapsedEngine::formatNaanAgentJson(const std::string& agentId) const {
     nlohmann::json o;
     o["id"] = agentId;
+    // Same mtx_ as naan.status. A second lock on this thread throws.
+    auto eit = naanAgentEngines_.find(agentId);
+    o["engine"] = (eit != naanAgentEngines_.end() && !eit->second.empty()) ? eit->second : "auto";
     o["state"] = "off";
     o["error"] = "";
     o["current_task"] = "";
@@ -9847,6 +9888,43 @@ void SynapsedEngine::loadNaanWebConfig() {
     for (const auto& l : lines) out << l << "\n";
 }
 
+void SynapsedEngine::loadNaanEngineSettings(const std::string& settingsJson) {
+    nlohmann::json j = nlohmann::json::parse(settingsJson.empty() ? "{}" : settingsJson, nullptr, false);
+    if (j.is_discarded() || !j.is_object()) return;
+    auto known = [](const std::string& id) {
+        if (id.empty() || id == "auto") return true;
+        for (const auto& row : synapse::core::naanEngineCatalog()) {
+            if (row.id == id) return true;
+        }
+        return false;
+    };
+    if (j.contains("naan_default_engine") && j["naan_default_engine"].is_string()) {
+        const std::string id = j["naan_default_engine"].get<std::string>();
+        if (known(id)) naanDefaultEngine_ = id.empty() ? "auto" : id;
+    }
+    if (j.contains("naan_default_engine_on") && j["naan_default_engine_on"].is_boolean())
+        naanDefaultEngineOn_ = j["naan_default_engine_on"].get<bool>();
+    if (j.contains("naan_agent_engines") && j["naan_agent_engines"].is_object()) {
+        std::map<std::string, std::string> next;
+        for (auto it = j["naan_agent_engines"].begin(); it != j["naan_agent_engines"].end(); ++it) {
+            if (!it.value().is_string() || it.key().empty() || it.key().size() > 64) continue;
+            const std::string id = it.value().get<std::string>();
+            if (!known(id)) continue;
+            next[it.key()] = id.empty() ? "auto" : id;
+        }
+        naanAgentEngines_.swap(next);
+    }
+}
+
+std::string SynapsedEngine::naanEngineFor(const std::string& agentId) const {
+    auto it = naanAgentEngines_.find(agentId);
+    if (it != naanAgentEngines_.end() && !it->second.empty() && it->second != "auto")
+        return it->second;
+    if (naanDefaultEngineOn_ && !naanDefaultEngine_.empty() && naanDefaultEngine_ != "auto")
+        return naanDefaultEngine_;
+    return "auto";
+}
+
 void SynapsedEngine::persistNaanSources() const {
     // Intentionally empty. naan_auto_search_mode is clearnet/darknet/both,
     // not the SOCKS transport string stored in cfgSources_.
@@ -10013,9 +10091,14 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
             if (it != naanAgents_.end() && it->second)
                 harvestTick = static_cast<uint64_t>(it->second->submissions)
                 + static_cast<uint64_t>(nowMillis() / 1000);
-            for (unsigned char c : agentId) harvestTick = harvestTick * 131ull + c;
+            for (unsigned char c : agentId)             harvestTick = harvestTick * 131ull + c;
         }
-        const auto target = synapse::core::pickNaanHarvestTarget(topic, harvestTick);
+        std::string engineChoice = "auto";
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            engineChoice = naanEngineFor(agentId);
+        }
+        const auto target = synapse::core::pickNaanHarvestTarget(topic, harvestTick, engineChoice);
         std::string url = target.url.empty() ? topicToUrl(topic) : target.url;
         if (!naanShare_.claimUrl(agentId, url)) {
             naanShare_.releaseTopic(agentId, topic);
@@ -10353,6 +10436,7 @@ void SynapsedEngine::applyDesktopConfig() {
                 auto topics = parseTopicCsv(j["naan_topics"].get<std::string>());
                 if (!topics.empty()) cfgTopics_ = topics;
             }
+            loadNaanEngineSettings(content);
             if (j.contains("profile_alias") && j["profile_alias"].is_string())
                 profileAlias_ = j["profile_alias"].get<std::string>();
             loadLocalProfile();
@@ -11446,6 +11530,81 @@ std::vector<DeskHit> findHitsFromHtml(const std::string& htmlIn, const std::stri
     return out;
 }
 
+struct FindPicRef {
+    std::string url;
+    std::string alt;
+};
+
+std::string findAttr(const std::string& tag, const char* key) {
+    const std::string low = findLower(tag);
+    const std::string needle = std::string(key) + "=";
+    const size_t at = low.find(needle);
+    if (at == std::string::npos) return {};
+    size_t q = at + needle.size();
+    while (q < tag.size() && std::isspace(static_cast<unsigned char>(tag[q]))) ++q;
+    if (q >= tag.size()) return {};
+    const char quote = tag[q];
+    if (quote == '"' || quote == '\'') {
+        const size_t end = tag.find(quote, q + 1);
+        if (end == std::string::npos) return {};
+        return findDecode(tag.substr(q + 1, end - q - 1));
+    }
+    const size_t end = tag.find_first_of(" \t>", q);
+    return tag.substr(q, end == std::string::npos ? std::string::npos : end - q);
+}
+
+std::vector<FindPicRef> findPictureRefs(const std::string& html, const std::string& pageUrl) {
+    std::vector<FindPicRef> out;
+    const std::string lower = findLower(html);
+    size_t pos = 0;
+    while (out.size() < 8 && (pos = lower.find("<img", pos)) != std::string::npos) {
+        const size_t tagEnd = html.find('>', pos);
+        if (tagEnd == std::string::npos) break;
+        const std::string tag = html.substr(pos, tagEnd - pos);
+        pos = tagEnd + 1;
+        std::string src = findAttr(tag, "src");
+        if (src.empty()) src = findAttr(tag, "data-src");
+        if (src.empty() || src.rfind("data:", 0) == 0) continue;
+        const std::string low = findLower(src);
+        if (low.find(".svg") != std::string::npos) continue;
+        src = findResolve(pageUrl, src);
+        if (!findUrlCharsOk(src)) continue;
+        if (src.rfind("http://", 0) != 0 && src.rfind("https://", 0) != 0) continue;
+        bool seen = false;
+        for (const auto& row : out) {
+            if (row.url == src) { seen = true; break; }
+        }
+        if (seen) continue;
+        std::string alt = findMaskOnions(findAttr(tag, "alt"));
+        if (alt.size() > 80) alt.resize(80);
+        out.push_back(FindPicRef{src, alt});
+    }
+    return out;
+}
+
+bool findRasterMime(const std::string& bytes, std::string& mime) {
+    if (bytes.size() >= 3 &&
+        static_cast<unsigned char>(bytes[0]) == 0xFF &&
+        static_cast<unsigned char>(bytes[1]) == 0xD8 &&
+        static_cast<unsigned char>(bytes[2]) == 0xFF) {
+        mime = "image/jpeg";
+        return true;
+    }
+    if (bytes.size() >= 8 && bytes.compare(0, 8, "\x89PNG\r\n\x1a\n") == 0) {
+        mime = "image/png";
+        return true;
+    }
+    if (bytes.size() >= 6 && (bytes.compare(0, 6, "GIF87a") == 0 || bytes.compare(0, 6, "GIF89a") == 0)) {
+        mime = "image/gif";
+        return true;
+    }
+    if (bytes.size() >= 12 && bytes.compare(0, 4, "RIFF") == 0 && bytes.compare(8, 4, "WEBP") == 0) {
+        mime = "image/webp";
+        return true;
+    }
+    return false;
+}
+
 std::string findTrim(const std::string& in) {
     size_t a = 0;
     size_t b = in.size();
@@ -11489,11 +11648,43 @@ std::string SynapsedEngine::findRpc(const std::string& op, const std::string& pa
         if (html.empty() || html.find('<') == std::string::npos) {
             return "{\"error\":\"That page did not answer\"}";
         }
-        const std::string text = findMaskOnions(findPlain(std::move(html)));
-        if (text.empty()) return "{\"error\":\"That page had no text\"}";
+        const auto pics = findPictureRefs(html, url);
+        const std::string text = findMaskOnions(findPlain(html));
+        nlohmann::json images = nlohmann::json::array();
+        const std::string imgPath = dataDir_ + "/find-image.bin";
+        const int socksPort = gSocksPort.load();
+        int kept = 0;
+        for (const auto& pic : pics) {
+            if (kept >= 4 || socksPort <= 0 || !isUrlSafe(pic.url)) continue;
+            std::string cmd = "curl -s -k --compressed --max-time 12 --socks5-hostname 127.0.0.1:" +
+                std::to_string(socksPort) + " -L -o \"" + imgPath + "\" \"" + pic.url + "\""
+#ifdef _WIN32
+                " 2>NUL";
+#else
+                " 2>/dev/null";
+#endif
+            execCmd(cmd);
+            std::ifstream in(imgPath, std::ios::binary);
+            std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            in.close();
+            std::remove(imgPath.c_str());
+            if (bytes.size() < 32 || bytes.size() > 180000) continue;
+            std::string mime;
+            if (!findRasterMime(bytes, mime)) continue;
+            const auto enc = synapse::crypto::base64Encode(
+                std::vector<uint8_t>(bytes.begin(), bytes.end()));
+            images.push_back({
+                {"alt", pic.alt},
+                {"mime", mime},
+                {"data", std::string(enc.begin(), enc.end())},
+            });
+            ++kept;
+        }
+        if (text.empty() && images.empty()) return "{\"error\":\"That page had no text\"}";
         nlohmann::json out;
         out["ok"] = true;
         out["text"] = text;
+        out["images"] = std::move(images);
         return out.dump();
     }
 

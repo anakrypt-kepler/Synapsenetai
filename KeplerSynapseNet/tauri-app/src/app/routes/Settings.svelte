@@ -12,6 +12,7 @@
     type SystemInfo,
   } from "../../lib/rpc";
   import { pushNotice } from "../../lib/notices";
+  import { NAAN_ENGINES } from "../../lib/naanEngines";
   import ModelCatalog from "../components/ModelCatalog.svelte";
   import MinerLoader from "../components/MinerLoader.svelte";
   import PixelStage from "../components/sprites/PixelStage.svelte";
@@ -42,6 +43,8 @@
   let naanEnabled = false;
   let naanTopics = "";
   let naanSiteAllowlist = "";
+  let naanDefaultEngine = "auto";
+  let naanDefaultEngineOn = true;
   let launchAtLogin = false;
   let minimizeToTray = false;
   let autoUpdate = true;
@@ -206,6 +209,8 @@
       naanEnabled = asBool(parsed.naan_enabled, false);
       naanTopics = asStr(parsed.naan_topics, "");
       naanSiteAllowlist = asStr(parsed.naan_site_allowlist, "");
+      naanDefaultEngine = asStr(parsed.naan_default_engine, "auto") || "auto";
+      naanDefaultEngineOn = parsed.naan_default_engine_on !== false;
       launchAtLogin = asBool(parsed.launch_at_login, false);
       minimizeToTray = asBool(parsed.minimize_to_tray, false);
       autoUpdate = parsed.auto_update == null ? true : asBool(parsed.auto_update, true);
@@ -416,6 +421,8 @@
         naan_enabled: naanEnabled,
         naan_topics: naanTopics,
         naan_site_allowlist: naanSiteAllowlist,
+        naan_default_engine: naanDefaultEngine,
+        naan_default_engine_on: naanDefaultEngineOn,
       });
       if (err) {
         naanStatus = err;
@@ -651,6 +658,17 @@
   <div class="card">
     <div class="chk"><label><input type="checkbox" bind:checked={naanEnabled} /> Enable NAAN</label></div>
     <div class="hint">This checkbox starts and stops the agent for this session. A restart leaves it off until you enable it again. Topics below are what it searches.</div>
+    <div class="form-group">
+      <div class="chk"><label><input type="checkbox" bind:checked={naanDefaultEngineOn} /> Use a default search engine</label></div>
+      {#if naanDefaultEngineOn}
+        <select bind:value={naanDefaultEngine}>
+          {#each NAAN_ENGINES as engine}
+            <option value={engine.id}>{engine.name}</option>
+          {/each}
+        </select>
+      {/if}
+      <div class="hint">Agents left on Auto follow this pick. Turn the switch off and the default stays hidden; each agent then uses the engine chosen on the NAAN tab.</div>
+    </div>
     <div class="form-group">
       <label>Topics</label>
       <input type="text" bind:value={naanTopics} placeholder="AI, crypto" />

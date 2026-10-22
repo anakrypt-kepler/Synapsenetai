@@ -19,6 +19,9 @@
   let readTitle = "";
   let readText = "";
   let reading = false;
+  type PageImage = { alt: string; mime: string; data: string };
+  let pageImages: PageImage[] = [];
+  let zoom = -1;
 
   $: chosen = engines.find((engine) => engine.id === engineId);
   $: queryable = chosen ? chosen.query : true;
@@ -49,6 +52,8 @@
     note = "";
     readTitle = "";
     readText = "";
+    pageImages = [];
+    zoom = -1;
     if (queryable && !query.trim()) {
       error = "Type a query";
       return;
@@ -78,6 +83,8 @@
     error = "";
     readTitle = hit.title;
     readText = "";
+    pageImages = [];
+    zoom = -1;
     reading = true;
     try {
       const raw = await findRead(index);
@@ -87,6 +94,11 @@
         readTitle = "";
       } else {
         readText = String(parsed.text || "");
+        pageImages = Array.isArray(parsed.images)
+          ? parsed.images
+              .filter((row: PageImage) => row && typeof row.data === "string" && typeof row.mime === "string")
+              .slice(0, 4)
+          : [];
       }
     } catch {
       error = "That page did not open";
@@ -147,12 +159,29 @@
       </div>
     {/if}
 
-    {#if readText}
+    {#if readText || pageImages.length}
       <div class="section-title">PAGE</div>
       <div class="card">
         <div class="result-title">{readTitle}</div>
-        <div class="page-text">{readText}</div>
+        {#if pageImages.length}
+          <div class="page-photos">
+            {#each pageImages as image, index}
+              <button class="photo" type="button" on:click={() => (zoom = index)}>
+                <img src={"data:" + image.mime + ";base64," + image.data} alt={image.alt || "Page photo"} />
+              </button>
+            {/each}
+          </div>
+        {/if}
+        {#if readText}<div class="page-text">{readText}</div>{/if}
       </div>
+    {/if}
+    {#if zoom >= 0 && pageImages[zoom]}
+      <button class="photo-zoom" type="button" on:click={() => (zoom = -1)}>
+        <img
+          src={"data:" + pageImages[zoom].mime + ";base64," + pageImages[zoom].data}
+          alt={pageImages[zoom].alt || "Page photo"}
+        />
+      </button>
     {/if}
   </div>
 </div>
@@ -221,5 +250,40 @@
     max-height: 320px;
     overflow: auto;
     color: var(--text-secondary);
+  }
+
+  .page-photos {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .photo {
+    width: 120px;
+    height: 90px;
+    padding: 0;
+    border: 1px solid var(--border);
+    background: #000;
+    cursor: pointer;
+  }
+
+  .photo img,
+  .photo-zoom img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    image-rendering: auto;
+  }
+
+  .photo-zoom {
+    position: fixed;
+    inset: 48px 24px 36px;
+    z-index: 40;
+    padding: 12px;
+    border: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.94);
+    cursor: zoom-out;
   }
 </style>

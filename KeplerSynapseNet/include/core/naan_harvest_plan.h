@@ -24,12 +24,28 @@ struct NaanHarvestTarget {
     bool onion = false;
 };
 
+// One row in the per-agent search picker. "auto" is not a row:
+// an empty or unknown id keeps the rotating harvest policy.
+struct NaanEngineOption {
+    std::string id;
+    std::string name;
+    std::string prefix;
+    bool queryable = true;
+    bool onion = false;
+};
+
 NaanHarvestLoopAction decideNaanHarvestLoop(bool userStop, bool topicsEmpty,
                                             double spent, double budget);
 
 // Rotate search engines and keep direct clearnet pages (arxiv, cve, …).
 // `tick` must change across loops so two agents do not always hit Ahmia.
 NaanHarvestTarget pickNaanHarvestTarget(const std::string& topic, uint64_t tick);
+
+std::vector<NaanEngineOption> naanEngineCatalog();
+
+// engineId "auto", empty, or unknown uses the rotating policy above.
+NaanHarvestTarget pickNaanHarvestTarget(const std::string& topic, uint64_t tick,
+                                        const std::string& engineId);
 
 std::vector<std::string> naanClearnetSearchEngines();
 std::vector<std::string> naanDarknetSearchEngines();

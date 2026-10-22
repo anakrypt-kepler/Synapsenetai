@@ -12,6 +12,7 @@
 
   let shown = SYNAPSENET_ASCII;
   let scrambling = false;
+  let open = false;
   let raf = 0;
   let guard = 0;
 
@@ -66,9 +67,15 @@
   });
 </script>
 
-<div class="holo" class:compact aria-label="SynapseNet">
+<button class="holo" class:compact type="button" aria-expanded={open} on:click={() => (open = !open)}>
   <div class="logo-word" class:afx={scrambling} aria-hidden="true">{shown}</div>
-</div>
+</button>
+{#if open}
+  <div class="logo-note">
+    SYNAPSENET is the name painted on this harvest map. It is the station title,
+    not a wallet, not a peer, and not a mint. Click the word again to close this note.
+  </div>
+{/if}
 
 <style>
   .holo {
@@ -81,8 +88,25 @@
     flex-direction: column;
     align-items: center;
     gap: 8px;
-    margin: 0 0 14px;
-    pointer-events: none;
+    margin: 0 auto 8px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .logo-note {
+    max-width: 520px;
+    margin: 0 auto 12px;
+    padding: 8px 10px;
+    border: 1px solid rgba(0, 229, 255, 0.35);
+    color: var(--text-secondary);
+    font-family: var(--font);
+    font-size: 8px;
+    line-height: 1.6;
+    text-align: center;
   }
 
   .logo-word {

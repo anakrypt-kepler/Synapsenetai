@@ -153,15 +153,14 @@
 
 <div class="content-area ide-page">
   <div class="page-col">
-    <!-- Always on while this tab is open. Not tied to a load or to NAAN. -->
-    <!-- Compact desk mark. The editor well owns the vertical room now. -->
-    <div class="ide-hero">
-      <CoderLoader width={132} label="Mining code" />
-    </div>
+    <!-- The desk mark stays a small header glyph. The editor well owns the page. -->
     <div class="section-title">IDE</div>
     <div class="ide-layout">
       <div class="ide-editor">
-        <div class="card-header">EDITOR</div>
+        <div class="editor-head">
+          <CoderLoader width={64} label="Mining code" />
+          <div class="card-header">EDITOR</div>
+        </div>
         <div class="editor-tabs">
           {#each files as file, i}
             <button class="editor-tab" class:active={activeFile === i} type="button" on:click={() => setActive(i)}>
@@ -231,22 +230,17 @@
 </div>
 
 <style>
-  /* Coder desk above a 2-col split. Editor well stays readable mono. */
-  .ide-hero {
-    flex-shrink: 0;
-    display: flex;
-    justify-content: center;
-    padding: 2px 0 4px;
-  }
+  /* Code column is the page. The desk mark is a 64px glyph in the editor header. */
   .ide-page {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    height: 100%;
     font-family: var(--font-mono);
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    padding-bottom: 72px;
+    padding-bottom: 8px;
   }
 
   .ide-page :global(.page-col) {
@@ -254,14 +248,26 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    max-width: none;
+  }
+
+  .editor-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .editor-head :global(.coder-loader) {
+    width: 64px;
+    flex: 0 0 64px;
+    margin: 0;
   }
 
   .ide-layout {
     flex: 1;
     min-height: 0;
     display: grid;
-    /* Give the code well more width than the chat; it is the primary surface. */
-    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1.85fr) minmax(240px, 0.7fr);
     gap: 10px;
   }
 
@@ -343,8 +349,7 @@
     width: 100%;
     height: auto;
     flex: 1 1 auto;
-    /* Comfortable floor so the code area stays large even on short windows. */
-    min-height: 320px;
+    min-height: 0;
     resize: none;
     border: none;
     border-radius: 0;
