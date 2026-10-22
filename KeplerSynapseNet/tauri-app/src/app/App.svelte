@@ -1,15 +1,15 @@
 <script lang="ts">
   // Root shell: wizard on first launch, then boot libsynapsed and poll status.
-  // Each tab is a route component; keep tab ids in sync with lib/store.ts.
+  // Visited tabs stay mounted. A {#key} on the active id used to destroy the
+  // route, so scroll, fields, and NAAN walkers started over on the way back.
   import { onMount, onDestroy } from "svelte";
-  import { fly } from "svelte/transition";
   import "../styles/global.css";
   import "../styles/dark.css";
-  import { activeTab, tabSlideDir, showSetupWizard, startStatusPolling, stopStatusPolling } from "../lib/store";
+  import { activeTab, tabSlideDir, showSetupWizard, startStatusPolling, stopStatusPolling, type TabId } from "../lib/store";
   import { checkFirstLaunch, initEngine } from "../lib/rpc";
   import { loadStationLookFromSettings } from "../lib/stationSkins";
   import { initCellBgm } from "../lib/cellBgm";
-  import { DUR_TAB_MS, TAB_SLIDE_PX, easeMenuDecel } from "../lib/hyprEase";
+  import { DUR_TAB_MS, TAB_SLIDE_PX } from "../lib/hyprEase";
   import { pageBusy } from "../lib/pageLoad";
   import TopBar from "./components/TopBar.svelte";
   import NoticeRail from "./components/NoticeRail.svelte";
@@ -33,6 +33,12 @@
   import GuideDock from "./components/GuideDock.svelte";
 
   let ready = false;
+  // Once a tab has been opened, its component stays alive under the others.
+  let mountedTabs: TabId[] = [];
+
+  $: if (!mountedTabs.includes($activeTab)) {
+    mountedTabs = [...mountedTabs, $activeTab];
+  }
 
   const reduceMotion =
     typeof matchMedia !== "undefined" &&
@@ -90,42 +96,48 @@
         {#if $pageBusy}
           <div class="page-load" role="status" aria-label="Loading"></div>
         {/if}
-        {#key $activeTab}
+        {#each mountedTabs as id (id)}
           <div
             class="tab-pane"
-            in:fly={{ x: slideInX, duration: tabSlideMs, easing: easeMenuDecel, opacity: 1 }}
+            class:is-live={id === $activeTab}
+            class:tab-slide={id === $activeTab && tabSlideMs > 0}
+            data-tab={id}
+            style:--tab-in={slideInX + "px"}
+            style:--tab-slide-ms={tabSlideMs + "ms"}
+            aria-hidden={id !== $activeTab}
+            inert={id !== $activeTab}
           >
-            {#if $activeTab === "dashboard"}
+            {#if id === "dashboard"}
               <Dashboard />
-            {:else if $activeTab === "wallet"}
+            {:else if id === "wallet"}
               <Wallet />
-            {:else if $activeTab === "transfers"}
+            {:else if id === "transfers"}
               <Transfers />
-            {:else if $activeTab === "blocks"}
+            {:else if id === "blocks"}
               <Blocks />
-            {:else if $activeTab === "knowledge"}
+            {:else if id === "knowledge"}
               <Knowledge />
-            {:else if $activeTab === "find"}
+            {:else if id === "find"}
               <Find />
-            {:else if $activeTab === "naan"}
+            {:else if id === "naan"}
               <NaanAgent />
-            {:else if $activeTab === "harvest"}
+            {:else if id === "harvest"}
               <Harvest />
-            {:else if $activeTab === "exploits"}
+            {:else if id === "exploits"}
               <Exploits />
-            {:else if $activeTab === "messages"}
+            {:else if id === "messages"}
               <Messages />
-            {:else if $activeTab === "ide"}
+            {:else if id === "ide"}
               <Ide />
-            {:else if $activeTab === "network"}
+            {:else if id === "network"}
               <Network />
-            {:else if $activeTab === "rental"}
+            {:else if id === "rental"}
               <Rental />
-            {:else if $activeTab === "settings"}
+            {:else if id === "settings"}
               <Settings />
             {/if}
           </div>
-        {/key}
+        {/each}
       </main>
     </div>
     <div class="mascot-slot" aria-hidden="true">
@@ -198,12 +210,32 @@
     flex-direction: column;
   }
 
-  /* No outgoing fade and no paint containment: both flash a black layer on WebView2. */
+  /* No outgoing fade and no paint containment: both flash a black layer on WebView2.
+     Hidden panes stay in layout (visibility, not display:none) so scroll, the editor,
+     and the NAAN canvas keep their size and in-memory positions. */
   .tab-pane {
     position: absolute;
     inset: 0;
     overflow: hidden;
     background: var(--bg);
+    visibility: hidden;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .tab-pane.is-live {
+    visibility: visible;
+    pointer-events: auto;
+    z-index: 1;
+  }
+
+  .tab-pane.tab-slide {
+    animation: tab-slide var(--tab-slide-ms) var(--ease-menu) backwards;
+  }
+
+  @keyframes tab-slide {
+    from { transform: translate3d(var(--tab-in), 0, 0); }
+    to { transform: translate3d(0, 0, 0); }
   }
 
   /* Pixel mascot slot: keep header.gif, frame it as a hotbar cell (square, hairline). */

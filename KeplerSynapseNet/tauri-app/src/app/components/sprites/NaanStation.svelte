@@ -42,6 +42,12 @@
   export let crewSubmissions: Record<string, number> = {};
   export let focusedId: string = PRIMARY_NAAN_ID;
   export let nowLine: string = "";
+  // Per-body harvest text. Crew use their own task, not the focused body's log.
+  export let agentState: Record<string, string> = {};
+  export let agentTask: Record<string, string> = {};
+  export let agentLog: Record<string, string> = {};
+  // True while this map's tab is covered. The walk freezes in place; it does not restart.
+  export let paused: boolean = false;
 
   const TILE = Number(stationLayout.tile) || 16;
   const DUMP_T = Number(stationLayout.dumpT) || 12;
@@ -574,8 +580,6 @@
     lastGoal: string;
     thinkLeft: number;
     settleLeft: number;
-    roamIdx: number;
-    roamTimer: number;
   };
 
   function makeWalker(id: string, owner: string, skin: string, seat: Seat): Walker {
@@ -597,8 +601,6 @@
       lastGoal: "",
       thinkLeft: 0,
       settleLeft: 0,
-      roamIdx: 0,
-      roamTimer: 0,
     };
   }
 
@@ -606,6 +608,65 @@
   let crewWalk: Walker[] = [];
   let deckSig = "";
   let crewSkinSig = "";
+
+  // Seat a walker on a chair. lastGoal is set so the next tick does not
+  // treat the empty hall as a fresh spawn and walk them out of the start pad.
+  function parkAt(w: Walker, goal: RoomKind, seat: Seat) {
+    const f = footOf(seat.tx, seat.ty);
+    w.px = f.x;
+    w.py = f.y;
+    w.dir = seat.face;
+    w.faceA = DIR_A[seat.face];
+    w.spd = 0;
+    w.path = [];
+    w.sitting = true;
+    w.working = seat.work && harvestOn(w.owner);
+    w.settleLeft = 0;
+    w.lastGoal = goal;
+  }
+
+  // Crew follow their own harvest phase. Bed is only the off-duty fallback
+  // for the primary body. An extra body that owns a workstation sits there
+  // (TOR / LYMPH / RECIPE / POE), not in the empty hall, HOLD, or bedroom.
+  function crewGoal(owner: string): RoomKind {
+    const cm = $naanCrew.find((c) => c.id === owner);
+    const own = cm?.rooms?.length ? cm.rooms : (deck.enabled[owner] || []);
+    if (!own.length) return inferred;
+    const st = agentState[owner] || (harvestOn(owner) ? "ACTIVE" : "OFF");
+    const want = inferHarvestRoom(st, agentTask[owner] || "", agentLog[owner] || "");
+    const bag = deck.seats[owner] || {};
+    if (want !== "bed" && own.includes(want) && bag[want]?.work) return want;
+    for (const id of own) {
+      if (bag[id]?.work) return id;
+    }
+    if (own.includes(want)) return want;
+    return own[0];
+  }
+
+  function sameChair(a: Seat | undefined, b: Seat | undefined): boolean {
+    return !!a && !!b && a.tx === b.tx && a.ty === b.ty;
+  }
+
+  function workstation(owner: string): { id: RoomKind; seat: Seat } {
+    const key = owner === PRIMARY_NAAN_ID ? "primary" : owner;
+    const want = key === "primary" ? inferred : crewGoal(key);
+    const got = resolveGoal(key, want);
+    const bag = deck.seats[key] || {};
+    const hall = bag.hall;
+    // A missing room used to alias its chair to the hall pad (work: false).
+    const onStart = got.id === "hall" || got.id === "hold" || sameChair(got.seat, hall);
+    if (!onStart) return got;
+    const on = deck.enabled[key] || [];
+    for (const id of on) {
+      const seat = bag[id];
+      if (seat?.work && !sameChair(seat, hall)) return { id, seat };
+    }
+    for (const id of on) {
+      const seat = bag[id];
+      if (seat && !sameChair(seat, hall)) return { id, seat };
+    }
+    return got;
+  }
 
   function applyDeck(rooms: HarvestRoomId[], crew: NaanCrewMember[]) {
     const geom = JSON.stringify(rooms) + "|" + JSON.stringify(crew.map((c) => ({ id: c.id, rooms: c.rooms })));
@@ -629,35 +690,30 @@
     stCols = deck.stCols;
     stRows = deck.stRows;
     occ = deck.occ;
-    hero.lastGoal = "";
     const keep = new Set(crew.map((c) => c.id));
     crewWalk = crewWalk.filter((w) => keep.has(w.owner));
     for (const c of crew) {
-      const hall = deck.seats[c.id]?.hall || PRIMARY_HALL_SEAT;
       let w = crewWalk.find((x) => x.owner === c.id);
       if (!w) {
-        w = makeWalker(c.id, c.id, c.skin, hall);
+        const born = workstation(c.id);
+        w = makeWalker(c.id, c.id, c.skin, born.seat);
+        parkAt(w, born.id, born.seat);
         crewWalk = [...crewWalk, w];
       } else {
         w.skin = c.skin;
-        w.lastGoal = "";
-      }
-      const t = tileOf(w.px, w.py);
-      if (!deck.walk[c.id]?.has(t.x + "," + t.y)) {
-        const f = footOf(hall.tx, hall.ty);
-        w.px = f.x;
-        w.py = f.y;
-        w.path = [];
-        w.sitting = true;
+        const t = tileOf(w.px, w.py);
+        // A removed room can leave them off the walk grid. Put them on a
+        // workstation, not back on the empty start pad.
+        if (!deck.walk[c.id]?.has(t.x + "," + t.y)) {
+          const born = workstation(c.id);
+          parkAt(w, born.id, born.seat);
+        }
       }
     }
     const ht = tileOf(hero.px, hero.py);
     if (!deck.walk.primary?.has(ht.x + "," + ht.y)) {
-      const f = footOf(PRIMARY_HALL_SEAT.tx, PRIMARY_HALL_SEAT.ty);
-      hero.px = f.x;
-      hero.py = f.y;
-      hero.path = [];
-      hero.sitting = true;
+      const born = workstation("primary");
+      parkAt(hero, born.id, born.seat);
     }
     paintDeck();
   }
@@ -1385,32 +1441,31 @@
     }
   }
 
+  let loopOn = false;
+
+  function startLoop() {
+    if (!loopOn || paused || raf) return;
+    lastTs = 0;
+    raf = requestAnimationFrame(tick);
+  }
+
+  function stopLoop() {
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    lastTs = 0;
+    drag = null;
+  }
+
   function tick(ts: number) {
+    if (!loopOn || paused) {
+      raf = 0;
+      return;
+    }
     const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0;
     lastTs = ts;
     stepCam(dt);
     stepWalker(hero, inferred, dt);
-    const ROAM_INTERVAL = 8;
-    for (const w of crewWalk) {
-      const cm = $naanCrew.find((c) => c.id === w.owner);
-      const ownRooms = cm?.rooms || [];
-      let crewGoal: RoomKind;
-      if (ownRooms.length) {
-        w.roamTimer += dt;
-        if (w.sitting && w.working && w.roamTimer >= ROAM_INTERVAL) {
-          w.roamTimer = 0;
-          w.roamIdx = (w.roamIdx + 1) % ownRooms.length;
-        }
-        crewGoal = ownRooms[w.roamIdx % ownRooms.length];
-        // Idle extra: sit in HOLD stash without touching the harvest roam list.
-        if (!harvestOn(w.owner) && deck.seats[w.owner]?.hold && (w.lastGoal === "hold" || (w.sitting && w.roamTimer >= ROAM_INTERVAL))) {
-          crewGoal = "hold";
-        }
-      } else {
-        crewGoal = inferred;
-      }
-      stepWalker(w, crewGoal, dt);
-    }
+    for (const w of crewWalk) stepWalker(w, crewGoal(w.owner), dt);
     const fps = hero.sitting ? (hero.working ? 6 : 4) : 10;
     acc += dt;
     if (acc >= 1 / fps) {
@@ -1428,21 +1483,36 @@
       skyFrames = 0;
       paintSky(ts);
     }
+    if (!loopOn || paused) {
+      raf = 0;
+      return;
+    }
     raf = requestAnimationFrame(tick);
   }
 
   onMount(() => {
+    loopOn = true;
     void loadNaanDeckFromSettings();
-    const got = resolveGoal("primary", inferred);
-    seize(hero, got.id, got.seat);
+    // First open only. A later visit keeps the same component, so this does not run.
+    if (!hero.lastGoal) {
+      const got = resolveGoal("primary", inferred);
+      seize(hero, got.id, got.seat);
+    }
     paintSky(performance.now());
     paintDeck();
-    raf = requestAnimationFrame(tick);
+    startLoop();
   });
 
   onDestroy(() => {
-    if (raf) cancelAnimationFrame(raf);
+    loopOn = false;
+    stopLoop();
   });
+
+  // Covering the tab freezes the camera and the walk. Positions and paths stay.
+  $: if (loopOn) {
+    if (paused) stopLoop();
+    else startLoop();
+  }
 
   $: if (deckCv) paintDeck();
   $: if (skinKey !== lastSkinKey) {

@@ -9953,8 +9953,9 @@ static std::string buildNaanPoeBody(const std::string& topic, const std::string&
     // Filing the same search UI used to trip too_similar / near_duplicate.
     std::ostringstream o;
     if (!text.empty()) {
-        std::string excerpt = text.size() > 1800 ? text.substr(0, 1800) : text;
-        o << excerpt << "\n\n";
+        // Menus sit in front of the article. The cells score this excerpt,
+        // so it has to be the paragraph, not the language list.
+        o << synapse::core::harvestKnowledgeExcerpt(text, 1800) << "\n\n";
     }
     o << "topic: " << topic << "\n";
     o << "url: " << url << "\n";
@@ -10161,23 +10162,68 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
             isOnion = url.find(".onion") != std::string::npos;
         };
 
+        // Same body the cells will score. A search hit that fails stays a
+        // skip; the gate itself is unchanged.
+        auto pagePassesGate = [&](const std::string& pageUrl, const std::string& pageHtml,
+                                   std::string* why) {
+            if (pageIsSurface(pageUrl, pageHtml)) {
+                if (why) *why = "surface";
+                return false;
+            }
+            const std::string via = pageUrl.find(".onion") != std::string::npos
+                ? "tor_onion" : "tor_clearnet";
+            const std::string body = buildNaanPoeBody(topic, pageUrl, pageUrl, "pending", via,
+                                                     stripHtmlToText(pageHtml));
+            const core::TextUsefulness use =
+                core::assessTextUsefulness(buildNaanPoeTitle(topic), body);
+            if (why) *why = use.reason.empty() ? "not_useful" : use.reason;
+            return use.passed;
+        };
+
+        auto noteSkip = [&](const std::string& why) {
+            std::lock_guard<std::mutex> lock(mtx_);
+            auto it = naanAgents_.find(agentId);
+            if (it == naanAgents_.end() || !it->second) return;
+            it->second->log.push_back(NaanLogEntry{nowMillis(),
+                "[" + agentId + "] poe skip: " + why});
+            if (it->second->log.size() > 80) it->second->log.erase(it->second->log.begin());
+            if (agentId == kPrimaryNaanId) naanLog_ = it->second->log;
+        };
+
         auto walkResultHrefs = [&](size_t startShift) {
             if (resultHrefs.empty()) return;
             const size_t n = resultHrefs.size();
             const size_t start = static_cast<size_t>((harvestTick + startShift) % n);
+            std::string lastUrl;
+            std::string lastHtml;
+            int fetched = 0;
             for (size_t i = 0; i < n; ++i) {
                 if (stopped()) break;
+                if (fetched >= 4) break;
                 const std::string& href = resultHrefs[(start + i) % n];
                 if (href == url) continue;
                 if (synapse::core::isHarvestSearchSurface(href)) continue;
                 if (!naanShare_.claimUrl(agentId, href)) continue;
                 std::string next = fetchWithRetry(href, 3, stopPtr, agentId);
-                if (!pageIsSurface(href, next)) {
+                ++fetched;
+                std::string why;
+                if (pagePassesGate(href, next, &why)) {
+                    if (!lastUrl.empty()) naanShare_.releaseUrl(agentId, lastUrl);
                     adoptPage(href, std::move(next));
                     return;
                 }
-                naanShare_.releaseUrl(agentId, href);
+                if (!pageIsSurface(href, next)) noteSkip(why);
+                if (!lastUrl.empty()) naanShare_.releaseUrl(agentId, lastUrl);
+                if (!pageIsSurface(href, next)) {
+                    lastUrl = href;
+                    lastHtml = std::move(next);
+                } else {
+                    naanShare_.releaseUrl(agentId, href);
+                    lastUrl.clear();
+                    lastHtml.clear();
+                }
             }
+            if (!lastUrl.empty()) adoptPage(lastUrl, std::move(lastHtml));
         };
 
         if (pageIsSurface(url, html)) walkResultHrefs(0);

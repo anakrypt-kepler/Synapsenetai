@@ -214,6 +214,36 @@ std::string resolveHarvestHref(const std::string& href, const std::string& base)
 
 } // namespace
 
+std::string harvestKnowledgeExcerpt(const std::string& pageText, size_t limit) {
+    if (pageText.empty() || limit == 0) return {};
+    // A nav row is a short line. A paragraph is not. Stop at the first
+    // paragraph and never read past a few kilobytes of menu text.
+    constexpr size_t kMinLine = 80;
+    constexpr size_t kMaxSkip = 6000;
+    size_t start = 0;
+    size_t i = 0;
+    while (i < pageText.size() && i <= kMaxSkip) {
+        const size_t end = pageText.find('\n', i);
+        const size_t lineEnd = end == std::string::npos ? pageText.size() : end;
+        size_t a = i;
+        size_t b = lineEnd;
+        while (a < b && std::isspace(static_cast<unsigned char>(pageText[a]))) ++a;
+        while (b > a && std::isspace(static_cast<unsigned char>(pageText[b - 1]))) --b;
+        if (b > a && (b - a) >= kMinLine) {
+            start = i;
+            break;
+        }
+        if (end == std::string::npos || end + 1 > kMaxSkip) {
+            start = 0;
+            break;
+        }
+        i = end + 1;
+    }
+    if (start >= pageText.size()) start = 0;
+    const size_t n = std::min(limit, pageText.size() - start);
+    return pageText.substr(start, n);
+}
+
 std::vector<std::string> extractHarvestHrefs(const std::string& html, size_t limit,
                                              const std::string& baseUrl) {
     std::vector<std::string> out;

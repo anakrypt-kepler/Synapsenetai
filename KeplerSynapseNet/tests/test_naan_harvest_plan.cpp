@@ -162,6 +162,51 @@ static void testUsefulness() {
     assert(plain.passed);
 }
 
+static std::string poeBody(const std::string& topic, const std::string& excerpt) {
+    return excerpt + "\n\ntopic: " + topic +
+        "\nurl: https://example.test/page\ntitle: t\nvia: tor_clearnet\nsha256: abc\n";
+}
+
+static void testExcerptSkipsMenu() {
+    using synapse::core::assessTextUsefulness;
+    using synapse::core::harvestKnowledgeExcerpt;
+    std::string menu;
+    for (int i = 0; i < 250; ++i) menu += "English\n";
+    const std::string article =
+        "The Tor browser uses onion routing so a destination sees an exit relay. "
+        "Anonymity depends on more than one relay in the circuit. Privacy research "
+        "studies censorship circumvention and how a hidden service publishes an address. "
+        "This note explains the browser, the relay, and the circuit together in detail.";
+    const std::string page = menu + article;
+    const std::string excerpt = harvestKnowledgeExcerpt(page, 1800);
+    assert(excerpt.find("onion routing") != std::string::npos);
+    assert(excerpt.find("English") == std::string::npos);
+    auto passed = assessTextUsefulness("NAAN harvest: darknet", poeBody("darknet", excerpt));
+    assert(passed.passed);
+    assert(passed.reason == "ok");
+    const std::string prefix = page.substr(0, 1800);
+    auto missed = assessTextUsefulness("NAAN harvest: darknet", poeBody("darknet", prefix));
+    assert(!missed.passed);
+
+    const std::string essay =
+        "A Tor circuit is a path of relays. The Tor browser uses onion routing so the "
+        "destination sees an exit relay instead of the user. Anonymity depends on more "
+        "than one relay in the circuit.";
+    assert(harvestKnowledgeExcerpt(essay, 1800) == essay);
+
+    std::string buried;
+    while (buried.size() < 7000) buried += "nav\n";
+    buried += article;
+    const std::string capped = harvestKnowledgeExcerpt(buried, 1800);
+    assert(capped.find("onion routing") == std::string::npos);
+
+    const std::string err =
+        "Error 403 (Forbidden)!!1 403. That's an error. Your client does not have "
+        "permission to get URL / from this server. That's all we know.";
+    auto stillBad = assessTextUsefulness("NAAN harvest: AI", poeBody("AI", harvestKnowledgeExcerpt(err, 1800)));
+    assert(!stillBad.passed);
+}
+
 static void testNamedEngine() {
     using synapse::core::pickNaanHarvestTarget;
     auto brave = pickNaanHarvestTarget("crypto", 1, "brave");
@@ -187,6 +232,7 @@ int main() {
     testJunkAndHrefs();
     testSearchSurfaceAndRelativeHrefs();
     testUsefulness();
+    testExcerptSkipsMenu();
     testNamedEngine();
     return 0;
 }

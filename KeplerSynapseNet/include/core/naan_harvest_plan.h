@@ -61,5 +61,10 @@ bool isHarvestSearchSurface(const std::string& url);
 std::vector<std::string> extractHarvestHrefs(const std::string& html, size_t limit = 8,
                                              const std::string& baseUrl = {});
 
+// The first 1800 characters of a stripped page are often a language menu.
+// Skip a short run of those lines, then take `limit` characters. This does
+// not search the rest of the page for topic words.
+std::string harvestKnowledgeExcerpt(const std::string& pageText, size_t limit = 1800);
+
 } // namespace core
 } // namespace synapse

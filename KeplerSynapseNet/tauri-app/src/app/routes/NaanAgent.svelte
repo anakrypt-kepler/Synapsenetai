@@ -3,6 +3,7 @@
   import { onMount, onDestroy, afterUpdate } from "svelte";
   import { beginPageLoad } from "../../lib/pageLoad";
   import { naanControl, naanConfigUpdate, rpcCall } from "../../lib/rpc";
+  import { activeTab } from "../../lib/store";
   import NaanStation from "../components/sprites/NaanStation.svelte";
   import SynapseHoloLogo from "../components/sprites/SynapseHoloLogo.svelte";
   import NaanAgentHud from "../components/naan/NaanAgentHud.svelte";
@@ -391,6 +392,21 @@
   $: agentActiveMap = Object.fromEntries(
     Object.values(engineAgents).map((a) => [a.id, a.state === "ACTIVE"]),
   );
+  $: agentStateMap = Object.fromEntries(
+    Object.values(engineAgents).map((a) => [a.id, a.state]),
+  );
+  $: agentTaskMap = Object.fromEntries(
+    Object.values(engineAgents).map((a) => [a.id, a.current_task]),
+  );
+  $: agentLogMap = Object.fromEntries(
+    Object.values(engineAgents).map((a) => [
+      a.id,
+      a.log.length ? a.log[a.log.length - 1].msg : "",
+    ]),
+  );
+  $: primaryTask = engineAgents[PRIMARY_NAAN_ID]?.current_task || currentTask;
+  $: primaryLastLog = agentLogMap[PRIMARY_NAAN_ID]
+    || (agentLog.length ? agentLog[agentLog.length - 1].msg : "");
   $: crewSubmissions = {
     [PRIMARY_NAAN_ID]: engineAgents[PRIMARY_NAAN_ID]?.submissions ?? agentScore.submissions,
     primary: engineAgents[PRIMARY_NAAN_ID]?.submissions ?? agentScore.submissions,
@@ -482,8 +498,12 @@
   <NaanStation
     status={agentStatus}
     agentActive={agentActiveMap}
-    task={focusAgent?.current_task || currentTask}
-    lastLog={lastLog}
+    agentState={agentStateMap}
+    agentTask={agentTaskMap}
+    agentLog={agentLogMap}
+    paused={$activeTab !== "naan"}
+    task={primaryTask}
+    lastLog={primaryLastLog}
     submissions={focusAgent?.submissions ?? agentScore.submissions}
     crewSubmissions={crewSubmissions}
     ngt={totalNgt}
