@@ -125,6 +125,11 @@ bool isJunkHarvestHtml(const std::string& html) {
         "have not deployd non-javascript",
         "this site requires javascript",
         "please enable javascript to use ahmia",
+        "403. that's an error",
+        "404. that's an error",
+        "error 403 (forbidden)",
+        "403 forbidden",
+        "404 not found",
     };
     for (const char* n : needles) {
         if (h.find(n) != std::string::npos) return true;

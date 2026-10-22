@@ -5,6 +5,7 @@
 #include "ide/synapsed_engine.h"
 #include "core/poe_v1_objects.h"
 #include "core/poe_v1_layers.h"
+#include "core/text_usefulness.h"
 #include "crypto/keys.h"
 #include "crypto/crypto.h"
 #include "privacy/private_transfer.h"
@@ -189,6 +190,12 @@ void SynapsedEngine::maybePoeAutoVote(const crypto::Hash256& submitId) const {
         vote.prevBlockHash = poeV1_->chainSeed();
         vote.flags = 0;
         vote.scores = {100, 100, 100};
+        if (entry->contentType == core::poe_v1::ContentType::TEXT &&
+            core::isHarvestKnowledge(entry->body)) {
+            const core::TextUsefulness use = core::assessTextUsefulness(entry->title, entry->body);
+            if (!use.passed) return;
+            core::bindUsefulnessVote(vote, use);
+        }
         if (!core::poe_v1::signValidationVoteV1(vote, poeSk_)) return;
         if (!poeV1_->addVote(vote)) return;
         voteHex = crypto::toHex(vote.serialize());

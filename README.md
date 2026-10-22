@@ -409,7 +409,9 @@ Five steps. Do them in order.
 
 **SET catalog.** Rows run from a weak card to a strong one, RX 580 through RTX 5090. Qwen2.5 and Qwen3 are both listed. Each Qwen3 size has an uncensored twin: the refusal tuning is removed. This Windows build runs the file on the CPU. The card name is the VRAM the file is sized for. A file you already have shows as selected.
 
-**CODE.** A code entry is a patch plus tests. Every cell runs that bundle in-process, with no clock, no files, and no network, then hashes the transcript. NGT for CODE is minted only when the tests pass and a majority signs that same hash. Text keeps the old reward path. A passing bundle adds 0.05 NGT on top of the base acceptance reward.
+**CODE.** A code entry is a patch plus tests. Every cell runs that bundle in-process, with no clock, no files, and no network, then hashes the transcript. NGT for CODE is minted only when the tests pass and a majority signs that same hash. A passing bundle adds 0.05 NGT on top of the base acceptance reward.
+
+**Harvest text.** A NAAN page mints only when every voting cell runs the same usefulness check and signs the same three counts: words, distinct words, and topic hits. An error page, a thin page, a link catalog, and a page that misses its declared topic do not enter the ledger. Notes that are not harvest records stay on the existing text gates.
 
 ---
 

@@ -1,4 +1,5 @@
 #include "core/naan_harvest_plan.h"
+#include "core/text_usefulness.h"
 
 #include <cassert>
 #include <string>
@@ -66,6 +67,10 @@ static void testJunkAndHrefs() {
         "version of this site. Please enable javascript to use Ahmia."
         "</body></html>";
     assert(isJunkHarvestHtml(ahmiaJs));
+    const std::string forbidden =
+        std::string("<html><title>Error 403 (Forbidden)!!1</title><body>") +
+        "403. That's an error. Your client does not have permission.</body></html>";
+    assert(isJunkHarvestHtml(forbidden));
     const std::string ok = std::string("<html>") + std::string(80, 'x') + " arxiv paper title list</html>";
     assert(!isJunkHarvestHtml(ok));
 
@@ -101,6 +106,62 @@ static void testSearchSurfaceAndRelativeHrefs() {
     assert(sawAbs);
 }
 
+static std::string harvestBody(const std::string& topic, const std::string& excerpt) {
+    return excerpt + "\n\ntopic: " + topic +
+        "\nurl: https://example.test/page\nvia: tor_clearnet\nsha256: abc\n";
+}
+
+static void testUsefulness() {
+    using synapse::core::assessTextUsefulness;
+    const std::string torEssay =
+        "A Tor circuit is a path of relays. The Tor browser uses onion routing so the "
+        "destination sees an exit relay instead of the user. Anonymity depends on more "
+        "than one relay in the circuit. Privacy research studies how a hidden service "
+        "publishes an onion address. Censorship circumvention is one reason people run "
+        "a relay. This note explains the circuit, the relay, and the browser together.";
+    auto ok = assessTextUsefulness("NAAN harvest: darknet", harvestBody("darknet", torEssay));
+    assert(ok.harvest);
+    assert(ok.passed);
+    assert(ok.topicHits >= 2);
+
+    const std::string err =
+        "Error 403 (Forbidden)!!1 403. That's an error. Your client does not have "
+        "permission to get URL / from this server. That's all we know.";
+    auto bad = assessTextUsefulness("NAAN harvest: AI", harvestBody("AI", err));
+    assert(!bad.passed);
+    assert(bad.reason == "error_page");
+
+    std::string catalog = "Onion directory listings for the Tor browser and privacy tools. ";
+    for (int i = 0; i < 6; ++i) catalog += "shop" + std::to_string(i) + ".onion ";
+    auto farm = assessTextUsefulness("NAAN harvest: darknet", harvestBody("darknet", catalog));
+    assert(!farm.passed);
+    assert(farm.reason == "link_catalog");
+
+    const std::string wiki =
+        "Welcome. The Wikimedia movement is a global community of people, projects, and "
+        "activities working together to create and share knowledge freely. Join us in "
+        "making all knowledge available to everyone, everywhere. Projects include an "
+        "encyclopedia, a dictionary, a media collection, and a free travel guide. "
+        "Readers write articles, fix spelling, and add pictures every day of the week.";
+    auto miss = assessTextUsefulness("NAAN harvest: crypto", harvestBody("crypto", wiki));
+    assert(!miss.passed);
+    assert(miss.reason == "topic_mismatch");
+
+    const std::string history =
+        "A history of the directory project. Storage grew as contributors wrote editorial "
+        "notes about the monitor and the vector of each collection. The history directory "
+        "holds stories, maps, and pictures. Readers browse the history and the directory "
+        "again. Storage, history, directory, contributor, editorial, monitor, and vector "
+        "are the words of this page. None of them name a hidden path or a hop.";
+    auto buried = assessTextUsefulness("NAAN harvest: darknet", harvestBody("darknet", history));
+    assert(!buried.passed);
+    assert(buried.reason == "topic_mismatch");
+
+    auto plain = assessTextUsefulness("plain_text_title", std::string(80, 't'));
+    assert(!plain.harvest);
+    assert(plain.passed);
+}
+
 int main() {
     testLoopActions();
     testClearnetNotFunneledToAhmia();
@@ -108,5 +169,6 @@ int main() {
     testClearnetRoster();
     testJunkAndHrefs();
     testSearchSurfaceAndRelativeHrefs();
+    testUsefulness();
     return 0;
 }

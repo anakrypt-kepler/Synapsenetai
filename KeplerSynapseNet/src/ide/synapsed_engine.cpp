@@ -4,6 +4,7 @@
 
 #include "ide/synapsed_engine.h"
 #include "core/naan_harvest_plan.h"
+#include "core/text_usefulness.h"
 #include "core/work_code.h"
 #include "crypto/keys.h"
 #include "crypto/crypto.h"
@@ -10225,27 +10226,33 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
             const std::string poeTitle = buildNaanPoeTitle(topic);
             const std::string poeBody = buildNaanPoeBody(topic, url, chosenTitle, hash,
                                                         fetchedVia, harvest.text);
-            const std::string poeRes = submitPoeKnowledge(
-                poeTitle, poeBody, synapse::core::poe_v1::ContentType::TEXT);
+            const core::TextUsefulness use = core::assessTextUsefulness(poeTitle, poeBody);
+            const std::string poeRes = use.passed
+                ? submitPoeKnowledge(poeTitle, poeBody, synapse::core::poe_v1::ContentType::TEXT)
+                : std::string();
             {
                 std::lock_guard<std::mutex> lock(mtx_);
                 auto it = naanAgents_.find(agentId);
                 if (it != naanAgents_.end() && it->second) slot = it->second.get();
                 std::string note = "poe submit ok";
-                nlohmann::json jr = nlohmann::json::parse(poeRes, nullptr, false);
-                if (!jr.is_discarded() && jr.is_object()) {
-                    if (jr.contains("error")) {
-                        const std::string err = jr.value("error", "failed");
-                        // too_similar / near_duplicate / exact_duplicate skip this
-                        // page. They do not stop the harvest loop.
-                        note = "poe reject: " + err;
-                    } else {
-                        const std::string sid = jr.value("submitId", "");
-                        note = std::string("poe ") + jr.value("status", "pending")
-                            + " " + (sid.size() >= 12 ? sid.substr(0, 12) : sid);
-                    }
+                if (!use.passed) {
+                    note = "poe reject: " + (use.reason.empty() ? std::string("not_useful") : use.reason);
                 } else {
-                    note = "poe submit: " + poeRes.substr(0, 80);
+                    nlohmann::json jr = nlohmann::json::parse(poeRes, nullptr, false);
+                    if (!jr.is_discarded() && jr.is_object()) {
+                        if (jr.contains("error")) {
+                            const std::string err = jr.value("error", "failed");
+                            // too_similar / near_duplicate / exact_duplicate skip this
+                            // page. They do not stop the harvest loop.
+                            note = "poe reject: " + err;
+                        } else {
+                            const std::string sid = jr.value("submitId", "");
+                            note = std::string("poe ") + jr.value("status", "pending")
+                                + " " + (sid.size() >= 12 ? sid.substr(0, 12) : sid);
+                        }
+                    } else {
+                        note = "poe submit: " + poeRes.substr(0, 80);
+                    }
                 }
                 if (slot) {
                     slot->log.push_back(NaanLogEntry{nowMillis(), "[" + agentId + "] " + note});

@@ -4,6 +4,7 @@
 #include "core/poe_v1_engine.h"
 #include "core/poe_v1_objects.h"
 #include "core/poe_v1_layers.h"
+#include "core/text_usefulness.h"
 #include "crypto/crypto.h"
 #include "crypto/keys.h"
 
@@ -91,6 +92,14 @@ static bool autoVote(PoeV1Engine& engine, const synapse::crypto::Hash256& sid,
     vote.prevBlockHash = engine.chainSeed();
     vote.flags = 0;
     vote.scores = {100, 100, 100};
+    auto entry = engine.getEntry(sid);
+    if (entry && entry->contentType == synapse::core::poe_v1::ContentType::TEXT &&
+        synapse::core::isHarvestKnowledge(entry->body)) {
+        const synapse::core::TextUsefulness use =
+            synapse::core::assessTextUsefulness(entry->title, entry->body);
+        if (!use.passed) return false;
+        synapse::core::bindUsefulnessVote(vote, use);
+    }
     if (!synapse::core::poe_v1::signValidationVoteV1(vote, sk)) return false;
     if (!engine.addVote(vote)) return false;
     voteHex = synapse::crypto::toHex(vote.serialize());

@@ -2,6 +2,7 @@
 // All numbers here must stay integer/deterministic — no floating LLM scores.
 
 #include "core/poe_v1_engine.h"
+#include "core/text_usefulness.h"
 #include "core/work_code.h"
 #include "wide128.h"
 #include "core/poe_v1_layers.h"
@@ -519,6 +520,14 @@ PoeSubmitResult PoeV1Engine::submit(
         res.ok = false;
         return res;
     }
+    if (type == poe_v1::ContentType::TEXT && isHarvestKnowledge(entry.body)) {
+        const TextUsefulness use = assessTextUsefulness(entry.title, entry.body);
+        if (!use.passed) {
+            res.ok = false;
+            res.error = use.reason.empty() ? "not_useful" : use.reason;
+            return res;
+        }
+    }
     // CODE is not prose. Cells re-run the bundle before this entry can exist.
     if (type == poe_v1::ContentType::CODE) {
         WorkExecution work = executeWork(body);
@@ -722,6 +731,14 @@ PoeSubmitResult PoeV1Engine::submit(
                         return res;
                     }
                     bindWorkVote(v, work.resultHash);
+                } else if (entry.contentType == poe_v1::ContentType::TEXT && isHarvestKnowledge(entry.body)) {
+                    const TextUsefulness use = assessTextUsefulness(entry.title, entry.body);
+                    if (!use.passed) {
+                        res.finalized = false;
+                        res.acceptanceReward = 0;
+                        return res;
+                    }
+                    bindUsefulnessVote(v, use);
                 }
                 poe_v1::signValidationVoteV1(v, authorKey);
                 addVote(v);
@@ -1113,6 +1130,17 @@ std::optional<poe_v1::FinalizationRecordV1> PoeV1Engine::finalize(const crypto::
         agreed.reserve(votes.size());
         for (const auto& v : votes) {
             if (workVoteMatches(v, work.resultHash)) agreed.push_back(v);
+        }
+        votes.swap(agreed);
+    }
+
+    if (entryOpt->contentType == poe_v1::ContentType::TEXT && isHarvestKnowledge(entryOpt->body)) {
+        const TextUsefulness use = assessTextUsefulness(entryOpt->title, entryOpt->body);
+        if (!use.passed) return std::nullopt;
+        std::vector<poe_v1::ValidationVoteV1> agreed;
+        agreed.reserve(votes.size());
+        for (const auto& v : votes) {
+            if (usefulnessVoteMatches(v, use)) agreed.push_back(v);
         }
         votes.swap(agreed);
     }
@@ -2087,6 +2115,8 @@ bool PoeV1Engine::shouldMintAcceptanceReward(const crypto::Hash256& submitId) co
         if (!rid || !hasMatchingReplay(*rid)) return false;
     }
     if (entry->contentType == poe_v1::ContentType::CODE && !executeWork(entry->body).passed) return false;
+    if (entry->contentType == poe_v1::ContentType::TEXT && isHarvestKnowledge(entry->body) &&
+        !assessTextUsefulness(entry->title, entry->body).passed) return false;
     return true;
 }
 
