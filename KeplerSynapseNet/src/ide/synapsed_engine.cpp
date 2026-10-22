@@ -917,6 +917,20 @@ std::vector<synapse::privacy::OwnedOutput> loadOwnedOutputs(const std::string& d
     return out;
 }
 
+// std::rename on Windows leaves the old file in place when the destination
+// already exists. The first coin was saved, and every later reward was dropped
+// on the floor while the history note still appended.
+bool replaceFile(const std::string& from, const std::string& to) {
+#ifdef _WIN32
+    return MoveFileExA(from.c_str(), to.c_str(),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    if (std::rename(from.c_str(), to.c_str()) == 0) return true;
+    std::remove(to.c_str());
+    return std::rename(from.c_str(), to.c_str()) == 0;
+#endif
+}
+
 void saveOwnedOutputs(const std::string& dataDir,
                       const std::vector<synapse::privacy::OwnedOutput>& wallet) {
     std::string path = dataDir + "/private_utxo.jsonl";
@@ -935,7 +949,10 @@ void saveOwnedOutputs(const std::string& dataDir,
         f << j.dump() << "\n";
     }
     f.close();
-    std::rename(tmp.c_str(), path.c_str());
+    if (!replaceFile(tmp, path)) {
+        std::remove(tmp.c_str());
+        return;
+    }
     restrictSecretFile(path);
 }
 
@@ -3209,9 +3226,10 @@ void SynapsedEngine::loadMigratePrivateWallet() const {
     std::lock_guard<std::mutex> lock(privateWalletMtx_);
     auto wallet = loadOwnedOutputs(dataDir_);
 
-    // Keep outputs that appear in a broadcast/received RingCT tx. Drop NAAN
-    // test-mints that were written straight into private_utxo.jsonl.
-    std::set<std::string> anchored;
+    // The public log is the record of coins this wallet can open. Pull any
+    // output that never landed in private_utxo.jsonl (the Windows replace
+    // bug), and drop outputs that are not in that log.
+    std::unordered_map<std::string, synapse::privacy::OwnedOutput> scanned;
     if (privacy_ && privacy_->stealth().hasKeys()) {
         std::ifstream pf(dataDir_ + "/private_pub.jsonl");
         std::string line;
@@ -3225,16 +3243,45 @@ void SynapsedEngine::loadMigratePrivateWallet() const {
             for (const auto& outp : tx.vouts) {
                 synapse::privacy::OwnedOutput owned;
                 if (!synapse::privacy::scanOutput(privacy_->stealth(), outp, owned)) continue;
-                anchored.insert(synapse::crypto::toHex(owned.oneTime));
+                scanned.emplace(synapse::crypto::toHex(owned.oneTime), std::move(owned));
             }
         }
     }
-    std::vector<synapse::privacy::OwnedOutput> kept;
-    kept.reserve(wallet.size());
-    for (const auto& o : wallet) {
-        if (anchored.count(synapse::crypto::toHex(o.oneTime))) kept.push_back(o);
+    if (scanned.empty()) {
+        uint64_t unspent = 0;
+        for (const auto& o : wallet) {
+            if (!o.spent) unspent += o.amountAtoms;
+        }
+        naanTotalNgt_ = atomsToNgt(unspent);
+        std::ostringstream bs;
+        bs << std::fixed << std::setprecision(2) << naanTotalNgt_;
+        balance_ = bs.str();
+        std::ofstream bf(dataDir_ + "/balance.dat", std::ios::trunc);
+        if (bf.good()) bf << balance_;
+        return;
     }
-    if (kept.size() != wallet.size()) {
+
+    std::unordered_map<std::string, bool> spentBy;
+    for (const auto& o : wallet) spentBy[synapse::crypto::toHex(o.oneTime)] = o.spent;
+    std::vector<synapse::privacy::OwnedOutput> kept;
+    kept.reserve(scanned.size());
+    for (auto& kv : scanned) {
+        auto it = spentBy.find(kv.first);
+        if (it != spentBy.end()) kv.second.spent = it->second;
+        kept.push_back(std::move(kv.second));
+    }
+    bool same = kept.size() == wallet.size();
+    if (same) {
+        std::set<std::string> have;
+        for (const auto& o : wallet) have.insert(synapse::crypto::toHex(o.oneTime));
+        for (const auto& o : kept) {
+            if (!have.count(synapse::crypto::toHex(o.oneTime))) {
+                same = false;
+                break;
+            }
+        }
+    }
+    if (!same) {
         saveOwnedOutputs(dataDir_, kept);
         wallet.swap(kept);
     }
@@ -4485,7 +4532,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                 std::string typ = n.value("type", std::string());
                 if (filterType == "sent" && typ != "sent" && typ != "stealth_sent") continue;
                 if (filterType == "received" && typ != "received") continue;
-                if (filterType == "rewards") continue;
+                if (filterType == "rewards" && typ != "poe_reward") continue;
                 nlohmann::json row;
                 row["type"] = typ.empty() ? "private" : typ;
                 if (n.contains("amount")) {
