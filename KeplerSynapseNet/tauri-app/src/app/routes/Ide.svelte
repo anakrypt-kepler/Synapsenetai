@@ -154,8 +154,9 @@
 <div class="content-area ide-page">
   <div class="page-col">
     <!-- Always on while this tab is open. Not tied to a load or to NAAN. -->
+    <!-- Compact desk mark. The editor well owns the vertical room now. -->
     <div class="ide-hero">
-      <CoderLoader width={420} label="Mining code" />
+      <CoderLoader width={132} label="Mining code" />
     </div>
     <div class="section-title">IDE</div>
     <div class="ide-layout">
@@ -235,7 +236,7 @@
     flex-shrink: 0;
     display: flex;
     justify-content: center;
-    padding: 4px 0 8px;
+    padding: 2px 0 4px;
   }
   .ide-page {
     display: flex;
@@ -259,7 +260,8 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    /* Give the code well more width than the chat; it is the primary surface. */
+    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
     gap: 10px;
   }
 
@@ -341,7 +343,8 @@
     width: 100%;
     height: auto;
     flex: 1 1 auto;
-    min-height: 0;
+    /* Comfortable floor so the code area stays large even on short windows. */
+    min-height: 320px;
     resize: none;
     border: none;
     border-radius: 0;
@@ -365,8 +368,10 @@
   }
 
   .tests-area {
-    flex: 0 0 88px;
-    height: 88px;
+    /* Tests stay a fixed secondary strip and override the editor floor above. */
+    flex: 0 0 120px;
+    height: 120px;
+    min-height: 120px;
     border-top: 1px solid var(--border);
   }
 
