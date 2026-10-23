@@ -1,6 +1,7 @@
 #include "core/agent_coordination.h"
 #include "core/agent_draft_queue.h"
 #include "core/agent_submission_pipeline.h"
+#include "core/work_code.h"
 
 #include <cassert>
 #include <chrono>
@@ -75,7 +76,11 @@ static void testFullLoopFetchReviewDraftSubmit() {
 
     auto authorSk = makeSk(11);
     auto reviewerSk = makeSk(23);
-    auto draft = makeDraft(authorSk, now + 1, "CODE: Integration draft", std::string(80, 'i'), 42);
+    // A CODE title is re-run by every cell. The body has to be a real bundle.
+    const std::string body = workBundle(
+        "fn add(a, b) = a + b\n",
+        "assert add(2, 3) == 5\n");
+    auto draft = makeDraft(authorSk, now + 1, "CODE: Integration draft", body, 42);
     std::string reason;
     assert(queue.enqueue(draft, &reason));
 
