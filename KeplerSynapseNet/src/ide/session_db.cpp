@@ -99,7 +99,8 @@ extern "C" int synapseSessionSqliteDenyForeignFile(
 bool lockDownSqlite(sqlite3* db) {
     if (!db) return false;
 #ifndef SQLITE_OMIT_LOAD_EXTENSION
-    if (sqlite3_enable_load_extension(db, 0) != SQLITE_OK) return false;
+    // Same as database.cpp: do not call sqlite3_enable_load_extension. Some
+    // platform headers omit that symbol. The config flag and authorizer remain.
 #if SQLITE_VERSION_NUMBER >= 3013000
     {
         int prior = 0;

@@ -217,7 +217,9 @@ extern "C" int synapseDbSqliteDenyForeignFile(
 bool lockDownSqlite(sqlite3* db) {
     if (!db) return false;
 #ifndef SQLITE_OMIT_LOAD_EXTENSION
-    if (sqlite3_enable_load_extension(db, 0) != SQLITE_OK) return false;
+    // sqlite3_enable_load_extension is missing from some SQLite headers even
+    // when SQLITE_OMIT_LOAD_EXTENSION is unset. The db config flag is the
+    // supported switch, and the authorizer below still denies the SQL function.
 #if SQLITE_VERSION_NUMBER >= 3013000
     {
         int prior = 0;
