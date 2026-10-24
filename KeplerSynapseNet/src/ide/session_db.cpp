@@ -104,9 +104,10 @@ bool lockDownSqlite(sqlite3* db) {
 #if SQLITE_VERSION_NUMBER >= 3013000
     {
         int prior = 0;
-        if (sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 0, &prior) != SQLITE_OK) {
-            return false;
-        }
+        // Some platform libraries are built without an extension loader. Asking
+        // them to disable it returns an error, and there is nothing to enable.
+        // The authorizer below still refuses the SQL function where it exists.
+        (void)sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 0, &prior);
     }
 #endif
 #endif
@@ -150,12 +151,25 @@ bool sameCanonicalDirectory(const std::filesystem::path& left, const std::filesy
     return leftDir == rightDir;
 }
 
+bool sameCanonicalFile(const std::filesystem::path& left, const std::filesystem::path& right) {
+    std::error_code ec;
+    const auto leftFile = std::filesystem::weakly_canonical(left, ec);
+    if (ec || leftFile.empty()) return false;
+    const auto rightFile = std::filesystem::weakly_canonical(right, ec);
+    if (ec || rightFile.empty()) return false;
+    return leftFile == rightFile;
+}
+
 bool openedDatabaseStaysPut(sqlite3* db, const std::string& requested) {
     const char* actual = sqlite3_db_filename(db, "main");
-    if (requested == ":memory:") return actual == nullptr || actual[0] == '\0';
+    if (requested == ":memory:") {
+        return actual == nullptr || actual[0] == '\0' || std::string(actual) == ":memory:";
+    }
     if (!actual || actual[0] == '\0') return false;
     if (std::string(actual) == requested) return true;
     if (sqlitePathRejected(actual)) return false;
+    // The VFS may rewrite /var to /private/var. That is still the same file.
+    if (sameCanonicalFile(requested, actual)) return true;
     return sameCanonicalDirectory(
         std::filesystem::path(requested).parent_path(),
         std::filesystem::path(actual).parent_path());
