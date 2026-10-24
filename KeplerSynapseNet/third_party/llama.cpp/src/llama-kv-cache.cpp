@@ -51,7 +51,7 @@ llama_kv_cache::llama_kv_cache(
         auto it = ctx_map.find(buft);
         if (it == ctx_map.end()) {
             ggml_init_params params = {
-                /*.mem_size   =*/ size_t(2u*(1 + n_stream)*n_layer_kv*ggml_tensor_overhead()),
+                /*.mem_size   =*/ size_t(size_t(2u)*(1 + n_stream)*n_layer_kv*ggml_tensor_overhead()),
                 /*.mem_buffer =*/ NULL,
                 /*.no_alloc   =*/ true,
             };
@@ -1174,7 +1174,7 @@ ggml_tensor * llama_kv_cache::build_input_v_idxs(ggml_context * ctx, const llama
     if (!v_trans) {
         v_idxs = ggml_new_tensor_1d(ctx, GGML_TYPE_I64, n_tokens);
     } else {
-        v_idxs = ggml_new_tensor_1d(ctx, GGML_TYPE_I64, n_tokens*hparams.n_embd_v_gqa_max());
+        v_idxs = ggml_new_tensor_1d(ctx, GGML_TYPE_I64, (int64_t) n_tokens*hparams.n_embd_v_gqa_max());
     }
 
     ggml_set_input(v_idxs);
@@ -1190,7 +1190,7 @@ void llama_kv_cache::set_input_k_idxs(ggml_tensor * dst, const llama_ubatch * ub
     int64_t * data = (int64_t *) dst->data;
 
     for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
-        const int64_t offs = sinfo.strm[s]*get_size();
+        const int64_t offs = (int64_t) sinfo.strm[s]*get_size();
 
         for (uint32_t i = 0; i < sinfo.size(); ++i) {
             data[s*sinfo.size() + i] = offs + sinfo.idxs[s][i];
@@ -1207,7 +1207,7 @@ void llama_kv_cache::set_input_v_idxs(ggml_tensor * dst, const llama_ubatch * ub
 
     if (!v_trans) {
         for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
-            const int64_t offs = sinfo.strm[s]*get_size();
+            const int64_t offs = (int64_t) sinfo.strm[s]*get_size();
 
             for (uint32_t i = 0; i < sinfo.size(); ++i) {
                 data[s*sinfo.size() + i] = offs + sinfo.idxs[s][i];
@@ -1494,7 +1494,7 @@ void llama_kv_cache::set_input_pos_bucket(ggml_tensor * dst, const llama_ubatch 
                 // the position when the cells is empty is irrelevant - it will be masked out later in the attention
                 const llama_pos p0 = cells.is_empty(j) ? -1 : cells.pos_get(j);
 
-                data[h*(n_kv*n_tokens) + i*n_kv + j] = llama_relative_position_bucket(p0, ubatch->pos[i], hparams.n_rel_attn_bkts, false);
+                data[h*(n_kv*n_tokens) + (int64_t) i*n_kv + j] = llama_relative_position_bucket(p0, ubatch->pos[i], hparams.n_rel_attn_bkts, false);
             }
         }
     }
@@ -1626,7 +1626,7 @@ ggml_cgraph * llama_kv_cache::build_graph_shift(llm_graph_result * res, llama_co
 
         ggml_tensor * k =
             ggml_view_3d(ctx, layer.k,
-                n_rot, n_head_kv, get_size()*n_stream,
+                n_rot, n_head_kv, (int64_t) get_size()*n_stream,
                 ggml_row_size(layer.k->type, n_embd_head_k),
                 ggml_row_size(layer.k->type, n_embd_k_gqa),
                 ggml_row_size(layer.k->type, n_embd_nope));
@@ -1853,7 +1853,7 @@ void llama_kv_cache::state_write_data(llama_io_write_i & io, const cell_ranges_t
                 // Read each range of cells of v_size_el length and write out
                 for (const auto & range : cr.data) {
                     const size_t range_size = range.second - range.first;
-                    const size_t src_offset = (range.first + j * kv_size) * v_size_el;
+                    const size_t src_offset = (size_t(range.first) + size_t(j) * kv_size) * v_size_el;
                     const size_t buf_size = range_size * v_size_el;
                     io.write_tensor(v, src_offset, buf_size);
                 }
@@ -2118,7 +2118,7 @@ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32
                     // Fast path: contiguous cells
                     const uint32_t h = sinfo.head();
                     for (uint32_t j = 0; j < n_embd_v_gqa; ++j) {
-                        const size_t dst_offset = (h + j * cells.size()) * v_size_el;
+                        const size_t dst_offset = (size_t(h) + size_t(j) * cells.size()) * v_size_el;
                         ggml_backend_tensor_set(v, io.read(cell_count * v_size_el), dst_offset, cell_count * v_size_el);
                     }
                 } else {
@@ -2126,7 +2126,7 @@ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32
                     for (uint32_t j = 0; j < n_embd_v_gqa; ++j) {
                         const void * src = io.read(cell_count * v_size_el);
                         for (uint32_t i = 0; i < cell_count; ++i) {
-                            const size_t dst_offset = (sinfo.idxs[0][i] + j * cells.size()) * v_size_el;
+                            const size_t dst_offset = (size_t(sinfo.idxs[0][i]) + size_t(j) * cells.size()) * v_size_el;
                             ggml_backend_tensor_set(v, (const char*)src + i * v_size_el, dst_offset, v_size_el);
                         }
                     }

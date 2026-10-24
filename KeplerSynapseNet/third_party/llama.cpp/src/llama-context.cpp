@@ -1273,9 +1273,12 @@ int llama_context::encode(const llama_batch & batch_inp) {
                     // extract token embeddings
                     GGML_ASSERT(embd != nullptr);
                     const uint32_t n_embd_out = hparams.n_embd_out();
+                    const uint64_t n_embd_prod = (uint64_t) n_tokens*n_embd_out;
 
-                    GGML_ASSERT(n_tokens*n_embd_out <= (int64_t) embd_size);
-                    ggml_backend_tensor_get_async(backend_embd, t_embd, embd, 0, n_tokens*n_embd_out*sizeof(float));
+                    GGML_ASSERT(n_embd_prod <= (uint64_t) INT64_MAX);
+                    GGML_ASSERT((int64_t) n_embd_prod <= (int64_t) embd_size);
+                    GGML_ASSERT(n_embd_prod <= SIZE_MAX / sizeof(float));
+                    ggml_backend_tensor_get_async(backend_embd, t_embd, embd, 0, (size_t) n_embd_prod*sizeof(float));
                 } break;
             case LLAMA_POOLING_TYPE_MEAN:
             case LLAMA_POOLING_TYPE_CLS:
@@ -1302,9 +1305,11 @@ int llama_context::encode(const llama_batch & batch_inp) {
                     for (uint32_t s = 0; s < ubatch.n_seqs_unq; ++s) {
                         const llama_seq_id seq_id  = ubatch.seq_id_unq[s];
                         const int32_t      seq_idx = ubatch.seq_idx[seq_id];
+                        const uint64_t n_cls_off = (uint64_t) n_cls_out*(uint32_t) seq_idx;
 
                         embd_seq_out[seq_id].resize(n_cls_out);
-                        ggml_backend_tensor_get_async(backend_embd, t_embd, embd_seq_out[seq_id].data(), (n_cls_out*seq_idx)*sizeof(float), n_cls_out*sizeof(float));
+                        GGML_ASSERT(n_cls_off <= SIZE_MAX / sizeof(float));
+                        ggml_backend_tensor_get_async(backend_embd, t_embd, embd_seq_out[seq_id].data(), (size_t) n_cls_off*sizeof(float), n_cls_out*sizeof(float));
                     }
                 } break;
             case LLAMA_POOLING_TYPE_UNSPECIFIED:
@@ -1699,9 +1704,11 @@ int llama_context::decode(const llama_batch & batch_inp) {
                         float * embd_out = embd + n_outputs_prev*n_embd_out;
 
                         if (n_outputs) {
+                            const uint64_t n_embd_copy = (uint64_t) n_outputs*n_embd_out;
                             GGML_ASSERT( n_outputs_prev + n_outputs <= n_outputs_all);
                             GGML_ASSERT((n_outputs_prev + n_outputs)*n_embd_out <= (int64_t) embd_size);
-                            ggml_backend_tensor_get_async(backend_embd, t_embd, embd_out, 0, n_outputs*n_embd_out*sizeof(float));
+                            GGML_ASSERT(n_embd_copy <= SIZE_MAX / sizeof(float));
+                            ggml_backend_tensor_get_async(backend_embd, t_embd, embd_out, 0, (size_t) n_embd_copy*sizeof(float));
                         }
                     } break;
                 case LLAMA_POOLING_TYPE_MEAN:
@@ -1731,7 +1738,9 @@ int llama_context::decode(const llama_batch & batch_inp) {
                             const int32_t      seq_idx = ubatch.seq_idx[seq_id];
 
                             embd_seq_out[seq_id].resize(n_cls_out);
-                            ggml_backend_tensor_get_async(backend_embd, t_embd, embd_seq_out[seq_id].data(), (n_cls_out*seq_idx)*sizeof(float), n_cls_out*sizeof(float));
+                            const uint64_t n_cls_off = (uint64_t) n_cls_out*(uint32_t) seq_idx;
+                            GGML_ASSERT(n_cls_off <= SIZE_MAX / sizeof(float));
+                            ggml_backend_tensor_get_async(backend_embd, t_embd, embd_seq_out[seq_id].data(), (size_t) n_cls_off*sizeof(float), n_cls_out*sizeof(float));
                         }
                     } break;
                 case LLAMA_POOLING_TYPE_UNSPECIFIED:

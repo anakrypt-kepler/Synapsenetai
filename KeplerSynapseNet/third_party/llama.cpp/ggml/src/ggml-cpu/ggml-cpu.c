@@ -1219,7 +1219,7 @@ static void ggml_compute_forward_mul_mat_one_chunk(
                 }
 
                 for (int cn = 0; cn < num_rows_per_vec_dot; ++cn) {
-                    memcpy(&dst_col[iir0 + cn * nb1 / nb0], tmp + (cn * 16), (MIN(iir0 + blck_0, ir0_end) - iir0) * sizeof(float));
+                    memcpy(&dst_col[iir0 + cn * nb1 / nb0], tmp + ((int64_t)cn * 16), (MIN(iir0 + blck_0, ir0_end) - iir0) * sizeof(float));
                 }
             }
         }
@@ -1379,7 +1379,7 @@ UseGgmlGemm2:;
     // If the chunking is poor for the number of threads on this setup, scrap the whole plan.  Re-chunk it by thread.
     //   Also, chunking by thread was measured to have perform better on NUMA systems.  See https://github.com/ggml-org/llama.cpp/pull/6915
     //   In theory, chunking should be just as useful on NUMA and non NUMA systems, but testing disagreed with that.
-    if (nchunk0 * nchunk1 < nth * 4 || ggml_is_numa()) {
+    if (nchunk0 * nchunk1 < (int64_t)nth * 4 || ggml_is_numa()) {
         // distribute the thread work across the inner or outer loop based on which one is larger
         nchunk0 = nr0 > nr1 ? nth : 1; // parallelize by src0 rows
         nchunk1 = nr0 > nr1 ? 1 : nth; // parallelize by src1 rows
@@ -1547,7 +1547,7 @@ static void ggml_compute_forward_mul_mat_id(
         incr_ptr_aligned(&wdata_cur, n_as*ids->ne[0]*ids->ne[1]*sizeof(struct mmid_row_mapping), sizeof(int64_t));
 
     char (*atomic_current_chunk)[CACHE_LINE_SIZE] = // [n_as]
-        incr_ptr_aligned(&wdata_cur, CACHE_LINE_SIZE * n_as, CACHE_LINE_SIZE);
+        incr_ptr_aligned(&wdata_cur, (int64_t)CACHE_LINE_SIZE * n_as, CACHE_LINE_SIZE);
 
     GGML_ASSERT(params->wsize >= (size_t)((char *) wdata_cur - (char *) params->wdata));
 
@@ -1638,7 +1638,7 @@ static void ggml_compute_forward_mul_mat_id(
         int64_t nchunk0 = (nr0 + chunk_size - 1) / chunk_size;
         int64_t nchunk1 = (nr1 + chunk_size - 1) / chunk_size;
 
-        if (nchunk0 * nchunk1 < nth * 4 || disable_chunking) {
+        if (nchunk0 * nchunk1 < (int64_t)nth * 4 || disable_chunking) {
             nchunk0 = nr0 > nr1 ? nth : 1;
             nchunk1 = nr0 > nr1 ? 1 : nth;
         }
@@ -2805,7 +2805,7 @@ struct ggml_cplan ggml_graph_plan(
                         // matrix_rows
                         cur += n_as*ids->ne[0]*ids->ne[1]*sizeof(struct mmid_row_mapping) + sizeof(int64_t);
                         // atomic_current_chunk
-                        cur += CACHE_LINE_SIZE*n_as + CACHE_LINE_SIZE;
+                        cur += (int64_t)CACHE_LINE_SIZE*n_as + CACHE_LINE_SIZE;
                     } break;
                 case GGML_OP_OUT_PROD:
                     {
@@ -2875,7 +2875,7 @@ struct ggml_cplan ggml_graph_plan(
 
                         // Tiled flash attention scratch (tile sizes defined in common.h)
                         // Per-thread: Q_q + KQ + mask + VKQ32 + V32 + padding
-                        size_t prefill  = sizeof(float)*(GGML_FA_TILE_Q*DK + 2*GGML_FA_TILE_Q*GGML_FA_TILE_KV + GGML_FA_TILE_Q*DV + GGML_FA_TILE_KV*DV)*n_tasks;
+                        size_t prefill  = sizeof(float)*(GGML_FA_TILE_Q*DK + (int64_t)2*GGML_FA_TILE_Q*GGML_FA_TILE_KV + GGML_FA_TILE_Q*DV + GGML_FA_TILE_KV*DV)*n_tasks;
 
                         // Decode path: n_kv_chunks = n_tasks (one chunk per thread)
                         // Per-thread: VKQ accmulator (DV), partial M, partial S + intra-thread scratch for V, Q and VKQ
@@ -2918,7 +2918,7 @@ struct ggml_cplan ggml_graph_plan(
     }
 
     if (work_size > 0) {
-        work_size += CACHE_LINE_SIZE*(n_threads);
+        work_size += (int64_t)CACHE_LINE_SIZE*(n_threads);
     }
 
     cplan.threadpool = threadpool;
@@ -3018,7 +3018,7 @@ static inline bool ggml_graph_compute_poll_for_work(struct ggml_compute_state * 
 
     // This seems to make 0 ... 100 a decent range for polling level across modern processors.
     // Perhaps, we can adjust it dynamically based on load and things.
-    const uint64_t n_rounds = 1024UL * 128 * threadpool->poll;
+    const uint64_t n_rounds = (int64_t)1024UL * 128 * threadpool->poll;
 
     for (uint64_t i=0; !ggml_graph_compute_thread_ready(state) && i < n_rounds; i++) {
         // No new work. Keep polling.

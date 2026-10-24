@@ -1613,6 +1613,15 @@ std::string common_detokenize(const struct llama_vocab * vocab, const std::vecto
 // Embedding utils
 //
 
+// Finite float products are unchanged. Overflowed products are recomputed in double.
+static double float_mul_as_double(float a, float b) {
+    const float prod = a * b;
+    if (std::isfinite(prod)) {
+        return static_cast<double>(prod);
+    }
+    return static_cast<double>(a) * static_cast<double>(b);
+}
+
 void common_embd_normalize(const float * inp, float * out, int n, int embd_norm) {
     double sum = 0.0;
 
@@ -1630,7 +1639,7 @@ void common_embd_normalize(const float * inp, float * out, int n, int embd_norm)
             break;
         case 2: // euclidean
             for (int i = 0; i < n; i++) {
-                sum += inp[i] * inp[i];
+                sum += float_mul_as_double(inp[i], inp[i]);
             }
             sum = std::sqrt(sum);
             break;
@@ -1655,9 +1664,9 @@ float common_embd_similarity_cos(const float * embd1, const float * embd2, int n
     double sum2 = 0.0;
 
     for (int i = 0; i < n; i++) {
-        sum  += embd1[i] * embd2[i];
-        sum1 += embd1[i] * embd1[i];
-        sum2 += embd2[i] * embd2[i];
+        sum  += float_mul_as_double(embd1[i], embd2[i]);
+        sum1 += float_mul_as_double(embd1[i], embd1[i]);
+        sum2 += float_mul_as_double(embd2[i], embd2[i]);
     }
 
     // Handle the case where one or both vectors are zero vectors

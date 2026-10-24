@@ -242,7 +242,7 @@ static int repack_q4_0_to_q4_0_16_bl(struct ggml_tensor *       t,
     int                nrow    = ggml_nrows(t);
     int                nblocks = t->ne[0] / QK4_0;
 
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q4_0));
+    GGML_ASSERT(data_size == (int64_t)nrow * nblocks * sizeof(block_q4_0));
 
     if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % QK4_0 != 0) {
         return -1;
@@ -251,7 +251,7 @@ static int repack_q4_0_to_q4_0_16_bl(struct ggml_tensor *       t,
     for (int b = 0; b < nrow; b += nrows_interleaved) {
         for (int64_t x = 0; x < nblocks; x++) {
             for (int i = 0; i < nrows_interleaved; i++) {
-                dst_tmp[i] = src[x + i * nblocks];
+                dst_tmp[i] = src[x + (int64_t)i * nblocks];
             }
             *dst++ = make_block_q4_0x16(dst_tmp, interleave_block);
         }
@@ -277,7 +277,7 @@ static int repack_q4_1_to_q4_1_16_bl(struct ggml_tensor *       t,
     int                nrow    = ggml_nrows(t);
     int                nblocks = t->ne[0] / QK4_1;
 
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q4_1));
+    GGML_ASSERT(data_size == (int64_t)nrow * nblocks * sizeof(block_q4_1));
 
     if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % QK4_1 != 0) {
         return -1;
@@ -286,7 +286,7 @@ static int repack_q4_1_to_q4_1_16_bl(struct ggml_tensor *       t,
     for (int b = 0; b < nrow; b += nrows_interleaved) {
         for (int64_t x = 0; x < nblocks; x++) {
             for (int i = 0; i < nrows_interleaved; i++) {
-                dst_tmp[i] = src[x + i * nblocks];
+                dst_tmp[i] = src[x + (int64_t)i * nblocks];
             }
             *dst++ = make_block_q4_1x16(dst_tmp, interleave_block);
         }
@@ -335,10 +335,10 @@ static int repack_q4_k_to_q4_1_16_bl(struct ggml_tensor *       t,
             for (int j = 0; j < 8; j++) {
                 for (int i = 0; i < nrows_interleaved; i++) {
                     uint8_t     sc, m;
-                    const float d = GGML_FP16_TO_FP32(src[x + i * nblocks].GGML_COMMON_AGGR_U.GGML_COMMON_AGGR_S.d);
+                    const float d = GGML_FP16_TO_FP32(src[x + (int64_t)i * nblocks].GGML_COMMON_AGGR_U.GGML_COMMON_AGGR_S.d);
                     const float min =
-                        GGML_FP16_TO_FP32(src[x + i * nblocks].GGML_COMMON_AGGR_U.GGML_COMMON_AGGR_S.dmin);
-                    get_scale_min_k4(j, src[x + i * nblocks].scales, &sc, &m);
+                        GGML_FP16_TO_FP32(src[x + (int64_t)i * nblocks].GGML_COMMON_AGGR_U.GGML_COMMON_AGGR_S.dmin);
+                    get_scale_min_k4(j, src[x + (int64_t)i * nblocks].scales, &sc, &m);
                     const float d1 = d * sc;
                     const float m1 = min * m;
 
@@ -346,7 +346,7 @@ static int repack_q4_k_to_q4_1_16_bl(struct ggml_tensor *       t,
                     dst_tmp[i].GGML_COMMON_AGGR_U.GGML_COMMON_AGGR_S.m = GGML_FP32_TO_FP16(-m1);
                     // src -> [b0, b32] [b1, b33] ... [b31, b63]
                     // dst -> [b0, b16] [b1, b17] ... [b15, b31] [b32, b48] [b33, b49] ... [b47, b63]
-                    const uint8_t * q                                  = src[x + i * nblocks].qs + (j / 2) * QK4_1;
+                    const uint8_t * q                                  = src[x + (int64_t)i * nblocks].qs + (j / 2) * QK4_1;
                     if (j % 2 == 0) {
                         for (int ii = 0; ii < 16; ii++) {
                             dst_tmp[i].qs[ii] = (q[ii] & 0x0F) | ((q[ii + 16] & 0x0F) << 4);

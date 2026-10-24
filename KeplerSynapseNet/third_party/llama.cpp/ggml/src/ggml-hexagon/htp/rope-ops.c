@@ -420,9 +420,9 @@ static int execute_op_rope_f32(struct htp_ops_context * octx) {
 
     // VTCM scratchpads for all tensors
     // N rows per thread, padded to HVX vector size
-    octx->dst_spad.size  = hex_round_up(dst_row_size, 128) * n_threads;
-    octx->src0_spad.size = hex_round_up(src0_row_size, 128) * n_threads;
-    octx->src1_spad.size = hex_round_up(src1_row_size, 128) * n_threads;
+    octx->dst_spad.size  = (size_t) hex_round_up(dst_row_size, 128) * n_threads;
+    octx->src0_spad.size = (size_t) hex_round_up(src0_row_size, 128) * n_threads;
+    octx->src1_spad.size = (size_t) hex_round_up(src1_row_size, 128) * n_threads;
 
     size_t spad_size = octx->src0_spad.size + octx->src1_spad.size + octx->dst_spad.size;
 

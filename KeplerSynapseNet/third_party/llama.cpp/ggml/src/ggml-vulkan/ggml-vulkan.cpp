@@ -8370,7 +8370,9 @@ static bool ggml_vk_flash_attn_scalar_shmem_support(const vk_device& device, con
 
     const uint32_t masksh = Bc * Br * sizeof(float);
 
-    const uint32_t Qf = Br * (hsk / 4 + 2) * 4 * sizeof(float);
+    const size_t Qf_sz = (size_t)Br * (hsk / 4 + 2) * 4 * sizeof(float);
+    GGML_ASSERT(Qf_sz <= std::numeric_limits<uint32_t>::max());
+    const uint32_t Qf = (uint32_t)Qf_sz;
 
     const uint32_t total_size = tmpsh + tmpshv4 + masksh + Qf;
     const bool supported = total_size <= device->properties.limits.maxComputeSharedMemorySize;
@@ -10637,7 +10639,7 @@ static void ggml_vk_soft_max(ggml_backend_vk_context * ctx, vk_context& subctx, 
 
         uint32_t elems_per_wg = 128 * 4;
         uint32_t num_wgs = CEIL_DIV(ncols, elems_per_wg);
-        size_t tmp_size = num_wgs * nrows_x * sizeof(float);
+        size_t tmp_size = (size_t)num_wgs * nrows_x * sizeof(float);
 
         if (ctx->prealloc_size_x < tmp_size) {
             ctx->prealloc_size_x = tmp_size;
@@ -10942,7 +10944,7 @@ static void ggml_vk_topk(ggml_backend_vk_context * ctx, vk_context& subctx, cons
         if (!done_one_iter) {
             // Reserve space for ivec2 per element, double buffered
             // K per workgroup per row
-            dbl_buf_size = num_dst_elements * nrows * 2 * sizeof(int);
+            dbl_buf_size = (size_t)num_dst_elements * nrows * 2 * sizeof(int);
             dbl_buf_size = ROUNDUP_POW2(dbl_buf_size, ctx->device->properties.limits.minStorageBufferOffsetAlignment);
             const size_t x_sz = dbl_buf_size * 2;
 

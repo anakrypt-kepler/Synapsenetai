@@ -49,7 +49,7 @@ void ggml_gemv_q4_0_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
 
         const block_q8_0 * a_ptr = (const block_q8_0 *) vy;
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q4_0x8 * b_ptr = (const block_q4_0x8 *) vx + (x * nb);
+            const block_q4_0x8 * b_ptr = (const block_q4_0x8 *) vx + ((int64_t)x * nb);
 
             vfloat32m1_t sumf = __riscv_vfmv_v_f_f32m1(0.0, vl / 4);
             for (int l = 0; l < nb; l++) {
@@ -140,9 +140,9 @@ void ggml_gemm_q4_0_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
         const size_t vl = QK4_0;
 
         for (int y = 0; y < nr / 4; y++) {
-            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb);
+            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + ((int64_t)y * nb);
             for (int x = 0; x < nc / ncols_interleaved; x++) {
-                const block_q4_0x8 * b_ptr = (const block_q4_0x8 *) vx + (x * nb);
+                const block_q4_0x8 * b_ptr = (const block_q4_0x8 *) vx + ((int64_t)x * nb);
                 vfloat32m1_t sumf0 = __riscv_vfmv_v_f_f32m1(0.0, vl / 4);
                 vfloat32m1_t sumf1 = __riscv_vfmv_v_f_f32m1(0.0, vl / 4);
                 vfloat32m1_t sumf2 = __riscv_vfmv_v_f_f32m1(0.0, vl / 4);
@@ -327,10 +327,10 @@ void ggml_gemm_q4_0_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
                         sumf3 = __riscv_vfmacc_vv_f32m1(sumf3, tmp1, b_scales_vec, vl / 4);
                     }
                 }
-                __riscv_vse32_v_f32m1(&s[(y * 4 + 0) * bs + x * ncols_interleaved], sumf0, vl / 4);
-                __riscv_vse32_v_f32m1(&s[(y * 4 + 1) * bs + x * ncols_interleaved], sumf1, vl / 4);
-                __riscv_vse32_v_f32m1(&s[(y * 4 + 2) * bs + x * ncols_interleaved], sumf2, vl / 4);
-                __riscv_vse32_v_f32m1(&s[(y * 4 + 3) * bs + x * ncols_interleaved], sumf3, vl / 4);
+                __riscv_vse32_v_f32m1(&s[(y * 4 + 0) * bs + (int64_t)x * ncols_interleaved], sumf0, vl / 4);
+                __riscv_vse32_v_f32m1(&s[(y * 4 + 1) * bs + (int64_t)x * ncols_interleaved], sumf1, vl / 4);
+                __riscv_vse32_v_f32m1(&s[(y * 4 + 2) * bs + (int64_t)x * ncols_interleaved], sumf2, vl / 4);
+                __riscv_vse32_v_f32m1(&s[(y * 4 + 3) * bs + (int64_t)x * ncols_interleaved], sumf3, vl / 4);
             }
         }
 

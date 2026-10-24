@@ -283,7 +283,7 @@ void ggml_gemv_q4_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, 
 
     const block_q8_0 * a_ptr = (const block_q8_0 *) vy;
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q4_0x4 * b_ptr = (const block_q4_0x4 *) vx + (x * nb);
+        const block_q4_0x4 * b_ptr = (const block_q4_0x4 *) vx + ((int64_t)x * nb);
 
         for (int j = 0; j < ncols_interleaved; j++) sumf[j] = 0.0;
         for (int l = 0; l < nb; l++) {
@@ -327,7 +327,7 @@ void ggml_gemv_q4_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, 
 
     const block_q8_0 * a_ptr = (const block_q8_0 *) vy;
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q4_0x4 * b_ptr = (const block_q4_0x4 *) vx + (x * nb);
+        const block_q4_0x4 * b_ptr = (const block_q4_0x4 *) vx + ((int64_t)x * nb);
 
         for (int j = 0; j < ncols_interleaved; j++) sumf[j] = 0.0;
         for (int l = 0; l < nb; l++) {
@@ -371,7 +371,7 @@ void ggml_gemv_q4_0_8x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, 
 
     const block_q8_0 * a_ptr = (const block_q8_0 *) vy;
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q4_0x8 * b_ptr = (const block_q4_0x8 *) vx + (x * nb);
+        const block_q4_0x8 * b_ptr = (const block_q4_0x8 *) vx + ((int64_t)x * nb);
 
         for (int j = 0; j < ncols_interleaved; j++) sumf[j] = 0.0;
         for (int l = 0; l < nb; l++) {
@@ -415,7 +415,7 @@ void ggml_gemv_q4_K_8x4_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
 
     const block_q8_K * a_ptr = (const block_q8_K *) vy;
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q4_Kx8 * b_ptr = (const block_q4_Kx8 *) vx + (x * nb);
+        const block_q4_Kx8 * b_ptr = (const block_q4_Kx8 *) vx + ((int64_t)x * nb);
 
         for (int j = 0; j < ncols_interleaved; j++) {
             sumf[j] = 0.0;
@@ -423,7 +423,7 @@ void ggml_gemv_q4_K_8x4_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
         }
         for (int l = 0; l < nb; l++) {
             for (int sb = 0; sb < 8; sb++) {
-                memcpy(utmp + sb * 4, b_ptr[l].scales + sb * 12, 12);
+                memcpy(utmp + (int64_t)sb * 4, b_ptr[l].scales + sb * 12, 12);
                 utmp[sb * 4 + 3] = ((utmp[sb * 4 + 2] >> 4) & kmask2) | (((utmp[sb * 4 + 1] >> 6) & kmask3) << 4);
                 const uint32_t uaux_0 = utmp[sb * 4 + 1] & kmask1;
                 utmp[sb * 4 + 1] = (utmp[sb * 4 + 2] & kmask2) | (((utmp[sb * 4 + 0] >> 6) & kmask3) << 4);
@@ -431,8 +431,8 @@ void ggml_gemv_q4_K_8x4_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
                 utmp[sb * 4 + 0] &= kmask1;
             }
             for (int k = 0; k < (qk / (2 * blocklen)); k++) {
-                uint8_t * scales_0 = (uint8_t *) utmp + (k / 8) * 32;
-                uint8_t * scales_1 = (uint8_t *) utmp + (k / 8) * 32 + 16;
+                uint8_t * scales_0 = (uint8_t *) utmp + (int64_t)(k / 8) * 32;
+                uint8_t * scales_1 = (uint8_t *) utmp + (int64_t)(k / 8) * 32 + 16;
                 for (int j = 0; j < ncols_interleaved; j++) {
                     sumi1 = 0;
                     sumi2 = 0;
@@ -450,9 +450,9 @@ void ggml_gemv_q4_K_8x4_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
                 }
             }
             for (int sb = 0; sb < 8; sb++) {
-                uint8_t * mins = (uint8_t *) utmp + 8 + sb * 16;
+                uint8_t * mins = (uint8_t *) utmp + 8 + (int64_t)sb * 16;
                 for (int j = 0; j < ncols_interleaved; j++) {
-                    sum_minf[j] += mins[j] * (a_ptr[l].bsums[sb * 2] + a_ptr[l].bsums[sb * 2 + 1]) * GGML_CPU_FP16_TO_FP32(b_ptr[l].dmin[j]) * a_ptr[l].d;
+                    sum_minf[j] += mins[j] * (a_ptr[l].bsums[(int64_t)sb * 2] + a_ptr[l].bsums[sb * 2 + 1]) * GGML_CPU_FP16_TO_FP32(b_ptr[l].dmin[j]) * a_ptr[l].d;
                 }
             }
         }
@@ -486,7 +486,7 @@ void ggml_gemv_q4_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
 
     const block_q8_K * a_ptr = (const block_q8_K *) vy;
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q4_Kx8 * b_ptr = (const block_q4_Kx8 *) vx + (x * nb);
+        const block_q4_Kx8 * b_ptr = (const block_q4_Kx8 *) vx + ((int64_t)x * nb);
 
         for (int j = 0; j < ncols_interleaved; j++) {
             sumf[j] = 0.0;
@@ -494,7 +494,7 @@ void ggml_gemv_q4_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
         }
         for (int l = 0; l < nb; l++) {
             for (int sb = 0; sb < 8; sb++) {
-                memcpy(utmp + sb * 4, b_ptr[l].scales + sb * 12, 12);
+                memcpy(utmp + (int64_t)sb * 4, b_ptr[l].scales + sb * 12, 12);
                 utmp[sb * 4 + 3] = ((utmp[sb * 4 + 2] >> 4) & kmask2) | (((utmp[sb * 4 + 1] >> 6) & kmask3) << 4);
                 const uint32_t uaux_0 = utmp[sb * 4 + 1] & kmask1;
                 utmp[sb * 4 + 1] = (utmp[sb * 4 + 2] & kmask2) | (((utmp[sb * 4 + 0] >> 6) & kmask3) << 4);
@@ -502,8 +502,8 @@ void ggml_gemv_q4_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
                 utmp[sb * 4 + 0] &= kmask1;
             }
             for (int k = 0; k < (qk / (2 * blocklen)); k++) {
-                uint8_t *scales_0 = (uint8_t*) utmp + (k / 4) * 32;
-                uint8_t *scales_1 = (uint8_t*) utmp + (k / 4) * 32 + 16;
+                uint8_t *scales_0 = (uint8_t*) utmp + (int64_t)(k / 4) * 32;
+                uint8_t *scales_1 = (uint8_t*) utmp + (int64_t)(k / 4) * 32 + 16;
                 for (int j = 0; j < ncols_interleaved; j++) {
                     sumi1 = 0;
                     sumi2 = 0;
@@ -521,9 +521,9 @@ void ggml_gemv_q4_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
                 }
             }
             for (int sb = 0; sb < 8; sb++) {
-                uint8_t *mins = (uint8_t*) utmp + 8 + sb * 16;
+                uint8_t *mins = (uint8_t*) utmp + 8 + (int64_t)sb * 16;
                 for (int j = 0; j < ncols_interleaved; j++) {
-                    sum_minf[j] += mins[j] * (a_ptr[l].bsums[sb * 2] + a_ptr[l].bsums[sb * 2 + 1]) * GGML_CPU_FP16_TO_FP32(b_ptr[l].dmin[j]) * a_ptr[l].d;
+                    sum_minf[j] += mins[j] * (a_ptr[l].bsums[(int64_t)sb * 2] + a_ptr[l].bsums[sb * 2 + 1]) * GGML_CPU_FP16_TO_FP32(b_ptr[l].dmin[j]) * a_ptr[l].d;
                 }
             }
         }
@@ -559,7 +559,7 @@ void ggml_gemv_q2_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
 
     const block_q8_K * a_ptr = (const block_q8_K *)vy;
     for(int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q2_Kx8 * b_ptr = (const block_q2_Kx8 *) vx + (x * nb);
+        const block_q2_Kx8 * b_ptr = (const block_q2_Kx8 *) vx + ((int64_t)x * nb);
         for (int j = 0; j < ncols_interleaved; j++) {
             sumf[j] = 0.0;
             sum_minf[j] = 0.0;
@@ -599,7 +599,7 @@ void ggml_gemv_q2_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
             for(int sb = 0; sb < 8; sb++) {
                 const uint8_t *mins = b_ptr[l].scales + sb * 16;
                 for(int j = 0; j < ncols_interleaved; j++){
-                    sum_minf[j] += ((mins[j * 2] >> 4) * a_ptr[l].bsums[sb * 2] + (mins[(j * 2)+ 1] >> 4) * a_ptr[l].bsums[sb * 2 + 1]) * GGML_FP16_TO_FP32(b_ptr[l].dmin[j]) * a_ptr[l].d;
+                    sum_minf[j] += ((mins[(int64_t)j * 2] >> 4) * a_ptr[l].bsums[(int64_t)sb * 2] + (mins[(j * 2)+ 1] >> 4) * a_ptr[l].bsums[sb * 2 + 1]) * GGML_FP16_TO_FP32(b_ptr[l].dmin[j]) * a_ptr[l].d;
                 }
             }
         }
@@ -639,7 +639,7 @@ void ggml_gemv_q5_K_8x8_q8_K_generic(int                        n,
 
     const block_q8_K * a_ptr = (const block_q8_K *) vy;
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q5_Kx8 * b_ptr = (const block_q5_Kx8 *) vx + (x * nb);
+        const block_q5_Kx8 * b_ptr = (const block_q5_Kx8 *) vx + ((int64_t)x * nb);
 
         for (int j = 0; j < ncols_interleaved; j++) {
             sumf[j]     = 0.0;
@@ -647,7 +647,7 @@ void ggml_gemv_q5_K_8x8_q8_K_generic(int                        n,
         }
         for (int l = 0; l < nb; l++) {
             for (int sb = 0; sb < 8; sb++) {
-                memcpy(utmp + sb * 4, b_ptr[l].scales + sb * 12, 12);
+                memcpy(utmp + (int64_t)sb * 4, b_ptr[l].scales + sb * 12, 12);
                 utmp[sb * 4 + 3]      = ((utmp[sb * 4 + 2] >> 4) & kmask2) | (((utmp[sb * 4 + 1] >> 6) & kmask3) << 4);
                 const uint32_t uaux_0 = utmp[sb * 4 + 1] & kmask1;
                 utmp[sb * 4 + 1]      = (utmp[sb * 4 + 2] & kmask2) | (((utmp[sb * 4 + 0] >> 6) & kmask3) << 4);
@@ -655,8 +655,8 @@ void ggml_gemv_q5_K_8x8_q8_K_generic(int                        n,
                 utmp[sb * 4 + 0] &= kmask1;
             }
             for (int k = 0; k < (qk / (2 * blocklen)); k++) {
-                uint8_t * scales_0 = (uint8_t *) utmp + (k / 4) * 32;
-                uint8_t * scales_1 = (uint8_t *) utmp + (k / 4) * 32 + 16;
+                uint8_t * scales_0 = (uint8_t *) utmp + (int64_t)(k / 4) * 32;
+                uint8_t * scales_1 = (uint8_t *) utmp + (int64_t)(k / 4) * 32 + 16;
 
                 const int qh_shift = (k / 4) * 2;
                 for (int j = 0; j < ncols_interleaved; j++) {
@@ -690,9 +690,9 @@ void ggml_gemv_q5_K_8x8_q8_K_generic(int                        n,
                 }
             }
             for (int sb = 0; sb < 8; sb++) {
-                uint8_t * mins = (uint8_t *) utmp + 8 + sb * 16;
+                uint8_t * mins = (uint8_t *) utmp + 8 + (int64_t)sb * 16;
                 for (int j = 0; j < ncols_interleaved; j++) {
-                    sum_minf[j] += mins[j] * (a_ptr[l].bsums[sb * 2] + a_ptr[l].bsums[sb * 2 + 1]) *
+                    sum_minf[j] += mins[j] * (a_ptr[l].bsums[(int64_t)sb * 2] + a_ptr[l].bsums[sb * 2 + 1]) *
                                    GGML_CPU_FP16_TO_FP32(b_ptr[l].dmin[j]) * a_ptr[l].d;
                 }
             }
@@ -720,7 +720,7 @@ void ggml_gemv_q6_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
 
     const block_q8_K * a_ptr = (const block_q8_K *) vy;
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q6_Kx8 * b_ptr = (const block_q6_Kx8 *) vx + (x * nb);
+        const block_q6_Kx8 * b_ptr = (const block_q6_Kx8 *) vx + ((int64_t)x * nb);
 
         for (int j = 0; j < ncols_interleaved; j++) {
             sumf[j] = 0.0f;
@@ -812,7 +812,7 @@ void ggml_gemv_iq4_nl_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs
 
     const block_q8_0 * a_ptr = (const block_q8_0 *) vy;
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_iq4_nlx4 * b_ptr = (const block_iq4_nlx4 *) vx + (x * nb);
+        const block_iq4_nlx4 * b_ptr = (const block_iq4_nlx4 *) vx + ((int64_t)x * nb);
 
         for (int j = 0; j < ncols_interleaved; j++) sumf[j] = 0.0;
         for (int l = 0; l < nb; l++) {
@@ -850,7 +850,7 @@ void ggml_gemv_iq4_nl_8x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs
 
     const block_q8_0 * a_ptr = (const block_q8_0 *) vy;
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_iq4_nlx8 * b_ptr = (const block_iq4_nlx8 *) vx + (x * nb);
+        const block_iq4_nlx8 * b_ptr = (const block_iq4_nlx8 *) vx + ((int64_t)x * nb);
 
         for (int j = 0; j < ncols_interleaved; j++) sumf[j] = 0.0;
         for (int l = 0; l < nb; l++) {
@@ -894,7 +894,7 @@ void ggml_gemv_q8_0_4x4_q8_0_generic(int                        n,
 
     const block_q8_0 * a_ptr = (const block_q8_0 *) vy;
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q8_0x4 * b_ptr = (const block_q8_0x4 *) vx + (x * nb);
+        const block_q8_0x4 * b_ptr = (const block_q8_0x4 *) vx + ((int64_t)x * nb);
 
         for (int j = 0; j < ncols_interleaved; j++) {
             sumf[j] = 0.0;
@@ -941,7 +941,7 @@ void ggml_gemv_q8_0_4x8_q8_0_generic(int                        n,
 
     const block_q8_0 * a_ptr = (const block_q8_0 *) vy;
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q8_0x4 * b_ptr = (const block_q8_0x4 *) vx + (x * nb);
+        const block_q8_0x4 * b_ptr = (const block_q8_0x4 *) vx + ((int64_t)x * nb);
 
         for (int j = 0; j < ncols_interleaved; j++) {
             sumf[j] = 0.0;
@@ -989,9 +989,9 @@ void ggml_gemm_q4_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, 
         int sumi;
 
         for (int y = 0; y < nr / 4; y++) {
-            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb);
+            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + ((int64_t)y * nb);
             for (int x = 0; x < nc / ncols_interleaved; x++) {
-                const block_q4_0x4 * b_ptr = (const block_q4_0x4 *) vx + (x * nb);
+                const block_q4_0x4 * b_ptr = (const block_q4_0x4 *) vx + ((int64_t)x * nb);
                 for (int m = 0; m < 4; m++) {
                     for (int j = 0; j < ncols_interleaved; j++) sumf[m][j] = 0.0;
                 }
@@ -1013,7 +1013,7 @@ void ggml_gemm_q4_0_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, 
                 }
                 for (int m = 0; m < 4; m++) {
                     for (int j = 0; j < ncols_interleaved; j++)
-                        s[(y * 4 + m) * bs + x * ncols_interleaved + j] = sumf[m][j];
+                        s[(y * 4 + m) * bs + (int64_t)x * ncols_interleaved + j] = sumf[m][j];
                 }
             }
         }
@@ -1044,9 +1044,9 @@ void ggml_gemm_q4_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, 
     int sumi;
 
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb);
+        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + ((int64_t)y * nb);
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q4_0x4 * b_ptr = (const block_q4_0x4 *) vx + (x * nb);
+            const block_q4_0x4 * b_ptr = (const block_q4_0x4 *) vx + ((int64_t)x * nb);
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) sumf[m][j] = 0.0;
             }
@@ -1068,7 +1068,7 @@ void ggml_gemm_q4_0_4x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, 
             }
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++)
-                    s[(y * 4 + m) * bs + x * ncols_interleaved + j] = sumf[m][j];
+                    s[(y * 4 + m) * bs + (int64_t)x * ncols_interleaved + j] = sumf[m][j];
             }
         }
     }
@@ -1098,9 +1098,9 @@ void ggml_gemm_q4_0_8x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, 
     int sumi;
 
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb);
+        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + ((int64_t)y * nb);
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q4_0x8 * b_ptr = (const block_q4_0x8 *) vx + (x * nb);
+            const block_q4_0x8 * b_ptr = (const block_q4_0x8 *) vx + ((int64_t)x * nb);
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) sumf[m][j] = 0.0;
             }
@@ -1122,7 +1122,7 @@ void ggml_gemm_q4_0_8x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, 
             }
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++)
-                    s[(y * 4 + m) * bs + x * ncols_interleaved + j] = sumf[m][j];
+                    s[(y * 4 + m) * bs + (int64_t)x * ncols_interleaved + j] = sumf[m][j];
             }
         }
     }
@@ -1153,9 +1153,9 @@ void ggml_gemm_q4_K_8x4_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
     int sumi;
 
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_Kx4 * a_ptr = (const block_q8_Kx4 *) vy + (y * nb);
+        const block_q8_Kx4 * a_ptr = (const block_q8_Kx4 *) vy + ((int64_t)y * nb);
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q4_Kx8 * b_ptr = (const block_q4_Kx8 *) vx + (x * nb);
+            const block_q4_Kx8 * b_ptr = (const block_q4_Kx8 *) vx + ((int64_t)x * nb);
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
                     sumf[m][j] = 0.0;
@@ -1164,7 +1164,7 @@ void ggml_gemm_q4_K_8x4_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
             }
             for (int l = 0; l < nb; l++) {
                 for (int sb = 0; sb < 8; sb++) {
-                    memcpy(utmp + sb * 4, b_ptr[l].scales + sb * 12, 12);
+                    memcpy(utmp + (int64_t)sb * 4, b_ptr[l].scales + sb * 12, 12);
                     utmp[sb * 4 + 3] = ((utmp[sb * 4 + 2] >> 4) & kmask2) | (((utmp[sb * 4 + 1] >> 6) & kmask3) << 4);
                     const uint32_t uaux_0 = utmp[sb * 4 + 1] & kmask1;
                     utmp[sb * 4 + 1] = (utmp[sb * 4 + 2] & kmask2) | (((utmp[sb * 4 + 0] >> 6) & kmask3) << 4);
@@ -1172,8 +1172,8 @@ void ggml_gemm_q4_K_8x4_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
                     utmp[sb * 4 + 0] &= kmask1;
                 }
                 for (int k = 0; k < (qk / (2 * blocklen)); k++) {
-                    uint8_t * scales_0 = (uint8_t *) utmp + (k / 8) * 32;
-                    uint8_t * scales_1 = (uint8_t *) utmp + (k / 8) * 32 + 16;
+                    uint8_t * scales_0 = (uint8_t *) utmp + (int64_t)(k / 8) * 32;
+                    uint8_t * scales_1 = (uint8_t *) utmp + (int64_t)(k / 8) * 32 + 16;
                     for (int m = 0; m < 4; m++) {
                         for (int j = 0; j < ncols_interleaved; j++) {
                             sumi1 = 0;
@@ -1193,7 +1193,7 @@ void ggml_gemm_q4_K_8x4_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
                     }
                 }
                 for (int sb = 0; sb < 8; sb++) {
-                    uint8_t * mins = (uint8_t *) utmp + 8 + sb * 16;
+                    uint8_t * mins = (uint8_t *) utmp + 8 + (int64_t)sb * 16;
                     for(int m = 0; m < 4; m++) {
                         const int16_t * bsums = a_ptr[l].bsums + (sb * 8) + (m * 4) - ((sb % 2) * 6);
                         for(int j = 0; j < ncols_interleaved; j++) {
@@ -1204,7 +1204,7 @@ void ggml_gemm_q4_K_8x4_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
             }
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
-                    s[(y * 4 + m) * bs + x * ncols_interleaved + j] = sumf[m][j] - sum_minf[m][j];
+                    s[(y * 4 + m) * bs + (int64_t)x * ncols_interleaved + j] = sumf[m][j] - sum_minf[m][j];
                 }
             }
         }
@@ -1234,9 +1234,9 @@ void ggml_gemm_q4_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
     int sumi;
 
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_Kx4 * a_ptr = (const block_q8_Kx4 *) vy + (y * nb);
+        const block_q8_Kx4 * a_ptr = (const block_q8_Kx4 *) vy + ((int64_t)y * nb);
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q4_Kx8 * b_ptr = (const block_q4_Kx8 *) vx + (x * nb);
+            const block_q4_Kx8 * b_ptr = (const block_q4_Kx8 *) vx + ((int64_t)x * nb);
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
                     sumf[m][j] = 0.0;
@@ -1245,7 +1245,7 @@ void ggml_gemm_q4_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
             }
             for (int l = 0; l < nb; l++) {
                 for (int sb = 0; sb < 8; sb++) {
-                    memcpy(utmp + sb * 4, b_ptr[l].scales + sb * 12, 12);
+                    memcpy(utmp + (int64_t)sb * 4, b_ptr[l].scales + sb * 12, 12);
                     utmp[sb * 4 + 3] = ((utmp[sb * 4 + 2] >> 4) & kmask2) | (((utmp[sb * 4 + 1] >> 6) & kmask3) << 4);
                     const uint32_t uaux_0 = utmp[sb * 4 + 1] & kmask1;
                     utmp[sb * 4 + 1] = (utmp[sb * 4 + 2] & kmask2) | (((utmp[sb * 4 + 0] >> 6) & kmask3) << 4);
@@ -1253,8 +1253,8 @@ void ggml_gemm_q4_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
                     utmp[sb * 4 + 0] &= kmask1;
                 }
                 for (int k = 0; k < (qk / (2 * blocklen)); k++) {
-                    uint8_t *scales_0 = (uint8_t*) utmp + (k / 4) * 32;
-                    uint8_t *scales_1 = (uint8_t*) utmp + (k / 4) * 32 + 16;
+                    uint8_t *scales_0 = (uint8_t*) utmp + (int64_t)(k / 4) * 32;
+                    uint8_t *scales_1 = (uint8_t*) utmp + (int64_t)(k / 4) * 32 + 16;
                     for (int m = 0; m < 4; m++) {
                         for (int j = 0; j < ncols_interleaved; j++) {
                             sumi1 = 0;
@@ -1274,7 +1274,7 @@ void ggml_gemm_q4_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
                     }
                 }
                 for (int sb = 0; sb < 8; sb++) {
-                    uint8_t *mins = (uint8_t*) utmp + 8 + sb * 16;
+                    uint8_t *mins = (uint8_t*) utmp + 8 + (int64_t)sb * 16;
                     for(int m = 0; m < 4; m++) {
                         const int16_t *bsums = a_ptr[l].bsums + (sb * 8) + (m * 4) - ((sb % 2) * 6);
                         for(int j = 0; j < ncols_interleaved; j++) {
@@ -1285,7 +1285,7 @@ void ggml_gemm_q4_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
             }
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
-                    s[(y * 4 + m) * bs + x * ncols_interleaved + j] = sumf[m][j] - sum_minf[m][j];
+                    s[(y * 4 + m) * bs + (int64_t)x * ncols_interleaved + j] = sumf[m][j] - sum_minf[m][j];
                 }
             }
         }
@@ -1318,9 +1318,9 @@ void ggml_gemm_q2_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
     int sumi;
 
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_Kx4 * a_ptr = (const block_q8_Kx4 *) vy + (y * nb);
+        const block_q8_Kx4 * a_ptr = (const block_q8_Kx4 *) vy + ((int64_t)y * nb);
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q2_Kx8 * b_ptr = (const block_q2_Kx8 *) vx + (x * nb);
+            const block_q2_Kx8 * b_ptr = (const block_q2_Kx8 *) vx + ((int64_t)x * nb);
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
                     sumf[m][j] = 0.0;
@@ -1366,7 +1366,7 @@ void ggml_gemm_q2_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
                     for(int m = 0; m < 4; m++) {
                         const int16_t *bsums = a_ptr[l].bsums + (sb * 8) + (m * 4) - ((sb % 2) *  6);
                         for(int j = 0; j < ncols_interleaved; j++) {
-                            int mins_prod = ((mins[j * 2] >> 4) * bsums[0] + (mins[(j * 2)+ 1] >> 4) * bsums[1]);
+                            int mins_prod = ((mins[(int64_t)j * 2] >> 4) * bsums[0] + (mins[(j * 2)+ 1] >> 4) * bsums[1]);
                             sum_minf[m][j] += (mins_prod) * GGML_FP16_TO_FP32(b_ptr[l].dmin[j]) * a_ptr[l].d[m];
                         }
                     }
@@ -1375,7 +1375,7 @@ void ggml_gemm_q2_K_8x8_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
 
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
-                    s[(y * 4 + m) * bs + x * ncols_interleaved + j] = sumf[m][j] - sum_minf[m][j];
+                    s[(y * 4 + m) * bs + (int64_t)x * ncols_interleaved + j] = sumf[m][j] - sum_minf[m][j];
                 }
             }
         }
@@ -1410,9 +1410,9 @@ void ggml_gemm_q5_K_8x8_q8_K_generic(int                        n,
     int      sumi;
 
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_Kx4 * a_ptr = (const block_q8_Kx4 *) vy + (y * nb);
+        const block_q8_Kx4 * a_ptr = (const block_q8_Kx4 *) vy + ((int64_t)y * nb);
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q5_Kx8 * b_ptr = (const block_q5_Kx8 *) vx + (x * nb);
+            const block_q5_Kx8 * b_ptr = (const block_q5_Kx8 *) vx + ((int64_t)x * nb);
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
                     sumf[m][j]     = 0.0;
@@ -1421,7 +1421,7 @@ void ggml_gemm_q5_K_8x8_q8_K_generic(int                        n,
             }
             for (int l = 0; l < nb; l++) {
                 for (int sb = 0; sb < 8; sb++) {
-                    memcpy(utmp + sb * 4, b_ptr[l].scales + sb * 12, 12);
+                    memcpy(utmp + (int64_t)sb * 4, b_ptr[l].scales + sb * 12, 12);
                     utmp[sb * 4 + 3] = ((utmp[sb * 4 + 2] >> 4) & kmask2) | (((utmp[sb * 4 + 1] >> 6) & kmask3) << 4);
                     const uint32_t uaux_0 = utmp[sb * 4 + 1] & kmask1;
                     utmp[sb * 4 + 1]      = (utmp[sb * 4 + 2] & kmask2) | (((utmp[sb * 4 + 0] >> 6) & kmask3) << 4);
@@ -1429,8 +1429,8 @@ void ggml_gemm_q5_K_8x8_q8_K_generic(int                        n,
                     utmp[sb * 4 + 0] &= kmask1;
                 }
                 for (int k = 0; k < (qk / (2 * blocklen)); k++) {
-                    uint8_t * scales_0 = (uint8_t *) utmp + (k / 4) * 32;
-                    uint8_t * scales_1 = (uint8_t *) utmp + (k / 4) * 32 + 16;
+                    uint8_t * scales_0 = (uint8_t *) utmp + (int64_t)(k / 4) * 32;
+                    uint8_t * scales_1 = (uint8_t *) utmp + (int64_t)(k / 4) * 32 + 16;
 
                     const int qh_shift = (k / 4) * 2;
                     for (int m = 0; m < 4; m++) {
@@ -1466,7 +1466,7 @@ void ggml_gemm_q5_K_8x8_q8_K_generic(int                        n,
                     }
                 }
                 for (int sb = 0; sb < 8; sb++) {
-                    uint8_t * mins = (uint8_t *) utmp + 8 + sb * 16;
+                    uint8_t * mins = (uint8_t *) utmp + 8 + (int64_t)sb * 16;
                     for (int m = 0; m < 4; m++) {
                         const int16_t * bsums = a_ptr[l].bsums + (sb * 8) + (m * 4) - ((sb % 2) * 6);
                         for (int j = 0; j < ncols_interleaved; j++) {
@@ -1478,7 +1478,7 @@ void ggml_gemm_q5_K_8x8_q8_K_generic(int                        n,
             }
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
-                    s[(y * 4 + m) * bs + x * ncols_interleaved + j] = sumf[m][j] - sum_minf[m][j];
+                    s[(y * 4 + m) * bs + (int64_t)x * ncols_interleaved + j] = sumf[m][j] - sum_minf[m][j];
                 }
             }
         }
@@ -1506,9 +1506,9 @@ void ggml_gemm_q6_K_8x8_q8_K_generic(int                        n,
     float sumf[4][8];
 
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_Kx4 * a_ptr = (const block_q8_Kx4 *) vy + (y * nb);
+        const block_q8_Kx4 * a_ptr = (const block_q8_Kx4 *) vy + ((int64_t)y * nb);
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q6_Kx8 * b_ptr = (const block_q6_Kx8 *) vx + (x * nb);
+            const block_q6_Kx8 * b_ptr = (const block_q6_Kx8 *) vx + ((int64_t)x * nb);
 
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
@@ -1583,7 +1583,7 @@ void ggml_gemm_q6_K_8x8_q8_K_generic(int                        n,
 
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
-                    s[(y * 4 + m) * bs + x * ncols_interleaved + j] = sumf[m][j];
+                    s[(y * 4 + m) * bs + (int64_t)x * ncols_interleaved + j] = sumf[m][j];
                 }
             }
         }
@@ -1615,9 +1615,9 @@ void ggml_gemm_iq4_nl_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs
         int sumi;
 
         for (int y = 0; y < nr / 4; y++) {
-            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb);
+            const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + ((int64_t)y * nb);
             for (int x = 0; x < nc / ncols_interleaved; x++) {
-                const block_iq4_nlx4 * b_ptr = (const block_iq4_nlx4 *) vx + (x * nb);
+                const block_iq4_nlx4 * b_ptr = (const block_iq4_nlx4 *) vx + ((int64_t)x * nb);
                 for (int m = 0; m < 4; m++) {
                     for (int j = 0; j < ncols_interleaved; j++) sumf[m][j] = 0.0;
                 }
@@ -1639,7 +1639,7 @@ void ggml_gemm_iq4_nl_4x4_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs
                 }
                 for (int m = 0; m < 4; m++) {
                     for (int j = 0; j < ncols_interleaved; j++)
-                        s[(y * 4 + m) * bs + x * ncols_interleaved + j] = sumf[m][j];
+                        s[(y * 4 + m) * bs + (int64_t)x * ncols_interleaved + j] = sumf[m][j];
                 }
             }
         }
@@ -1660,9 +1660,9 @@ void ggml_gemm_iq4_nl_8x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs
     int sumi;
 
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb);
+        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + ((int64_t)y * nb);
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_iq4_nlx8 * b_ptr = (const block_iq4_nlx8 *) vx + (x * nb);
+            const block_iq4_nlx8 * b_ptr = (const block_iq4_nlx8 *) vx + ((int64_t)x * nb);
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) sumf[m][j] = 0.0;
             }
@@ -1684,7 +1684,7 @@ void ggml_gemm_iq4_nl_8x8_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs
             }
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++)
-                    s[(y * 4 + m) * bs + x * ncols_interleaved + j] = sumf[m][j];
+                    s[(y * 4 + m) * bs + (int64_t)x * ncols_interleaved + j] = sumf[m][j];
             }
         }
     }
@@ -1710,9 +1710,9 @@ void ggml_gemm_q8_0_4x4_q8_0_generic(int                        n,
     int   sumi;
 
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb);
+        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + ((int64_t)y * nb);
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q8_0x4 * b_ptr = (const block_q8_0x4 *) vx + (x * nb);
+            const block_q8_0x4 * b_ptr = (const block_q8_0x4 *) vx + ((int64_t)x * nb);
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
                     sumf[m][j] = 0.0;
@@ -1735,7 +1735,7 @@ void ggml_gemm_q8_0_4x4_q8_0_generic(int                        n,
             }
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
-                    s[(y * 4 + m) * bs + x * ncols_interleaved + j] = sumf[m][j];
+                    s[(y * 4 + m) * bs + (int64_t)x * ncols_interleaved + j] = sumf[m][j];
                 }
             }
         }
@@ -1762,9 +1762,9 @@ void ggml_gemm_q8_0_4x8_q8_0_generic(int                        n,
     int   sumi;
 
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb);
+        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + ((int64_t)y * nb);
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q8_0x4 * b_ptr = (const block_q8_0x4 *) vx + (x * nb);
+            const block_q8_0x4 * b_ptr = (const block_q8_0x4 *) vx + ((int64_t)x * nb);
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
                     sumf[m][j] = 0.0;
@@ -1787,7 +1787,7 @@ void ggml_gemm_q8_0_4x8_q8_0_generic(int                        n,
             }
             for (int m = 0; m < 4; m++) {
                 for (int j = 0; j < ncols_interleaved; j++) {
-                    s[(y * 4 + m) * bs + x * ncols_interleaved + j] = sumf[m][j];
+                    s[(y * 4 + m) * bs + (int64_t)x * ncols_interleaved + j] = sumf[m][j];
                 }
             }
         }
@@ -1919,7 +1919,7 @@ static block_q4_Kx8 make_block_q4_Kx8(block_q4_K * in, unsigned int blck_size_in
             m[j] = in[j].scales[i + 4] & 63;
         }
 
-        out.scales[i * 12]      = (s[0] & 63) + ((s[4] & 48) << 2);
+        out.scales[(int64_t)i * 12]      = (s[0] & 63) + ((s[4] & 48) << 2);
         out.scales[i * 12 + 1]  = (s[1] & 63) + ((s[5] & 48) << 2);
         out.scales[i * 12 + 2]  = (s[2] & 63) + ((s[6] & 48) << 2);
         out.scales[i * 12 + 3]  = (s[3] & 63) + ((s[7] & 48) << 2);
@@ -2052,7 +2052,7 @@ static block_q5_Kx8 make_block_q5_Kx8(block_q5_K * in, unsigned int blck_size_in
             m[j] = in[j].scales[i + 4] & 63;
         }
 
-        out.scales[i * 12]      = (s[0] & 63) + ((s[4] & 48) << 2);
+        out.scales[(int64_t)i * 12]      = (s[0] & 63) + ((s[4] & 48) << 2);
         out.scales[i * 12 + 1]  = (s[1] & 63) + ((s[5] & 48) << 2);
         out.scales[i * 12 + 2]  = (s[2] & 63) + ((s[6] & 48) << 2);
         out.scales[i * 12 + 3]  = (s[3] & 63) + ((s[7] & 48) << 2);
@@ -2146,7 +2146,7 @@ static int repack_q4_0_to_q4_0_4_bl(struct ggml_tensor * t, int interleave_block
     int nrow = ggml_nrows(t);
     int nblocks = t->ne[0] / QK4_0;
 
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q4_0));
+    GGML_ASSERT(data_size == (int64_t)nrow * nblocks * sizeof(block_q4_0));
 
     if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
         return -1;
@@ -2155,7 +2155,7 @@ static int repack_q4_0_to_q4_0_4_bl(struct ggml_tensor * t, int interleave_block
     for (int b = 0; b < nrow; b += nrows_interleaved) {
         for (int64_t x = 0; x < nblocks; x++) {
             for (int i = 0; i < nrows_interleaved; i++) {
-                dst_tmp[i] = src[x + i * nblocks];
+                dst_tmp[i] = src[x + (int64_t)i * nblocks];
             }
             *dst++ = make_block_q4_0x4(dst_tmp, interleave_block);
         }
@@ -2177,7 +2177,7 @@ static int repack_q4_K_to_q4_K_8_bl(struct ggml_tensor * t, int interleave_block
     int nrow = ggml_nrows(t);
     int nblocks = t->ne[0] / QK_K;
 
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q4_K));
+    GGML_ASSERT(data_size == (int64_t)nrow * nblocks * sizeof(block_q4_K));
 
     if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
         return -1;
@@ -2186,7 +2186,7 @@ static int repack_q4_K_to_q4_K_8_bl(struct ggml_tensor * t, int interleave_block
     for (int b = 0; b < nrow; b += nrows_interleaved) {
         for (int64_t x = 0; x < nblocks; x++) {
             for (int i  = 0; i < nrows_interleaved; i++ ) {
-                dst_tmp[i] = src[x + i * nblocks];
+                dst_tmp[i] = src[x + (int64_t)i * nblocks];
             }
             *dst++ = make_block_q4_Kx8(dst_tmp, interleave_block);
         }
@@ -2208,7 +2208,7 @@ static int repack_q2_K_to_q2_K_8_bl(struct ggml_tensor * t, int interleave_block
     int nrow = ggml_nrows(t);
     int nblocks = t->ne[0] / QK_K;
 
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q2_K));
+    GGML_ASSERT(data_size == (int64_t)nrow * nblocks * sizeof(block_q2_K));
 
     if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
         return -1;
@@ -2217,7 +2217,7 @@ static int repack_q2_K_to_q2_K_8_bl(struct ggml_tensor * t, int interleave_block
     for (int b = 0; b < nrow; b += nrows_interleaved) {
         for (int64_t x = 0; x < nblocks; x++) {
             for (int i = 0; i < nrows_interleaved; i++) {
-                dst_tmp[i] = src[x + i * nblocks];
+                dst_tmp[i] = src[x + (int64_t)i * nblocks];
             }
             *dst++ = make_block_q2_Kx8(dst_tmp, interleave_block);
         }
@@ -2242,7 +2242,7 @@ static int repack_q5_K_to_q5_K_8_bl(struct ggml_tensor *       t,
     int                nrow    = ggml_nrows(t);
     int                nblocks = t->ne[0] / QK_K;
 
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q5_K));
+    GGML_ASSERT(data_size == (int64_t)nrow * nblocks * sizeof(block_q5_K));
 
     if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
         return -1;
@@ -2251,7 +2251,7 @@ static int repack_q5_K_to_q5_K_8_bl(struct ggml_tensor *       t,
     for (int b = 0; b < nrow; b += nrows_interleaved) {
         for (int64_t x = 0; x < nblocks; x++) {
             for (int i = 0; i < nrows_interleaved; i++) {
-                dst_tmp[i] = src[x + i * nblocks];
+                dst_tmp[i] = src[x + (int64_t)i * nblocks];
             }
             *dst++ = make_block_q5_Kx8(dst_tmp, interleave_block);
         }
@@ -2271,7 +2271,7 @@ static int repack_q6_K_to_q6_K_8_bl(struct ggml_tensor * t, int interleave_block
     int nrow = ggml_nrows(t);
     int nblocks = t->ne[0] / QK_K;
 
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q6_K));
+    GGML_ASSERT(data_size == (int64_t)nrow * nblocks * sizeof(block_q6_K));
 
     if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
         return -1;
@@ -2280,7 +2280,7 @@ static int repack_q6_K_to_q6_K_8_bl(struct ggml_tensor * t, int interleave_block
     for (int b = 0; b < nrow; b += nrows_interleaved) {
         for (int64_t x = 0; x < nblocks; x++) {
             for (int i = 0; i < nrows_interleaved; i++) {
-                dst_tmp[i] = src[x + i * nblocks];
+                dst_tmp[i] = src[x + (int64_t)i * nblocks];
             }
             *dst++ = make_block_q6_Kx8(dst_tmp, interleave_block);
         }
@@ -2300,7 +2300,7 @@ static int repack_q4_0_to_q4_0_8_bl(struct ggml_tensor * t, int interleave_block
     int nrow = ggml_nrows(t);
     int nblocks = t->ne[0] / QK4_0;
 
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q4_0));
+    GGML_ASSERT(data_size == (int64_t)nrow * nblocks * sizeof(block_q4_0));
 
     if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
         return -1;
@@ -2309,7 +2309,7 @@ static int repack_q4_0_to_q4_0_8_bl(struct ggml_tensor * t, int interleave_block
     for (int b = 0; b < nrow; b += nrows_interleaved) {
         for (int64_t x = 0; x < nblocks; x++) {
             for (int i  = 0; i < nrows_interleaved; i++ ) {
-                dst_tmp[i] = src[x + i * nblocks];
+                dst_tmp[i] = src[x + (int64_t)i * nblocks];
             }
             *dst++ = make_block_q4_0x8(dst_tmp, interleave_block);
         }
@@ -2334,7 +2334,7 @@ static int repack_q8_0_to_q8_0_4_bl(struct ggml_tensor *       t,
     int                nrow    = ggml_nrows(t);
     int                nblocks = t->ne[0] / QK8_0;
 
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q8_0));
+    GGML_ASSERT(data_size == (int64_t)nrow * nblocks * sizeof(block_q8_0));
 
     if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
         return -1;
@@ -2343,7 +2343,7 @@ static int repack_q8_0_to_q8_0_4_bl(struct ggml_tensor *       t,
     for (int b = 0; b < nrow; b += nrows_interleaved) {
         for (int64_t x = 0; x < nblocks; x++) {
             for (int i = 0; i < nrows_interleaved; i++) {
-                dst_tmp[i] = src[x + i * nblocks];
+                dst_tmp[i] = src[x + (int64_t)i * nblocks];
             }
             *dst++ = make_block_q8_0x4(dst_tmp, interleave_block);
         }
@@ -2400,7 +2400,7 @@ static int repack_iq4_nl_to_iq4_nl_4_bl(struct ggml_tensor * t, int interleave_b
     int nrows_interleaved = 4;
     int nblocks = t->ne[0] / QK4_NL;
 
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_iq4_nl));
+    GGML_ASSERT(data_size == (int64_t)nrow * nblocks * sizeof(block_iq4_nl));
 
     if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
         return -1;
@@ -2409,7 +2409,7 @@ static int repack_iq4_nl_to_iq4_nl_4_bl(struct ggml_tensor * t, int interleave_b
     for (int b = 0; b < nrow; b += nrows_interleaved) {
         for (int64_t x = 0; x < nblocks; x++) {
             for (int i = 0; i < nrows_interleaved; i++) {
-                dst_tmp[i] = src[x + i * nblocks];
+                dst_tmp[i] = src[x + (int64_t)i * nblocks];
             }
             *dst++ = make_block_iq4_nlx4(dst_tmp, interleave_block);
         }
@@ -2457,7 +2457,7 @@ static int repack_iq4_nl_to_iq4_nl_8_bl(struct ggml_tensor * t, int interleave_b
     int nrows_interleaved = 8;
     int nblocks = t->ne[0] / QK4_NL;
 
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_iq4_nl));
+    GGML_ASSERT(data_size == (int64_t)nrow * nblocks * sizeof(block_iq4_nl));
 
     if (t->ne[1] % nrows_interleaved != 0) {
         return -1;
@@ -2466,7 +2466,7 @@ static int repack_iq4_nl_to_iq4_nl_8_bl(struct ggml_tensor * t, int interleave_b
     for (int b = 0; b < nrow; b += nrows_interleaved) {
         for (int64_t x = 0; x < nblocks; x++) {
             for (int i = 0; i < nrows_interleaved; i++) {
-                dst_tmp[i] = src[x + i * nblocks];
+                dst_tmp[i] = src[x + (int64_t)i * nblocks];
             }
             *dst++ = make_block_iq4_nlx8(dst_tmp, interleave_block);
         }
@@ -2801,7 +2801,7 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
             char * data_ptr  = (char *) src1->data + i12 * nb12;
             char * wdata_ptr = wdata + i12 * nbw2;
 
-            for (int64_t i11 = ith * 4; i11 < ne11 - ne11 % 4; i11 += nth * 4) {
+            for (int64_t i11 = (int64_t)ith * 4; i11 < ne11 - ne11 % 4; i11 += (int64_t)nth * 4) {
                 ggml_quantize_mat_t<INTER_SIZE, PARAM_TYPE>((float *) (data_ptr + i11 * nb11),
                                                             (void *) (wdata_ptr + i11 * nbw1), 4, ne10);
             }

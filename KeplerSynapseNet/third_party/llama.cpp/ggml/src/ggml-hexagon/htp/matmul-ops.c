@@ -1375,7 +1375,7 @@ static void matmul_id(struct htp_matmul_type * mt, struct htp_ops_context * octx
     const uint32_t n_as  = ne02;        // n_expert
 
     const size_t matrix_row_counts_size = n_as * sizeof(uint32_t);
-    const size_t matrix_row_map_size    = n_as * ids->ne[0] * ids->ne[1] * sizeof(struct mmid_row_mapping);
+    const size_t matrix_row_map_size    = (size_t) n_as * ids->ne[0] * ids->ne[1] * sizeof(struct mmid_row_mapping);
 
     const uint32_t *                matrix_row_counts = (const uint32_t *) src2_spad->data + 0;
     const struct mmid_row_mapping * matrix_rows       = (const void *) src2_spad->data + matrix_row_counts_size;
@@ -2182,8 +2182,8 @@ int op_matmul(struct htp_ops_context * octx) {
                 // Try optimized f16-f16 path first (src1 in VTCM)
                 const size_t f16_src1_row_size  = hex_round_up(ne10 * 2, 128);
                 const size_t f16_src1_spad_size = hex_round_up(f16_src1_row_size * src1_nrows, 256);
-                const size_t f16_src0_spad_size = hex_round_up(MM_SPAD_SRC0_NROWS * src0_row_size_padded, 256) * octx->n_threads;
-                const size_t f16_dst_spad_size  = hex_round_up(MM_SPAD_DST_NROWS  * dst_row_size, 256) * octx->n_threads;
+                const size_t f16_src0_spad_size = (size_t) hex_round_up(MM_SPAD_SRC0_NROWS * src0_row_size_padded, 256) * octx->n_threads;
+                const size_t f16_dst_spad_size  = (size_t) hex_round_up(MM_SPAD_DST_NROWS  * dst_row_size, 256) * octx->n_threads;
 
                 const size_t f16_total_size = f16_src1_spad_size + f16_src0_spad_size + f16_dst_spad_size;
 
@@ -2318,7 +2318,7 @@ int op_matmul_id(struct htp_ops_context * octx) {
     const int n_as  = ne02;        // n_expert
 
     size_t matrix_row_counts_size = n_as * sizeof(uint32_t);
-    size_t matrix_row_map_size    = n_as * ids->ne[0] * ids->ne[1] * sizeof(struct mmid_row_mapping);
+    size_t matrix_row_map_size    = (size_t) n_as * ids->ne[0] * ids->ne[1] * sizeof(struct mmid_row_mapping);
 
     switch (src0->type) {
         case HTP_TYPE_Q4_0:

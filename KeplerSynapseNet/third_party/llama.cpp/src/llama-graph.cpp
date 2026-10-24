@@ -65,7 +65,9 @@ void llm_graph_input_pos::set_input(const llama_ubatch * ubatch) {
 bool llm_graph_input_pos::can_reuse(const llm_graph_params & params) {
     bool res = true;
 
-    res &= pos->ne[0] == params.ubatch.n_tokens*n_pos_per_embd;
+    const uint64_t n_pos = (uint64_t) params.ubatch.n_tokens*n_pos_per_embd;
+    GGML_ASSERT(n_pos <= (uint64_t) INT64_MAX);
+    res &= pos->ne[0] == (int64_t) n_pos;
 
     return res;
 }
@@ -2165,10 +2167,13 @@ ggml_tensor * llm_graph_context::build_rs(
 
     // copy extra states which won't be changed further (between n_seqs and n_rs)
     ggml_tensor * states_extra = ggml_get_rows(ctx0, states, state_copy_extra);
+    const uint64_t n_state_copy = (uint64_t) (uint32_t) state_size*(n_rs - n_seqs);
+    GGML_ASSERT(n_state_copy <= (uint64_t) INT64_MAX);
+    const size_t state_copy_offs = (size_t) (rs_head + n_seqs)*(uint32_t) state_size*ggml_element_size(s);
     ggml_build_forward_expand(gf,
         ggml_cpy(ctx0,
             states_extra,
-            ggml_view_1d(ctx0, s, state_size*(n_rs - n_seqs), (rs_head + n_seqs)*state_size*ggml_element_size(s))));
+            ggml_view_1d(ctx0, s, (int64_t) n_state_copy, state_copy_offs)));
 
     return output_states;
 }
@@ -2253,7 +2258,7 @@ ggml_tensor * llm_graph_context::build_rwkv_token_shift_store(
     return ggml_cpy(
         ctx0,
         ggml_view_1d(ctx0, token_shift, n_embd * n_seqs * token_shift_count, 0),
-        ggml_view_1d(ctx0, mctx_cur->get_r_l(il), hparams.n_embd_r()*n_seqs, hparams.n_embd_r()*kv_head*ggml_element_size(mctx_cur->get_r_l(il)))
+        ggml_view_1d(ctx0, mctx_cur->get_r_l(il), hparams.n_embd_r()*n_seqs, (size_t) hparams.n_embd_r()*kv_head*ggml_element_size(mctx_cur->get_r_l(il)))
     );
 }
 
@@ -2522,7 +2527,7 @@ int32_t llama_relative_position_bucket(llama_pos x, llama_pos y, uint64_t n_buck
         relative_position = -std::min<int32_t>(relative_position, 0);
     }
 
-    int32_t relative_position_if_large = floorf(max_exact + logf(1.0 * relative_position / max_exact) * (n_buckets - max_exact) / log(1.0 * max_distance / max_exact));
+    int32_t relative_position_if_large = floorf(max_exact + (double) logf(1.0 * relative_position / max_exact) * (n_buckets - max_exact) / log(1.0 * max_distance / max_exact));
     relative_position_if_large = std::min<int32_t>(relative_position_if_large, n_buckets - 1);
     relative_bucket += (relative_position < max_exact ? relative_position : relative_position_if_large);
 

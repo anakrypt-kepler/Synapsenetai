@@ -6925,7 +6925,7 @@ void ggml_compute_forward_conv_transpose_2d(
                         ggml_vec_dot_f16(ne03, &v, 0,
                                 wdata_src + i1n, 0,
                                 wdata_kernel + i01*ne00*ne03 + i00*ne03, 0, 1);
-                        dst_data[(i11*stride + i01)*ne0 + i10*stride + i00] += v;
+                        dst_data[(i11*stride + i01)*ne0 + (int64_t)i10*stride + i00] += v;
                     }
                 }
             }
@@ -7880,7 +7880,7 @@ static void ggml_compute_forward_timestep_embedding_f32(
             embed_data[j + half] = sinf(arg);
         }
         if (dim % 2 != 0 && ith == 0) {
-            embed_data[2 * half] = 0.f;
+            embed_data[(int64_t)2 * half] = 0.f;
         }
     }
 }
@@ -8394,16 +8394,16 @@ static void ggml_compute_forward_flash_attn_ext_tiled(
         // mask:   Q_TILE_SZ * KV_TILE_SZ (mask in float)
         // VKQ32:  Q_TILE_SZ * DV (FP32 output accumulator)
         // V32:    KV_TILE_SZ * DV (F32 buffer for V tile - used for f166 conversion)
-        float * base  = (float *) params->wdata + ith*(Q_TILE_SZ*DK + 2*Q_TILE_SZ*KV_TILE_SZ + Q_TILE_SZ*DV + KV_TILE_SZ*DV + CACHE_LINE_SIZE_F32);
+        float * base  = (float *) params->wdata + ith*(Q_TILE_SZ*DK + (int64_t)2*Q_TILE_SZ*KV_TILE_SZ + Q_TILE_SZ*DV + KV_TILE_SZ*DV + CACHE_LINE_SIZE_F32);
 
         void  * Q_q    = base;
         float * KQ     = (float *)((char *)base + Q_TILE_SZ * DK * sizeof(float));
-        float * mask32 = KQ + Q_TILE_SZ * KV_TILE_SZ;
-        float * VKQ32  = mask32 + Q_TILE_SZ * KV_TILE_SZ;
+        float * mask32 = KQ + (int64_t)Q_TILE_SZ * KV_TILE_SZ;
+        float * VKQ32  = mask32 + (int64_t)Q_TILE_SZ * KV_TILE_SZ;
         float * V32    = VKQ32 + Q_TILE_SZ * DV;  // F32 buffer for V tile
 
         memset(VKQ32, 0, Q_TILE_SZ * DV * sizeof(float));
-        memset(mask32, 0, Q_TILE_SZ * KV_TILE_SZ * sizeof(float));
+        memset(mask32, 0, (int64_t)Q_TILE_SZ * KV_TILE_SZ * sizeof(float));
 
         // k indices
         const int ik3 = iq3 / rk3;
@@ -8464,7 +8464,7 @@ static void ggml_compute_forward_flash_attn_ext_tiled(
             bool skip[Q_TILE_SZ] = {};
 
             for (int tq = 0; tq < Q_TILE_SZ; tq++) {
-                float * kq_row = KQ + tq * KV_TILE_SZ;
+                float * kq_row = KQ + (int64_t)tq * KV_TILE_SZ;
 
                 float tile_max;
                 ggml_vec_max_f32(KV_TILE_SZ, &tile_max, kq_row);
@@ -9267,9 +9267,9 @@ static void ggml_compute_forward_ssm_scan_f32(
                         for (int i = 0; i < np; i += ggml_f32_step) {
                             // TODO: maybe unroll more?
                             for (int j = 0; j < 1; j++) {
-                                GGML_F32_VEC t0 = GGML_F32_VEC_LOAD(s0 + i + j*ggml_f32_epr + ii*nc);
-                                GGML_F32_VEC t1 = GGML_F32_VEC_LOAD(B + i + j*ggml_f32_epr + g*nc);
-                                GGML_F32_VEC t2 = GGML_F32_VEC_LOAD(C + i + j*ggml_f32_epr + g*nc);
+                                GGML_F32_VEC t0 = GGML_F32_VEC_LOAD(s0 + i + (int64_t)j*ggml_f32_epr + ii*nc);
+                                GGML_F32_VEC t1 = GGML_F32_VEC_LOAD(B + i + (int64_t)j*ggml_f32_epr + g*nc);
+                                GGML_F32_VEC t2 = GGML_F32_VEC_LOAD(C + i + (int64_t)j*ggml_f32_epr + g*nc);
 
                                 t0 = GGML_F32_VEC_MUL(t0, adA);
                                 t1 = GGML_F32_VEC_MUL(t1, axdt);
@@ -9278,7 +9278,7 @@ static void ggml_compute_forward_ssm_scan_f32(
 
                                 sum = GGML_F32_VEC_FMA(sum, t0, t2);
 
-                                GGML_F32_VEC_STORE(s + i + j*ggml_f32_epr + ii*nc, t0);
+                                GGML_F32_VEC_STORE(s + i + (int64_t)j*ggml_f32_epr + ii*nc, t0);
                             }
                         }
 
@@ -9427,7 +9427,7 @@ static void ggml_compute_forward_win_part_f32(
     const int32_t w    = ((const int32_t *)(dst->op_params))[2];
 
     assert(ne00 == ne0);
-    assert(ne3  == nep0*nep1);
+    assert(ne3  == (int64_t)nep0*nep1);
 
     // TODO: optimize / multi-thread
     for (int py = 0; py < nep1; ++py) {
@@ -9436,14 +9436,14 @@ static void ggml_compute_forward_win_part_f32(
             for (int64_t i2 = 0; i2 < ne2; ++i2) {
                 for (int64_t i1 = 0; i1 < ne1; ++i1) {
                     for (int64_t i0 = 0; i0 < ne0; ++i0) {
-                        const int64_t i02 = py*w + i2;
-                        const int64_t i01 = px*w + i1;
+                        const int64_t i02 = (int64_t)py*w + i2;
+                        const int64_t i01 = (int64_t)px*w + i1;
                         const int64_t i00 = i0;
 
                         const int64_t i = i3*ne2*ne1*ne0 + i2*ne1*ne0    + i1*ne0   + i0;
                         const int64_t j =                  i02*ne01*ne00 + i01*ne00 + i00;
 
-                        if (py*w + i2 >= ne02 || px*w + i1 >= ne01) {
+                        if ((int64_t)py*w + i2 >= ne02 || (int64_t)px*w + i1 >= ne01) {
                             ((float *) dst->data)[i] = 0.0f;
                         } else {
                             ((float *) dst->data)[i] = ((float *) src0->data)[j];

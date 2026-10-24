@@ -518,7 +518,7 @@ inline void from_float<block_q8_K>(const float * x, char * vy, int64_t k) {
 void unpack_A(int8_t * RESTRICT tile, const block_q8_0 * RESTRICT A, int lda, int nr) {
     assert(nr != TILE_M);
     for (int m = 0; m < nr; ++m) {
-        const __m256i v = _mm256_loadu_si256((const __m256i *)(A[m * lda].qs));
+        const __m256i v = _mm256_loadu_si256((const __m256i *)(A[(int64_t)m * lda].qs));
         _mm256_storeu_si256((__m256i *)(tile + m * TILE_K), v);
     }
 }
@@ -526,7 +526,7 @@ void unpack_A(int8_t * RESTRICT tile, const block_q8_0 * RESTRICT A, int lda, in
 void unpack_A(int8_t * RESTRICT tile, const block_q8_1 * RESTRICT A, int lda, int nr) {
     assert(nr != TILE_M);
     for (int m = 0; m < nr; ++m) {
-        const __m256i v = _mm256_loadu_si256((const __m256i *)(A[m * lda].qs));
+        const __m256i v = _mm256_loadu_si256((const __m256i *)(A[(int64_t)m * lda].qs));
         _mm256_storeu_si256((__m256i *)(tile + m * TILE_K), v);
     }
 }
@@ -535,7 +535,7 @@ template <typename TB>
 void unpack_A(int8_t * RESTRICT tile, const block_q8_K * RESTRICT A, int lda, int k, int nr) {
     assert(nr <= TILE_M);
     for (int m = 0; m < nr; ++m) {
-        const __m256i v = _mm256_loadu_si256((const __m256i *)(A[m * lda].qs + k * 32));
+        const __m256i v = _mm256_loadu_si256((const __m256i *)(A[(int64_t)m * lda].qs + k * 32));
         _mm256_storeu_si256((__m256i *)(tile + m * TILE_K), v);
     }
 }
@@ -546,7 +546,7 @@ void unpack_A<block_q6_K>(int8_t * RESTRICT tile, const block_q8_K * RESTRICT A,
     // zero padding k from 16 to 32, so that we don't have to re-config amx
     const __m128i zero = _mm_setzero_si128();
     for (int m = 0; m < nr; ++m) {
-        const __m128i v = _mm_loadu_si128((const __m128i *)(A[m * lda].qs + k * 16));
+        const __m128i v = _mm_loadu_si128((const __m128i *)(A[(int64_t)m * lda].qs + k * 16));
         const __m256i r = _mm256_insertf128_si256(_mm256_castsi128_si256(v), zero, 1);
         _mm256_storeu_si256((__m256i *)(tile + m * TILE_K), r);
     }
@@ -622,26 +622,26 @@ inline void pack_qs(void * RESTRICT packed_B, const TB * RESTRICT B, int KB) {
     int8_t tmp[8 * 64];
     __m256i v[8], v2[8];
     for (int n = 0; n < 8; ++n) {
-        v[n] = bytes_from_nibbles_32(B[n * KB].qs);
+        v[n] = bytes_from_nibbles_32(B[(int64_t)n * KB].qs);
     }
     transpose_8x8_32bit(v, v2);
     for (int n = 0; n < 8; ++n) {
-        _mm256_storeu_si256((__m256i *)(tmp + n * 64), v2[n]);
+        _mm256_storeu_si256((__m256i *)(tmp + (int64_t)n * 64), v2[n]);
     }
     for (int n = 0; n < 8; ++n) {
-        v[n] = bytes_from_nibbles_32(B[(n + 8) * KB].qs);
+        v[n] = bytes_from_nibbles_32(B[(int64_t)(n + 8) * KB].qs);
     }
     transpose_8x8_32bit(v, v2);
     for (int n = 0; n < 8; ++n) {
-        _mm256_storeu_si256((__m256i *)(tmp + n * 64 + 32), v2[n]);
+        _mm256_storeu_si256((__m256i *)(tmp + (int64_t)n * 64 + 32), v2[n]);
     }
 
     // pack again with 128 to fully utilize vector length
     for (int n = 0; n < 8; n += 2) {
-        __m512i r0 = _mm512_loadu_si512((const __m512i *)(tmp + n * 64));
-        __m512i r1 = _mm512_loadu_si512((const __m512i *)(tmp + n * 64 + 64));
+        __m512i r0 = _mm512_loadu_si512((const __m512i *)(tmp + (int64_t)n * 64));
+        __m512i r1 = _mm512_loadu_si512((const __m512i *)(tmp + (int64_t)n * 64 + 64));
         __m512i r1r0 = packNibbles(r0, r1);
-        _mm512_storeu_si512((__m512i *)((char *)packed_B + n * 32), r1r0);
+        _mm512_storeu_si512((__m512i *)((char *)packed_B + (int64_t)n * 32), r1r0);
     }
 }
 
@@ -649,18 +649,18 @@ template <>
 inline void pack_qs<block_q8_0>(void * RESTRICT packed_B, const block_q8_0 * RESTRICT B, int KB) {
     __m256i v[8], v2[8];
     for (int n = 0; n < 8; ++n) {
-        v[n] = _mm256_loadu_si256((const __m256i *)(B[n * KB].qs));
+        v[n] = _mm256_loadu_si256((const __m256i *)(B[(int64_t)n * KB].qs));
     }
     transpose_8x8_32bit(v, v2);
     for (int n = 0; n < 8; ++n) {
-        _mm256_storeu_si256((__m256i *)((char *)packed_B + n * 64), v2[n]);
+        _mm256_storeu_si256((__m256i *)((char *)packed_B + (int64_t)n * 64), v2[n]);
     }
     for (int n = 0; n < 8; ++n) {
-        v[n] = _mm256_loadu_si256((const __m256i *)(B[(n + 8) * KB].qs));
+        v[n] = _mm256_loadu_si256((const __m256i *)(B[(int64_t)(n + 8) * KB].qs));
     }
     transpose_8x8_32bit(v, v2);
     for (int n = 0; n < 8; ++n) {
-        _mm256_storeu_si256((__m256i *)((char *)packed_B + n * 64 + 32), v2[n]);
+        _mm256_storeu_si256((__m256i *)((char *)packed_B + (int64_t)n * 64 + 32), v2[n]);
     }
 }
 
@@ -673,7 +673,7 @@ inline void pack_qs<block_q4_K>(void * RESTRICT packed_B, const block_q4_K * RES
         // pack 2 groups { n, g,  k} to {g, k/4, 4n}
         //          e.g. {16, 2, 32} to {2,   8, 64}
         for (int n = 0; n < TILE_N; ++n) {
-            v[n] = bytes_from_nibbles_64(B[n * KB].qs + k * 32);
+            v[n] = bytes_from_nibbles_64(B[(int64_t)n * KB].qs + k * 32);
         }
 
         transpose_16x16_32bit(v);
@@ -697,7 +697,7 @@ inline void pack_qs<block_q5_K>(void * RESTRICT packed_B, const block_q5_K * RES
         // pack 2 groups { n, g,  k} to {g, k/4, 4n}
         //          e.g. {16, 2, 32} to {2,   8, 64}
         for (int n = 0; n < TILE_N; ++n) {
-            v[n] = bytes_from_nibbles_64(B[n * KB].qs + k * 32, B[n * KB].qh, /* group */2 * k);
+            v[n] = bytes_from_nibbles_64(B[(int64_t)n * KB].qs + k * 32, B[(int64_t)n * KB].qh, /* group */2 * k);
         }
 
         transpose_16x16_32bit(v);
@@ -736,7 +736,7 @@ inline void pack_qs<block_q6_K>(void * RESTRICT packed_B, const block_q6_K * RES
     char * ph = (char *)packed_B + (QK_K / 2) * TILE_N;
     for (int k = 0; k < QK_K / 128; ++k) {
         for (int n = 0; n < TILE_N; ++n) {
-            bytes_from_nibbles_128(v[n], v[n + 16], B[n * KB].ql + k * 64, B[n * KB].qh + k * 32);
+            bytes_from_nibbles_128(v[n], v[n + 16], B[(int64_t)n * KB].ql + k * 64, B[(int64_t)n * KB].qh + k * 32);
         }
 
         // top half: group 0,1 or 4,5; bottom half: group 2,3 or 6,7
@@ -769,8 +769,8 @@ inline void pack_qs<block_iq4_xs>(void * RESTRICT packed_B, const block_iq4_xs *
     char * pb = (char *)packed_B;
     for (int k = 0; k < QK_K / 64; ++k) {
         for (int n = 0; n < TILE_N; ++n) {
-            __m256i r0 = bytes_from_nibbles_32(B[n * KB].qs + k * 32 +  0);
-            __m256i r1 = bytes_from_nibbles_32(B[n * KB].qs + k * 32 + 16);
+            __m256i r0 = bytes_from_nibbles_32(B[(int64_t)n * KB].qs + k * 32 +  0);
+            __m256i r1 = bytes_from_nibbles_32(B[(int64_t)n * KB].qs + k * 32 + 16);
             v[n] = _mm512_inserti32x8(_mm512_castsi256_si512(r0), r1, 1);
         }
 
@@ -789,7 +789,7 @@ void pack_B(void * RESTRICT packed_B, const block_q4_0 * RESTRICT B, int KB) {
     pack_qs(packed_B, B, KB);
     ggml_half * d0 = reinterpret_cast<ggml_half *>((char *)packed_B + TILE_N * TILE_K / 2);
     for (int n = 0; n < TILE_N; ++n) {
-        d0[n] = B[n * KB].d;
+        d0[n] = B[(int64_t)n * KB].d;
     }
 }
 
@@ -798,8 +798,8 @@ void pack_B(void * RESTRICT packed_B, const block_q4_1 * RESTRICT B, int KB) {
     ggml_half * d0 = reinterpret_cast<ggml_half *>((char *)packed_B + TILE_N * TILE_K / 2);
     ggml_half * m0 = d0 + TILE_N;
     for (int n = 0; n < TILE_N; ++n) {
-        d0[n] = B[n * KB].d;
-        m0[n] = B[n * KB].m;
+        d0[n] = B[(int64_t)n * KB].d;
+        m0[n] = B[(int64_t)n * KB].m;
     }
 }
 
@@ -812,7 +812,7 @@ inline void s8s8_compensation(void * RESTRICT packed_B) {
     __m512i vcomp = _mm512_setzero_si512();
     const __m512i off = _mm512_set1_epi8(static_cast<char>(0x80));
     for (int k = 0; k < 8; ++k) {
-        __m512i vb = _mm512_loadu_si512((const __m512i *)((const char *)packed_B + k * 64));
+        __m512i vb = _mm512_loadu_si512((const __m512i *)((const char *)packed_B + (int64_t)k * 64));
         vcomp = _mm512_dpbusd_epi32(vcomp, off, vb);
     }
     _mm512_storeu_si512((__m512i *)((char *)(packed_B) + offset), vcomp);
@@ -822,7 +822,7 @@ void pack_B(void * RESTRICT packed_B, const block_q8_0 * RESTRICT B, int KB) {
     pack_qs(packed_B, B, KB);
     ggml_half * d0 = reinterpret_cast<ggml_half *>((char *)packed_B + TILE_N * TILE_K);
     for (int n = 0; n < TILE_N; ++n) {
-        d0[n] = B[n * KB].d;
+        d0[n] = B[(int64_t)n * KB].d;
     }
     s8s8_compensation(packed_B);
 }
@@ -861,13 +861,13 @@ void pack_B(void * RESTRICT packed_B, const block_q4_K * RESTRICT B, int KB) {
     } s;
 
     for (int n = 0; n < TILE_N; ++n) {
-        unpack_mins_and_scales(B[n * KB].scales, s.u32);
+        unpack_mins_and_scales(B[(int64_t)n * KB].scales, s.u32);
         for (int k = 0; k < 8; ++k) {
             scales[k * TILE_N + n] = s.u8[k];
             mins[(k >> 1) * TILE_N * 2 + n * 2 + (k & 0x1)] = s.u8[k + 8];
         }
-        d[n] = B[n * KB].d;
-        dmin[n] = B[n * KB].dmin;
+        d[n] = B[(int64_t)n * KB].d;
+        dmin[n] = B[(int64_t)n * KB].dmin;
     }
 }
 
@@ -892,13 +892,13 @@ void pack_B(void * RESTRICT packed_B, const block_q5_K * RESTRICT B, int KB) {
     } s;
 
     for (int n = 0; n < TILE_N; ++n) {
-        unpack_mins_and_scales(B[n * KB].scales, s.u32);
+        unpack_mins_and_scales(B[(int64_t)n * KB].scales, s.u32);
         for (int k = 0; k < 8; ++k) {
             scales[k * TILE_N + n] = s.u8[k];
             mins[(k >> 1) * TILE_N * 2 + n * 2 + (k & 0x1)] = s.u8[k + 8];
         }
-        d[n] = B[n * KB].d;
-        dmin[n] = B[n * KB].dmin;
+        d[n] = B[(int64_t)n * KB].d;
+        dmin[n] = B[(int64_t)n * KB].dmin;
     }
 }
 
@@ -913,11 +913,11 @@ void pack_B(void * RESTRICT packed_B, const block_q6_K * RESTRICT B, int KB) {
     uint8_t * scales = reinterpret_cast<uint8_t *>((char *)packed_B + (QK_K / 2) * TILE_N + (QK_K / 4) * TILE_N);
     ggml_half * d = reinterpret_cast<ggml_half *>(scales + 16 * TILE_N);
     for (int n = 0; n < TILE_N; ++n) {
-        const int8_t * ps = B[n * KB].scales;
+        const int8_t * ps = B[(int64_t)n * KB].scales;
         for (int k = 0; k < 16; ++k) {
             scales[k * TILE_N + n] = ps[k];
         }
-        d[n] = B[n * KB].d;
+        d[n] = B[(int64_t)n * KB].d;
     }
 }
 
@@ -933,15 +933,15 @@ void pack_B(void * RESTRICT packed_B, const block_iq4_xs * RESTRICT B, int KB) {
 
     // pack the scales
     for (int n = 0; n < TILE_N; ++n) {
-        uint16_t sh = B[n * KB].scales_h;
+        uint16_t sh = B[(int64_t)n * KB].scales_h;
         for (int k = 0; k < 8; k += 2) {
-            const int16_t ls1 = ((B[n * KB].scales_l[k / 2] & 0xf) | ((sh << 4) & 0x30)) - 32;
-            const int16_t ls2 = ((B[n * KB].scales_l[k / 2] >>  4) | ((sh << 2) & 0x30)) - 32;
+            const int16_t ls1 = ((B[(int64_t)n * KB].scales_l[k / 2] & 0xf) | ((sh << 4) & 0x30)) - 32;
+            const int16_t ls2 = ((B[(int64_t)n * KB].scales_l[k / 2] >>  4) | ((sh << 2) & 0x30)) - 32;
             scales[(k + 0) * TILE_N + n] = ls1;
             scales[(k + 1) * TILE_N + n] = ls2;
             sh >>= 4;
         }
-        d[n] = B[n * KB].d;
+        d[n] = B[(int64_t)n * KB].d;
     }
 }
 
@@ -956,7 +956,7 @@ void unpack_B<block_q4_0>(int8_t * RESTRICT tile, const void * RESTRICT packed_B
   const __m512i off = _mm512_set1_epi8(8);
   const __m512i lowMask = _mm512_set1_epi8(0xF);
   for (int n = 0; n < 8; n += 2) {
-    __m512i bytes = _mm512_loadu_si512((const __m512i *)((const char *)packed_B + n * 32));
+    __m512i bytes = _mm512_loadu_si512((const __m512i *)((const char *)packed_B + (int64_t)n * 32));
     const __m512i r0 = _mm512_sub_epi8(_mm512_and_si512(bytes, lowMask), off);
     const __m512i r1 = _mm512_sub_epi8(_mm512_and_si512(_mm512_srli_epi16(bytes, 4), lowMask), off);
     _mm512_storeu_si512((__m512i *)(tile + n * 64 +  0), r0);
@@ -968,7 +968,7 @@ template <>
 void unpack_B<block_q4_1>(uint8_t * RESTRICT tile, const void * RESTRICT packed_B) {
     const __m512i lowMask = _mm512_set1_epi8(0xF);
     for (int n = 0; n < 8; n += 2) {
-        __m512i bytes = _mm512_loadu_si512((const __m512i *)((const char *)packed_B + n * 32));
+        __m512i bytes = _mm512_loadu_si512((const __m512i *)((const char *)packed_B + (int64_t)n * 32));
         const __m512i r0 = _mm512_and_si512(bytes, lowMask);
         const __m512i r1 = _mm512_and_si512(_mm512_srli_epi16(bytes, 4), lowMask);
         _mm512_storeu_si512((__m512i *)(tile + n * 64 +  0), r0);
@@ -980,10 +980,10 @@ void unpack_B<block_q4_1>(uint8_t * RESTRICT tile, const void * RESTRICT packed_
 template <typename TB>
 void unpack_B(int8_t * RESTRICT tile, const void * RESTRICT packed_B, int k) {
     const int packed_B_group_size = QK_K / 2 * TILE_N / 8;
-    const char * packed_B_group = (const char *)packed_B + k * packed_B_group_size;
+    const char * packed_B_group = (const char *)packed_B + (int64_t)k * packed_B_group_size;
     const __m512i lowMask = _mm512_set1_epi8(0xF);
     for (int n = 0; n < 8; n += 2) {
-        __m512i bytes = _mm512_loadu_si512(packed_B_group + n * 32);
+        __m512i bytes = _mm512_loadu_si512(packed_B_group + (int64_t)n * 32);
         const __m512i r0 = _mm512_and_si512(bytes, lowMask);
         const __m512i r1 = _mm512_and_si512(_mm512_srli_epi16(bytes, 4), lowMask);
         _mm512_storeu_si512((__m512i *)(tile + n * 64 +  0), r0);
@@ -995,11 +995,11 @@ template <>
 void unpack_B<block_q5_K>(int8_t * RESTRICT tile, const void * RESTRICT packed_B, int k) {
     // lower 4bits, stride 256 bytes
     const int packed_l4_group_size = QK_K / 2 * TILE_N / 8;
-    const char * pb = (const char *)packed_B + k * packed_l4_group_size;
+    const char * pb = (const char *)packed_B + (int64_t)k * packed_l4_group_size;
 
     // higher 1bit, stride 64 bytes
     const int packed_h1_group_size = QK_K / 8 * TILE_N / 8;
-    const char * ph = (const char *)packed_B + (QK_K / 2) * TILE_N + k * packed_h1_group_size;
+    const char * ph = (const char *)packed_B + (QK_K / 2) * TILE_N + (int64_t)k * packed_h1_group_size;
     const __m512i hbits = _mm512_loadu_si512(ph);
 
     const __m512i lowMask = _mm512_set1_epi8(0xF);
@@ -1007,7 +1007,7 @@ void unpack_B<block_q5_K>(int8_t * RESTRICT tile, const void * RESTRICT packed_B
     __m512i hmask1 = _mm512_set1_epi8(0x2);
 
     for (int n = 0; n < 8; n += 2) {
-        __m512i bytes = _mm512_loadu_si512(pb + n * 32);
+        __m512i bytes = _mm512_loadu_si512(pb + (int64_t)n * 32);
         __m512i r0 = _mm512_and_si512(bytes, lowMask);
         __m512i r1 = _mm512_and_si512(_mm512_srli_epi16(bytes, 4), lowMask);
         __m512i h0 = _mm512_slli_epi16(_mm512_srli_epi16(_mm512_and_si512(hbits, hmask0), n), 4);
@@ -1026,11 +1026,11 @@ template <>
 void unpack_B<block_q6_K>(int8_t * RESTRICT tile, const void * RESTRICT packed_B, int k) {
     // lower 4bits, stride 128 bytes
     const int packed_l4_group_size = QK_K / 2 * TILE_N / 16;
-    const char * pb = (const char *)packed_B + k * packed_l4_group_size;
+    const char * pb = (const char *)packed_B + (int64_t)k * packed_l4_group_size;
 
     // higher 2bits, stride 64 bytes
     const int packed_h2_group_size = QK_K / 4 * TILE_N / 16;
-    const char * ph = (const char *)packed_B + (QK_K / 2) * TILE_N + k * packed_h2_group_size;
+    const char * ph = (const char *)packed_B + (QK_K / 2) * TILE_N + (int64_t)k * packed_h2_group_size;
     const __m512i hbits = _mm512_loadu_si512(ph);
 
     const __m512i off = _mm512_set1_epi8(32);
@@ -1069,11 +1069,11 @@ void unpack_B<block_iq4_xs>(int8_t * RESTRICT tile, const void * RESTRICT packed
     );
 
     const int packed_B_group_size = QK_K / 2 * TILE_N / 8;
-    const char * pb = (const char *)packed_B + k * packed_B_group_size;
+    const char * pb = (const char *)packed_B + (int64_t)k * packed_B_group_size;
     const __m512i lowMask = _mm512_set1_epi8(0xF);
 
     for (int n = 0; n < 8; n += 2) {
-        __m512i bytes = _mm512_loadu_si512(pb + n * 32);
+        __m512i bytes = _mm512_loadu_si512(pb + (int64_t)n * 32);
         const __m512i r0 = _mm512_shuffle_epi8(values128, _mm512_and_si512(bytes, lowMask));
         const __m512i r1 = _mm512_shuffle_epi8(values128, _mm512_and_si512(_mm512_srli_epi16(bytes, 4), lowMask));
         _mm512_storeu_si512((__m512i *)(tile + n * 64 +  0), r0);
@@ -1091,7 +1091,7 @@ struct acc_C<block_q8_0, block_q4_0, is_acc> {
         const __m512 vd0 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)((const char *)packed_B + offset)));
 
         for (int m = 0; m < nr; ++m) {
-            const __m512 vd1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[m * lda].d));
+            const __m512 vd1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[(int64_t)m * lda].d));
             const __m512 vtile = _mm512_cvtepi32_ps(_mm512_loadu_si512(tile + m * TILE_N));
 
             __m512 vsum;
@@ -1114,8 +1114,8 @@ struct acc_C<block_q8_1, block_q4_1, is_acc> {
         const __m512 vm0 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)((const char *)packed_B + offset + TILE_N * sizeof(ggml_half))));
 
         for (int m = 0; m < nr; ++m) {
-            const __m512 vd1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[m * lda].d));
-            const __m512 vs1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[m * lda].s));
+            const __m512 vd1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[(int64_t)m * lda].d));
+            const __m512 vs1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[(int64_t)m * lda].s));
             const __m512 vtile = _mm512_cvtepi32_ps(_mm512_loadu_si512(tile + m * TILE_N));
 
             __m512 vsum;
@@ -1138,7 +1138,7 @@ struct acc_C<block_q8_0, block_q8_0, is_acc> {
         const __m512 vd0 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)((const char *)packed_B + offset)));
 
         for (int m = 0; m < nr; ++m) {
-            const __m512 vd1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[m * lda].d));
+            const __m512 vd1 = _mm512_set1_ps(GGML_CPU_FP16_TO_FP32(A[(int64_t)m * lda].d));
             const __m512 vtile = _mm512_cvtepi32_ps(_mm512_loadu_si512(tile + m * TILE_N));
 
             __m512 vsum;
@@ -1165,7 +1165,7 @@ struct acc_C<block_q8_K, block_q4_K, is_acc> {
         const __m512 vdmin = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)dmin));
 
         for (int m = 0; m < nr; ++m) {
-            const float d1 = A[m * lda].d;
+            const float d1 = A[(int64_t)m * lda].d;
             const __m512 vd = _mm512_mul_ps(_mm512_set1_ps(d1), vd0);
             const __m512 vdm = _mm512_mul_ps(_mm512_set1_ps(-d1), vdmin);
             const __m512 vtile = _mm512_cvtepi32_ps(_mm512_loadu_si512(tile + m * TILE_N));
@@ -1177,14 +1177,14 @@ struct acc_C<block_q8_K, block_q4_K, is_acc> {
                 vsum = _mm512_set1_ps(0.f);
             }
 
-            const __m256i q8sums = _mm256_loadu_si256((const __m256i *)A[m * lda].bsums);
+            const __m256i q8sums = _mm256_loadu_si256((const __m256i *)A[(int64_t)m * lda].bsums);
             const __m128i q8s = _mm_hadd_epi16(_mm256_extracti128_si256(q8sums, 0), _mm256_extracti128_si256(q8sums, 1));
 
             __m512i acc_m = _mm512_setzero_si512();
             for (int k = 0; k < 4; ++k) {
                 __m512i vmask = _mm512_set1_epi32(k);
                 __m512i va = _mm512_permutexvar_epi32(vmask, _mm512_castsi128_si512(q8s));
-                __m512i vb = _mm512_cvtepi8_epi16(_mm256_loadu_si256((const __m256i *)(mins + k * 32)));
+                __m512i vb = _mm512_cvtepi8_epi16(_mm256_loadu_si256((const __m256i *)(mins + (int64_t)k * 32)));
                 acc_m = _mm512_dpwssds_epi32(acc_m, va, vb);
             }
 
@@ -1207,7 +1207,7 @@ struct acc_C<block_q8_K, block_q5_K, is_acc> {
         const __m512 vdmin = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)dmin));
 
         for (int m = 0; m < nr; ++m) {
-            const float d1 = A[m * lda].d;
+            const float d1 = A[(int64_t)m * lda].d;
             const __m512 vd = _mm512_mul_ps(_mm512_set1_ps(d1), vd0);
             const __m512 vdm = _mm512_mul_ps(_mm512_set1_ps(-d1), vdmin);
             const __m512 vtile = _mm512_cvtepi32_ps(_mm512_loadu_si512(tile + m * TILE_N));
@@ -1219,14 +1219,14 @@ struct acc_C<block_q8_K, block_q5_K, is_acc> {
                 vsum = _mm512_set1_ps(0.f);
             }
 
-            const __m256i q8sums = _mm256_loadu_si256((const __m256i *)A[m * lda].bsums);
+            const __m256i q8sums = _mm256_loadu_si256((const __m256i *)A[(int64_t)m * lda].bsums);
             const __m128i q8s = _mm_hadd_epi16(_mm256_extracti128_si256(q8sums, 0), _mm256_extracti128_si256(q8sums, 1));
 
             __m512i acc_m = _mm512_setzero_si512();
             for (int k = 0; k < 4; ++k) {
                 __m512i vmask = _mm512_set1_epi32(k);
                 __m512i va = _mm512_permutexvar_epi32(vmask, _mm512_castsi128_si512(q8s));
-                __m512i vb = _mm512_cvtepi8_epi16(_mm256_loadu_si256((const __m256i *)(mins + k * 32)));
+                __m512i vb = _mm512_cvtepi8_epi16(_mm256_loadu_si256((const __m256i *)(mins + (int64_t)k * 32)));
                 acc_m = _mm512_dpwssds_epi32(acc_m, va, vb);
             }
 
@@ -1246,7 +1246,7 @@ struct acc_C<block_q8_K, block_q6_K, is_acc> {
         const __m512 vd0 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)d0));
 
         for (int m = 0; m < nr; ++m) {
-            const float d1 = A[m * lda].d;
+            const float d1 = A[(int64_t)m * lda].d;
             const __m512 vd = _mm512_mul_ps(_mm512_set1_ps(d1), vd0);
             const __m512 vtile = _mm512_cvtepi32_ps(_mm512_loadu_si512(tile + m * TILE_N));
 
@@ -1272,7 +1272,7 @@ struct acc_C<block_q8_K, block_iq4_xs, is_acc> {
         const __m512 vd0 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)d0));
 
         for (int m = 0; m < nr; ++m) {
-            const float d1 = A[m * lda].d;
+            const float d1 = A[(int64_t)m * lda].d;
             const __m512 vd = _mm512_mul_ps(_mm512_set1_ps(d1), vd0);
             const __m512 vtile = _mm512_cvtepi32_ps(_mm512_loadu_si512(tile + m * TILE_N));
 
@@ -1445,7 +1445,7 @@ struct tinygemm_kernel_vnni<block_q8_0, block_q4_0, float, BLOCK_M, BLOCK_N, BLO
             __m512i vsum = _mm512_setzero_si512();
             const char * b_ptr = B + PACKED_INDEX(col, i, KB, TILE_SIZE);
             for (int k = 0; k < 8; k += 2) {
-                __m512i bytes = _mm512_loadu_si512((const __m512i *)(b_ptr + k * 32));
+                __m512i bytes = _mm512_loadu_si512((const __m512i *)(b_ptr + (int64_t)k * 32));
                 __m512i vb0 = _mm512_and_si512(bytes, lowMask);
                 vsum = _mm512_dpbusd_epi32(vsum, vb0, va[k + 0]);
                 __m512i vb1 = _mm512_and_si512(_mm512_srli_epi16(bytes, 4), lowMask);
@@ -1506,7 +1506,7 @@ struct tinygemm_kernel_vnni<block_q8_1, block_q4_1, float, 1, BLOCK_N, BLOCK_K> 
             // load b
             const char * b_ptr = B + PACKED_INDEX(col, i, KB, TILE_SIZE);
             for (int k = 0; k < 8; k += 2) {
-                __m512i bytes = _mm512_loadu_si512((const __m512i *)(b_ptr + k * 32));
+                __m512i bytes = _mm512_loadu_si512((const __m512i *)(b_ptr + (int64_t)k * 32));
                 vb[k + 0] = _mm512_and_si512(bytes, lowMask);
                 vb[k + 1] = _mm512_and_si512(_mm512_srli_epi16(bytes, 4), lowMask);
             }
@@ -1578,7 +1578,7 @@ struct tinygemm_kernel_vnni<block_q8_0, block_q8_0, float, BLOCK_M, BLOCK_N, BLO
             // load b
             const char * b_ptr = B + PACKED_INDEX(col, i, KB, TILE_SIZE);
             for (int k = 0; k < 8; ++k) {
-                vb[k] = _mm512_loadu_si512((const __m512i *)(b_ptr + k * 64));
+                vb[k] = _mm512_loadu_si512((const __m512i *)(b_ptr + (int64_t)k * 64));
             }
             const int offset = TILE_N * TILE_K;
             const __m512 vd0 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)(b_ptr + offset)));
@@ -1687,7 +1687,7 @@ struct tinygemm_kernel_vnni<block_q8_K, block_q4_K, float, BLOCK_M, BLOCK_N, BLO
             for (int k = 0; k < 4; ++k) {
                 __m512i vmask = _mm512_set1_epi32(k);
                 __m512i va = _mm512_permutexvar_epi32(vmask, va_bsum);
-                __m512i vb = _mm512_cvtepi8_epi16(_mm256_loadu_si256((const __m256i *)(b_ptr + offset_mins + k * 32)));
+                __m512i vb = _mm512_cvtepi8_epi16(_mm256_loadu_si256((const __m256i *)(b_ptr + offset_mins + (int64_t)k * 32)));
                 acc_m = _mm512_dpwssds_epi32(acc_m, va, vb);
             }
             const __m512 vdmin = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)(b_ptr + offset_dmin)));
@@ -1759,7 +1759,7 @@ struct tinygemm_kernel_vnni<block_q8_K, block_q5_K, float, BLOCK_M, BLOCK_N, BLO
                 __m512i vsum = _mm512_setzero_si512();
                 __m512i hmask0 = _mm512_set1_epi8(0x1);
                 __m512i hmask1 = _mm512_set1_epi8(0x2);
-                __m512i hbits = _mm512_loadu_si512((const __m512i *)(b_qh + k_group * 64));
+                __m512i hbits = _mm512_loadu_si512((const __m512i *)(b_qh + (int64_t)k_group * 64));
                 for (int k = 0; k < 8; k += 2) {
                     __m512i va0 = _mm512_permutexvar_epi32(_mm512_set1_epi32(k + 0), va[k_group]);
                     __m512i va1 = _mm512_permutexvar_epi32(_mm512_set1_epi32(k + 1), va[k_group]);
@@ -1793,7 +1793,7 @@ struct tinygemm_kernel_vnni<block_q8_K, block_q5_K, float, BLOCK_M, BLOCK_N, BLO
             for (int k = 0; k < 4; ++k) {
                 __m512i vmask = _mm512_set1_epi32(k);
                 __m512i va = _mm512_permutexvar_epi32(vmask, va_bsum);
-                __m512i vb = _mm512_cvtepi8_epi16(_mm256_loadu_si256((const __m256i *)(b_ptr + offset_mins + k * 32)));
+                __m512i vb = _mm512_cvtepi8_epi16(_mm256_loadu_si256((const __m256i *)(b_ptr + offset_mins + (int64_t)k * 32)));
                 acc_m = _mm512_dpwssds_epi32(acc_m, va, vb);
             }
             const __m512 vdmin = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)(b_ptr + offset_dmin)));
@@ -2438,7 +2438,7 @@ void ggml_backend_amx_mul_mat(const ggml_compute_params * params, struct ggml_te
 
             const float * A_data = static_cast<const float *>(src1->data);
             for (int m = 0; m < M; ++m) {
-                from_float<vec_dot_type>(A_data + m * K, (char *)wdata + m * row_size_A, K);
+                from_float<vec_dot_type>(A_data + (int64_t)m * K, (char *)wdata + m * row_size_A, K);
             }
         });
     }
@@ -2501,9 +2501,9 @@ void ggml_backend_amx_mul_mat(const ggml_compute_params * params, struct ggml_te
 
                 tinygemm_kernel_amx<vec_dot_type, type, float, blck_size>(
                     mb_size, nb_size, KB,
-                    (const char *)wdata + mb_start * row_size_A,
+                    (const char *)wdata + (int64_t)mb_start * row_size_A,
                     (const char *)src0->data + PACKED_INDEX(nb * 2, 0, KB, TILE_SIZE),
-                    (float *) dst->data + mb_start * N + nb_start, ldc);
+                    (float *) dst->data + (int64_t)mb_start * N + nb_start, ldc);
             }
         });
     });

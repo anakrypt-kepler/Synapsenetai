@@ -85,15 +85,15 @@ inline size_t ggml_webgpu_flash_attn_wg_mem_bytes(uint32_t q_tile,
     const uint32_t max_head_dim = std::max(head_dim_qk, head_dim_v);
     size_t         f16_elems    = 0;
     size_t         f32_elems    = 0;
-    f16_elems += q_tile * head_dim_qk;        // q_shmem
+    f16_elems += (size_t)q_tile * head_dim_qk;        // q_shmem
     if (!kv_direct) {
-        f16_elems += kv_tile * max_head_dim;  // kv_shmem
+        f16_elems += (size_t)kv_tile * max_head_dim;  // kv_shmem
     }
-    f16_elems += q_tile * head_dim_v;         // o_shmem
+    f16_elems += (size_t)q_tile * head_dim_v;         // o_shmem
     if (has_mask) {
-        f16_elems += q_tile * kv_tile;        // mask_shmem
+        f16_elems += (size_t)q_tile * kv_tile;        // mask_shmem
     }
-    f16_elems += q_tile * kv_tile;            // inter_shmem
+    f16_elems += (size_t)q_tile * kv_tile;            // inter_shmem
     f32_elems += q_tile;                      // row_max_shmem
     f32_elems += q_tile;                      // exp_sum_shmem
     return f16_elems * GGML_WEBGPU_F16_SIZE_BYTES + f32_elems * GGML_WEBGPU_F32_SIZE_BYTES;

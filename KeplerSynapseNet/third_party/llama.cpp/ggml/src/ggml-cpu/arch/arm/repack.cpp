@@ -67,9 +67,9 @@ void ggml_quantize_mat_q8_0_4x4(const float * GGML_RESTRICT x, void * GGML_RESTR
             for (int j = 0; j < 8; j++) srcv[row_iter][j] = vld1q_f32(x + row_iter * k + i * 32 + 4 * j);
             for (int j = 0; j < 8; j++) asrcv[j] = vabsq_f32(srcv[row_iter][j]);
 
-            for (int j = 0; j < 4; j++) amaxv[2 * j] = vmaxq_f32(asrcv[2 * j], asrcv[2 * j + 1]);
-            for (int j = 0; j < 2; j++) amaxv[4 * j] = vmaxq_f32(amaxv[4 * j], amaxv[4 * j + 2]);
-            for (int j = 0; j < 1; j++) amaxv[8 * j] = vmaxq_f32(amaxv[8 * j], amaxv[8 * j + 4]);
+            for (int j = 0; j < 4; j++) amaxv[(int64_t)2 * j] = vmaxq_f32(asrcv[(int64_t)2 * j], asrcv[2 * j + 1]);
+            for (int j = 0; j < 2; j++) amaxv[(int64_t)4 * j] = vmaxq_f32(amaxv[(int64_t)4 * j], amaxv[4 * j + 2]);
+            for (int j = 0; j < 1; j++) amaxv[(int64_t)8 * j] = vmaxq_f32(amaxv[(int64_t)8 * j], amaxv[8 * j + 4]);
 
             const float amax = vmaxvq_f32(amaxv[0]);
 
@@ -135,9 +135,9 @@ void ggml_quantize_mat_q8_0_4x8(const float * GGML_RESTRICT x, void * GGML_RESTR
             for (int j = 0; j < 8; j++) srcv[row_iter][j] = vld1q_f32(x + row_iter * k + i * 32 + 4 * j);
             for (int j = 0; j < 8; j++) asrcv[j] = vabsq_f32(srcv[row_iter][j]);
 
-            for (int j = 0; j < 4; j++) amaxv[2 * j] = vmaxq_f32(asrcv[2 * j], asrcv[2 * j + 1]);
-            for (int j = 0; j < 2; j++) amaxv[4 * j] = vmaxq_f32(amaxv[4 * j], amaxv[4 * j + 2]);
-            for (int j = 0; j < 1; j++) amaxv[8 * j] = vmaxq_f32(amaxv[8 * j], amaxv[8 * j + 4]);
+            for (int j = 0; j < 4; j++) amaxv[(int64_t)2 * j] = vmaxq_f32(asrcv[(int64_t)2 * j], asrcv[2 * j + 1]);
+            for (int j = 0; j < 2; j++) amaxv[(int64_t)4 * j] = vmaxq_f32(amaxv[(int64_t)4 * j], amaxv[4 * j + 2]);
+            for (int j = 0; j < 1; j++) amaxv[(int64_t)8 * j] = vmaxq_f32(amaxv[(int64_t)8 * j], amaxv[8 * j + 4]);
 
             const float amax = vmaxvq_f32(amaxv[0]);
 
@@ -148,7 +148,7 @@ void ggml_quantize_mat_q8_0_4x8(const float * GGML_RESTRICT x, void * GGML_RESTR
         }
 
         for (int j = 0; j < 4; j++) {
-            float32x4_t v = vmulq_n_f32(srcv[0][2 * j], id[0]);
+            float32x4_t v = vmulq_n_f32(srcv[0][(int64_t)2 * j], id[0]);
             int32x4_t vi = vcvtnq_s32_f32(v);
             y[i].qs[32 * j + 0] = vgetq_lane_s32(vi, 0);
             y[i].qs[32 * j + 1] = vgetq_lane_s32(vi, 1);
@@ -161,7 +161,7 @@ void ggml_quantize_mat_q8_0_4x8(const float * GGML_RESTRICT x, void * GGML_RESTR
             y[i].qs[32 * j + 6] = vgetq_lane_s32(vi, 2);
             y[i].qs[32 * j + 7] = vgetq_lane_s32(vi, 3);
 
-            v = vmulq_n_f32(srcv[1][2 * j], id[1]);
+            v = vmulq_n_f32(srcv[1][(int64_t)2 * j], id[1]);
             vi = vcvtnq_s32_f32(v);
             y[i].qs[32 * j + 8] = vgetq_lane_s32(vi, 0);
             y[i].qs[32 * j + 9] = vgetq_lane_s32(vi, 1);
@@ -174,7 +174,7 @@ void ggml_quantize_mat_q8_0_4x8(const float * GGML_RESTRICT x, void * GGML_RESTR
             y[i].qs[32 * j + 14] = vgetq_lane_s32(vi, 2);
             y[i].qs[32 * j + 15] = vgetq_lane_s32(vi, 3);
 
-            v = vmulq_n_f32(srcv[2][2 * j], id[2]);
+            v = vmulq_n_f32(srcv[2][(int64_t)2 * j], id[2]);
             vi = vcvtnq_s32_f32(v);
             y[i].qs[32 * j + 16] = vgetq_lane_s32(vi, 0);
             y[i].qs[32 * j + 17] = vgetq_lane_s32(vi, 1);
@@ -187,7 +187,7 @@ void ggml_quantize_mat_q8_0_4x8(const float * GGML_RESTRICT x, void * GGML_RESTR
             y[i].qs[32 * j + 22] = vgetq_lane_s32(vi, 2);
             y[i].qs[32 * j + 23] = vgetq_lane_s32(vi, 3);
 
-            v = vmulq_n_f32(srcv[3][2 * j], id[3]);
+            v = vmulq_n_f32(srcv[3][(int64_t)2 * j], id[3]);
             vi = vcvtnq_s32_f32(v);
             y[i].qs[32 * j + 24] = vgetq_lane_s32(vi, 0);
             y[i].qs[32 * j + 25] = vgetq_lane_s32(vi, 1);
@@ -453,7 +453,7 @@ void ggml_gemv_iq4_nl_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const 
     float * res_ptr = s;
 
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_iq4_nlx4 * b_ptr = (const block_iq4_nlx4 *) vx + (x * nb);
+        const block_iq4_nlx4 * b_ptr = (const block_iq4_nlx4 *) vx + ((int64_t)x * nb);
 
         float32x4_t sumf = vdupq_n_f32(0);
         for (int l = 0; l < nb; l++) {
@@ -491,7 +491,7 @@ void ggml_gemv_iq4_nl_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const 
             sumf = vmlaq_f32(sumf, d, vcvtq_f32_s32(sumi));
         }
 
-        vst1q_f32(res_ptr + x * 4, sumf);
+        vst1q_f32(res_ptr + (int64_t)x * 4, sumf);
     }
     return;
 #endif // #if ! ((defined(_MSC_VER)) && ! defined(__clang__)) && defined(__aarch64__) && defined(__ARM_NEON)
@@ -522,7 +522,7 @@ void ggml_gemv_q4_K_8x4_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
     const block_q8_K * GGML_RESTRICT q8_ptr = (const block_q8_K *) vy;
 
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q4_Kx8 * GGML_RESTRICT q4_ptr = (const block_q4_Kx8 *) vx + (x * nb);
+        const block_q4_Kx8 * GGML_RESTRICT q4_ptr = (const block_q4_Kx8 *) vx + ((int64_t)x * nb);
 
         for (int i = 0; i < col_groups; i++) {
             acc_f32[i] = vdupq_n_f32(0);
@@ -661,7 +661,7 @@ void ggml_gemv_q4_K_8x8_q8_K(int                        n,
     const block_q8_K * GGML_RESTRICT q8_ptr = (const block_q8_K *) vy;
 
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q4_Kx8 * GGML_RESTRICT q4_ptr = (const block_q4_Kx8 *) vx + (x * nb);
+        const block_q4_Kx8 * GGML_RESTRICT q4_ptr = (const block_q4_Kx8 *) vx + ((int64_t)x * nb);
 
         for (int i = 0; i < ncols_interleaved / 4; i++) {
             acc_f32[i] = vdupq_n_f32(0);
@@ -711,15 +711,15 @@ void ggml_gemv_q4_K_8x8_q8_K(int                        n,
                 const int8_t * q8_base = q8_ptr[b].qs + sb * 64;
                 int8x16_t      q8_qs[8];
                 for (int i = 0; i < 8; i++) {
-                    q8_qs[i] = (int8x16_t) vld1q_dup_s64((const int64_t *) (q8_base + i * 8));
+                    q8_qs[i] = (int8x16_t) vld1q_dup_s64((const int64_t *) (q8_base + (int64_t)i * 8));
                 }
 
                 // Q4s columns iterated in pairs (01, 23, 45, 67)
                 for (int cp = 0; cp < col_pairs; cp++) {
-                    uint8x16_t q4_qs_cp_0 = vld1q_u8(q4_base + 16 * cp);
-                    uint8x16_t q4_qs_cp_1 = vld1q_u8(q4_base + 16 * cp + 64);
-                    uint8x16_t q4_qs_cp_2 = vld1q_u8(q4_base + 16 * cp + 128);
-                    uint8x16_t q4_qs_cp_3 = vld1q_u8(q4_base + 16 * cp + 192);
+                    uint8x16_t q4_qs_cp_0 = vld1q_u8(q4_base + (int64_t)16 * cp);
+                    uint8x16_t q4_qs_cp_1 = vld1q_u8(q4_base + (int64_t)16 * cp + 64);
+                    uint8x16_t q4_qs_cp_2 = vld1q_u8(q4_base + (int64_t)16 * cp + 128);
+                    uint8x16_t q4_qs_cp_3 = vld1q_u8(q4_base + (int64_t)16 * cp + 192);
 
                     acc_lo[cp] =
                         ggml_vdotq_s32(acc_lo[cp], vreinterpretq_s8_u8(vandq_u8(q4_qs_cp_0, m4b)), q8_qs[0]);  // 0 .. 7
@@ -817,7 +817,7 @@ void ggml_gemv_q5_K_8x8_q8_K(int                        n,
     const block_q8_K * GGML_RESTRICT q8_ptr = (const block_q8_K *) vy;
 
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q5_Kx8 * GGML_RESTRICT q5_ptr = (const block_q5_Kx8 *) vx + (x * nb);
+        const block_q5_Kx8 * GGML_RESTRICT q5_ptr = (const block_q5_Kx8 *) vx + ((int64_t)x * nb);
 
         for (int i = 0; i < ncols_interleaved / 4; i++) {
             acc_f32[i] = vdupq_n_f32(0);
@@ -847,10 +847,10 @@ void ggml_gemv_q5_K_8x8_q8_K(int                        n,
             const uint8_t * qh_base = q5_ptr[b].qh;
             uint8x16_t      qh[col_pairs][4];
             for (int cp = 0; cp < col_pairs; cp++) {
-                qh[cp][0] = vld1q_u8(qh_base + 16 * cp);
-                qh[cp][1] = vld1q_u8(qh_base + 16 * cp + 64);
-                qh[cp][2] = vld1q_u8(qh_base + 16 * cp + 128);
-                qh[cp][3] = vld1q_u8(qh_base + 16 * cp + 192);
+                qh[cp][0] = vld1q_u8(qh_base + (int64_t)16 * cp);
+                qh[cp][1] = vld1q_u8(qh_base + (int64_t)16 * cp + 64);
+                qh[cp][2] = vld1q_u8(qh_base + (int64_t)16 * cp + 128);
+                qh[cp][3] = vld1q_u8(qh_base + (int64_t)16 * cp + 192);
             }
 
             for (int sb = 0; sb < QK_K / 64; sb++) {
@@ -875,7 +875,7 @@ void ggml_gemv_q5_K_8x8_q8_K(int                        n,
                 const int8_t * q8_base = q8_ptr[b].qs + sb * 64;
                 int8x16_t      q8_qs[8];
                 for (int i = 0; i < 8; i++) {
-                    q8_qs[i] = (int8x16_t) vld1q_dup_s64((const int64_t *) (q8_base + i * 8));
+                    q8_qs[i] = (int8x16_t) vld1q_dup_s64((const int64_t *) (q8_base + (int64_t)i * 8));
                 }
 
                 // Q5s column pair loop unrolled
@@ -1104,7 +1104,7 @@ void ggml_gemv_q6_K_8x8_q8_K(int                        n,
     const block_q8_K * GGML_RESTRICT q8_ptr = (const block_q8_K *) vy;
 
     for (int x = 0; x < nc / ncols_interleaved; x++) {
-        const block_q6_Kx8 * GGML_RESTRICT q6_ptr = (const block_q6_Kx8 *) vx + (x * nb);
+        const block_q6_Kx8 * GGML_RESTRICT q6_ptr = (const block_q6_Kx8 *) vx + ((int64_t)x * nb);
 
         acc_f32[0] = vdupq_n_f32(0);
         acc_f32[1] = vdupq_n_f32(0);
@@ -1126,7 +1126,7 @@ void ggml_gemv_q6_K_8x8_q8_K(int                        n,
             int16_t q6_scales[16 * 8];
             for (int i = 0; i < 16; i++) {
                 int16x8_t scales = vmovl_s8(vld1_s8(q6_ptr[b].scales + i * 8));
-                vst1q_s16(q6_scales + i * 8, scales);
+                vst1q_s16(q6_scales + (int64_t)i * 8, scales);
             }
 
             // Compute bias per column using q8 bsums and preloaded scales to skip the -32 shift
@@ -1136,14 +1136,14 @@ void ggml_gemv_q6_K_8x8_q8_K(int                        n,
             // Load bsums in chunks of 4 to process with vectorized operations
             for (int i = 0; i < 16; i += 4) {
                 int16x4_t bsums_vec   = vld1_s16(q8_ptr[b].bsums + i);
-                int16x4_t scales_lo_0 = vld1_s16(q6_scales + (i + 0) * 8);
-                int16x4_t scales_hi_0 = vld1_s16(q6_scales + (i + 0) * 8 + 4);
-                int16x4_t scales_lo_1 = vld1_s16(q6_scales + (i + 1) * 8);
-                int16x4_t scales_hi_1 = vld1_s16(q6_scales + (i + 1) * 8 + 4);
-                int16x4_t scales_lo_2 = vld1_s16(q6_scales + (i + 2) * 8);
-                int16x4_t scales_hi_2 = vld1_s16(q6_scales + (i + 2) * 8 + 4);
-                int16x4_t scales_lo_3 = vld1_s16(q6_scales + (i + 3) * 8);
-                int16x4_t scales_hi_3 = vld1_s16(q6_scales + (i + 3) * 8 + 4);
+                int16x4_t scales_lo_0 = vld1_s16(q6_scales + (int64_t)(i + 0) * 8);
+                int16x4_t scales_hi_0 = vld1_s16(q6_scales + (int64_t)(i + 0) * 8 + 4);
+                int16x4_t scales_lo_1 = vld1_s16(q6_scales + (int64_t)(i + 1) * 8);
+                int16x4_t scales_hi_1 = vld1_s16(q6_scales + (int64_t)(i + 1) * 8 + 4);
+                int16x4_t scales_lo_2 = vld1_s16(q6_scales + (int64_t)(i + 2) * 8);
+                int16x4_t scales_hi_2 = vld1_s16(q6_scales + (int64_t)(i + 2) * 8 + 4);
+                int16x4_t scales_lo_3 = vld1_s16(q6_scales + (int64_t)(i + 3) * 8);
+                int16x4_t scales_hi_3 = vld1_s16(q6_scales + (int64_t)(i + 3) * 8 + 4);
 
                 bias_lo = vmlal_lane_s16(bias_lo, scales_lo_0, bsums_vec, 0);
                 bias_hi = vmlal_lane_s16(bias_hi, scales_hi_0, bsums_vec, 0);
@@ -1173,8 +1173,8 @@ void ggml_gemv_q6_K_8x8_q8_K(int                        n,
                     int8x16_t q8_l[2];
                     int8x16_t q8_h[2];
                     for (int i = 0; i < 2; i++) {
-                        q8_l[i] = (int8x16_t) vld1q_dup_s64((const int64_t *) (q8_base_l + i * 8));
-                        q8_h[i] = (int8x16_t) vld1q_dup_s64((const int64_t *) (q8_base_h + i * 8));
+                        q8_l[i] = (int8x16_t) vld1q_dup_s64((const int64_t *) (q8_base_l + (int64_t)i * 8));
+                        q8_h[i] = (int8x16_t) vld1q_dup_s64((const int64_t *) (q8_base_h + (int64_t)i * 8));
                     }
 
                     // TODO: Test other qh repack patterns to reduce loads
@@ -2765,9 +2765,9 @@ void ggml_gemm_iq4_nl_4x4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const 
     const int8x16_t kvalues = vld1q_s8(kvalues_iq4nl);
 
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb);
+        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + ((int64_t)y * nb);
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_iq4_nlx4 * b_ptr = (const block_iq4_nlx4 *) vx + (x * nb);
+            const block_iq4_nlx4 * b_ptr = (const block_iq4_nlx4 *) vx + ((int64_t)x * nb);
 
             float32x4_t sumf[4];
             for (int m = 0; m < 4; m++) {
@@ -2841,10 +2841,10 @@ void ggml_gemm_q4_K_8x4_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
     float32x4_t acc_f32[acc_size];
 
     for (int y = 0; y < nr / q8_k_blocklen; y++) {
-        const block_q8_Kx4 * GGML_RESTRICT q8_ptr = (const block_q8_Kx4 *) vy + (y * nb);
+        const block_q8_Kx4 * GGML_RESTRICT q8_ptr = (const block_q8_Kx4 *) vy + ((int64_t)y * nb);
 
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q4_Kx8 * GGML_RESTRICT q4_ptr = (const block_q4_Kx8 *) vx + (x * nb);
+            const block_q4_Kx8 * GGML_RESTRICT q4_ptr = (const block_q4_Kx8 *) vx + ((int64_t)x * nb);
 
             for (int i = 0; i < acc_size; i++) {
                 acc_f32[i] = vdupq_n_f32(0);
@@ -2971,7 +2971,7 @@ void ggml_gemm_q4_K_8x4_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
                         const float32x4_t sumf_0123 =
                             vcvtq_f32_s32(vaddq_s32(vmulq_s32(vmovl_s16(sc_0123_lo), acc_lo[row]),
                                                     vmulq_s32(vmovl_s16(sc_0123_hi), acc_hi[row])));
-                        acc_f32[2 * row] = vfmaq_f32(acc_f32[2 * row], sbd_scale_0123[row], sumf_0123);
+                        acc_f32[(int64_t)2 * row] = vfmaq_f32(acc_f32[(int64_t)2 * row], sbd_scale_0123[row], sumf_0123);
 
                         // row c4567 blk0 and blk1
                         const float32x4_t sumf_4567 =
@@ -2980,12 +2980,12 @@ void ggml_gemm_q4_K_8x4_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
                         acc_f32[2 * row + 1] = vfmaq_f32(acc_f32[2 * row + 1], sbd_scale_4567[row], sumf_4567);
 
                         // Bias
-                        const int16x4_t bsums_vec_lo = vdup_n_s16(bsums_arr[sb][row * 2]);
+                        const int16x4_t bsums_vec_lo = vdup_n_s16(bsums_arr[sb][(int64_t)row * 2]);
                         const int16x4_t bsums_vec_hi = vdup_n_s16(bsums_arr[sb][row * 2 + 1]);
 
                         // row c0123 blk0 and blk1
-                        bias_acc[2 * row] = vmlal_s16(bias_acc[2 * row], bsums_vec_lo, vget_low_s16(q4sb_mins[0]));
-                        bias_acc[2 * row] = vmlal_s16(bias_acc[2 * row], bsums_vec_hi, vget_low_s16(q4sb_mins[1]));
+                        bias_acc[(int64_t)2 * row] = vmlal_s16(bias_acc[(int64_t)2 * row], bsums_vec_lo, vget_low_s16(q4sb_mins[0]));
+                        bias_acc[(int64_t)2 * row] = vmlal_s16(bias_acc[(int64_t)2 * row], bsums_vec_hi, vget_low_s16(q4sb_mins[1]));
 
                         // row c4567 blk0 and blk1
                         bias_acc[2 * row + 1] =
@@ -2996,7 +2996,7 @@ void ggml_gemm_q4_K_8x4_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
                 }  // for sb
 
                 for (int row = 0; row < q8_k_blocklen; row++) {
-                    acc_f32[2 * row] = vmlsq_f32(acc_f32[2 * row], vcvtq_f32_s32(bias_acc[2 * row]), sbd_min_0123[row]);
+                    acc_f32[(int64_t)2 * row] = vmlsq_f32(acc_f32[(int64_t)2 * row], vcvtq_f32_s32(bias_acc[(int64_t)2 * row]), sbd_min_0123[row]);
                     acc_f32[2 * row + 1] =
                         vmlsq_f32(acc_f32[2 * row + 1], vcvtq_f32_s32(bias_acc[2 * row + 1]), sbd_min_4567[row]);
                 }
@@ -3046,10 +3046,10 @@ void ggml_gemm_q4_K_8x8_q8_K(int                        n,
     float32x4_t acc_f32[blocklen];
 
     for (int y = 0; y < nr / q8_k_blocklen; y++) {
-        const block_q8_Kx4 * GGML_RESTRICT q8_ptr = (const block_q8_Kx4 *) vy + (y * nb);
+        const block_q8_Kx4 * GGML_RESTRICT q8_ptr = (const block_q8_Kx4 *) vy + ((int64_t)y * nb);
 
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q4_Kx8 * GGML_RESTRICT q4_ptr = (const block_q4_Kx8 *) vx + (x * nb);
+            const block_q4_Kx8 * GGML_RESTRICT q4_ptr = (const block_q4_Kx8 *) vx + ((int64_t)x * nb);
 
             for (int i = 0; i < blocklen; i++) {
                 acc_f32[i] = vdupq_n_f32(0);
@@ -3135,7 +3135,7 @@ void ggml_gemm_q4_K_8x8_q8_K(int                        n,
                         // for each of the internal 32 qs subblock (blk)
                         for (int rp = 0; rp < 2; rp++) {
                             for (int blk = 0; blk < 2; blk++) {
-                                const int8x16_t * q8  = &q8s[rp][4 * blk];
+                                const int8x16_t * q8  = &q8s[rp][(int64_t)4 * blk];
                                 const int8x16_t * q4  = q4_nibbles[blk];
                                 int32x4_t         acc = sb_acc[2 * rp + blk];
                                 // mul add for each qs in the same subblock
@@ -3165,13 +3165,13 @@ void ggml_gemm_q4_K_8x8_q8_K(int                        n,
                     for (int q8_row = 0; q8_row < 4; q8_row++) {
                         // Each pair of subblocks share the same bsums
                         // Load scalar bsum → broadcast to a vector (vdupq_n_s16(s)).
-                        int16x4_t bsums_vec_lo = vdup_n_s16(bsums_arr[sb][q8_row * 2]);
+                        int16x4_t bsums_vec_lo = vdup_n_s16(bsums_arr[sb][(int64_t)q8_row * 2]);
                         int16x4_t bsums_vec_hi = vdup_n_s16(bsums_arr[sb][q8_row * 2 + 1]);
 
-                        bias_acc[2 * q8_row] =
-                            vmlal_s16(bias_acc[2 * q8_row], bsums_vec_lo, vget_low_s16(q4sb_mins[0]));
-                        bias_acc[2 * q8_row] =
-                            vmlal_s16(bias_acc[2 * q8_row], bsums_vec_hi, vget_low_s16(q4sb_mins[1]));
+                        bias_acc[(int64_t)2 * q8_row] =
+                            vmlal_s16(bias_acc[(int64_t)2 * q8_row], bsums_vec_lo, vget_low_s16(q4sb_mins[0]));
+                        bias_acc[(int64_t)2 * q8_row] =
+                            vmlal_s16(bias_acc[(int64_t)2 * q8_row], bsums_vec_hi, vget_low_s16(q4sb_mins[1]));
                         bias_acc[2 * q8_row + 1] =
                             vmlal_s16(bias_acc[2 * q8_row + 1], bsums_vec_lo, vget_high_s16(q4sb_mins[0]));
                         bias_acc[2 * q8_row + 1] =
@@ -3259,10 +3259,10 @@ void ggml_gemm_q5_K_8x8_q8_K(int                        n,
     float32x4_t acc_f32[blocklen];
 
     for (int y = 0; y < nr / q8_k_blocklen; y++) {
-        const block_q8_Kx4 * GGML_RESTRICT q8_ptr = (const block_q8_Kx4 *) vy + (y * nb);
+        const block_q8_Kx4 * GGML_RESTRICT q8_ptr = (const block_q8_Kx4 *) vy + ((int64_t)y * nb);
 
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q5_Kx8 * GGML_RESTRICT q5_ptr = (const block_q5_Kx8 *) vx + (x * nb);
+            const block_q5_Kx8 * GGML_RESTRICT q5_ptr = (const block_q5_Kx8 *) vx + ((int64_t)x * nb);
 
             for (int i = 0; i < blocklen; i++) {
                 acc_f32[i] = vdupq_n_f32(0);
@@ -3293,10 +3293,10 @@ void ggml_gemm_q5_K_8x8_q8_K(int                        n,
                 const uint8_t * qh_base = q5_ptr[b].qh;
                 uint8x16_t      qh[col_pairs][4];
                 for (int cp = 0; cp < col_pairs; cp++) {
-                    qh[cp][0] = vld1q_u8(qh_base + 16 * cp);
-                    qh[cp][1] = vld1q_u8(qh_base + 16 * cp + 64);
-                    qh[cp][2] = vld1q_u8(qh_base + 16 * cp + 128);
-                    qh[cp][3] = vld1q_u8(qh_base + 16 * cp + 192);
+                    qh[cp][0] = vld1q_u8(qh_base + (int64_t)16 * cp);
+                    qh[cp][1] = vld1q_u8(qh_base + (int64_t)16 * cp + 64);
+                    qh[cp][2] = vld1q_u8(qh_base + (int64_t)16 * cp + 128);
+                    qh[cp][3] = vld1q_u8(qh_base + (int64_t)16 * cp + 192);
                 }
 
                 for (int sb = 0; sb < QK_K / 64; sb++) {
@@ -3412,13 +3412,13 @@ void ggml_gemm_q5_K_8x8_q8_K(int                        n,
                     for (int q8_row = 0; q8_row < 4; q8_row++) {
                         // Each pair of subblocks share the same bsums
                         // Load scalar bsum → broadcast to a vector (vdupq_n_s16(s)).
-                        int16x4_t bsums_vec_lo = vdup_n_s16(bsums_arr[sb][q8_row * 2]);
+                        int16x4_t bsums_vec_lo = vdup_n_s16(bsums_arr[sb][(int64_t)q8_row * 2]);
                         int16x4_t bsums_vec_hi = vdup_n_s16(bsums_arr[sb][q8_row * 2 + 1]);
 
-                        bias_acc[2 * q8_row] =
-                            vmlal_s16(bias_acc[2 * q8_row], bsums_vec_lo, vget_low_s16(q5sb_mins[0]));
-                        bias_acc[2 * q8_row] =
-                            vmlal_s16(bias_acc[2 * q8_row], bsums_vec_hi, vget_low_s16(q5sb_mins[1]));
+                        bias_acc[(int64_t)2 * q8_row] =
+                            vmlal_s16(bias_acc[(int64_t)2 * q8_row], bsums_vec_lo, vget_low_s16(q5sb_mins[0]));
+                        bias_acc[(int64_t)2 * q8_row] =
+                            vmlal_s16(bias_acc[(int64_t)2 * q8_row], bsums_vec_hi, vget_low_s16(q5sb_mins[1]));
                         bias_acc[2 * q8_row + 1] =
                             vmlal_s16(bias_acc[2 * q8_row + 1], bsums_vec_lo, vget_high_s16(q5sb_mins[0]));
                         bias_acc[2 * q8_row + 1] =
@@ -3506,10 +3506,10 @@ void ggml_gemm_q6_K_8x8_q8_K(int                        n,
     float32x4_t acc_f32[blocklen];
 
     for (int y = 0; y < nr / q8_k_blocklen; y++) {
-        const block_q8_Kx4 * GGML_RESTRICT q8_ptr = (const block_q8_Kx4 *) vy + (y * nb);
+        const block_q8_Kx4 * GGML_RESTRICT q8_ptr = (const block_q8_Kx4 *) vy + ((int64_t)y * nb);
 
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q6_Kx8 * GGML_RESTRICT q6_ptr = (const block_q6_Kx8 *) vx + (x * nb);
+            const block_q6_Kx8 * GGML_RESTRICT q6_ptr = (const block_q6_Kx8 *) vx + ((int64_t)x * nb);
 
             for (int i = 0; i < blocklen; i++) {
                 acc_f32[i] = vdupq_n_f32(0);
@@ -3526,7 +3526,7 @@ void ggml_gemm_q6_K_8x8_q8_K(int                        n,
                 int16_t q6_scales[16 * 8];
                 for (int i = 0; i < 16; ++i) {
                     int16x8_t s16 = vmovl_s8(vld1_s8(q6_ptr[b].scales + i * 8));
-                    vst1q_s16(q6_scales + i * 8, s16);
+                    vst1q_s16(q6_scales + (int64_t)i * 8, s16);
                 }
 
                 // Process two 128-value halves per superblock
@@ -3565,16 +3565,16 @@ void ggml_gemm_q6_K_8x8_q8_K(int                        n,
                         uint8x16_t q6_ql_0[4];
                         uint8x16_t q6_ql_1[4];
                         for (int k = 0; k < 4; k++) {
-                            q6_ql_0[k] = vld1q_u8(ql_base + ql_off_base + 16 * k);
-                            q6_ql_1[k] = vld1q_u8(ql_base + ql_off_base + 64 + 16 * k);
+                            q6_ql_0[k] = vld1q_u8(ql_base + ql_off_base + (int64_t)16 * k);
+                            q6_ql_1[k] = vld1q_u8(ql_base + ql_off_base + 64 + (int64_t)16 * k);
                         }
 
                         const int  qh_off_base = (sb * QK_K / 2) & 255;  // wrap after 256 bytes
                         uint8x16_t q6_qh_0[4];
                         uint8x16_t q6_qh_1[4];
                         for (int k = 0; k < 4; k++) {
-                            q6_qh_0[k] = vld1q_u8(qh_base + qh_off_base + 16 * k);
-                            q6_qh_1[k] = vld1q_u8(qh_base + qh_off_base + 64 + 16 * k);
+                            q6_qh_0[k] = vld1q_u8(qh_base + qh_off_base + (int64_t)16 * k);
+                            q6_qh_1[k] = vld1q_u8(qh_base + qh_off_base + 64 + (int64_t)16 * k);
                         }
 
                         // Adjust for the proper high bits (Sb 2 and 3)
@@ -3713,9 +3713,9 @@ void ggml_gemm_q8_0_4x4_q8_0(int                        n,
 
 #if defined(__aarch64__) && defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
     for (int y = 0; y < nr / 4; y++) {
-        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + (y * nb);
+        const block_q8_0x4 * a_ptr = (const block_q8_0x4 *) vy + ((int64_t)y * nb);
         for (int x = 0; x < nc / ncols_interleaved; x++) {
-            const block_q8_0x4 * b_ptr = (const block_q8_0x4 *) vx + (x * nb);
+            const block_q8_0x4 * b_ptr = (const block_q8_0x4 *) vx + ((int64_t)x * nb);
 
             float32x4_t sumf[4];
             for (int m = 0; m < 4; m++) {
@@ -3783,10 +3783,10 @@ void ggml_gemm_q8_0_4x8_q8_0(int                        n,
     const block_q8_0x4 * b_ptr_base = (const block_q8_0x4 *) vx;
 
     for (int y = 0; y < nr; y += 4) {
-        const block_q8_0x4 * a_ptr_base = (const block_q8_0x4 *) vy + (y / 4) * nb;
+        const block_q8_0x4 * a_ptr_base = (const block_q8_0x4 *) vy + (int64_t)(y / 4) * nb;
 
         for (int x = 0; x < nc; x += ncols_interleaved) {
-            const block_q8_0x4 * b_ptr = b_ptr_base + (x / 4) * nb;
+            const block_q8_0x4 * b_ptr = b_ptr_base + (int64_t)(x / 4) * nb;
             const block_q8_0x4 * a_ptr = a_ptr_base;
 
             float32x4_t acc_f32[4];

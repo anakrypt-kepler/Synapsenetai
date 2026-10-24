@@ -330,7 +330,7 @@ static void flash_attn_ext_f16_thread(struct htp_ops_context * octx, int ith, in
     const uint32_t DK = nek0;
     const uint32_t DV = nev0;
 
-    const size_t size_q_row = DK * ((q->type == HTP_TYPE_F32) ? 4 : 2);
+    const size_t size_q_row = (size_t) DK * ((q->type == HTP_TYPE_F32) ? 4 : 2);
     const size_t size_q_row_padded = hex_round_up(size_q_row, 128);
 
     const size_t size_k_row = DK * sizeof(__fp16);

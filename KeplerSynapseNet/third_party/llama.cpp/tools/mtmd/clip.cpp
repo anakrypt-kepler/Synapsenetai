@@ -129,7 +129,7 @@ static void clip_image_save_to_bmp(const clip_image_u8& img, const std::string& 
 static void clip_image_convert_f32_to_u8(const clip_image_f32& src, clip_image_u8& dst) {
     dst.nx = src.nx;
     dst.ny = src.ny;
-    dst.buf.resize(3 * src.nx * src.ny);
+    dst.buf.resize(3 * static_cast<int64_t>(src.nx) * src.ny);
     for (size_t i = 0; i < src.buf.size(); ++i) {
         dst.buf[i] = static_cast<uint8_t>(std::min(std::max(int(src.buf[i] * 255.0f), 0), 255));
     }
@@ -276,7 +276,7 @@ ggml_tensor * clip_graph::resize_position_embeddings(uint32_t interpolation_mode
     pos_embd = ggml_permute(ctx0, pos_embd, 2, 0, 1, 3);                         // -> (n_per_side, n_per_side, n_embd)
     pos_embd = ggml_interpolate(ctx0, pos_embd, width, height, n_embd, 1, mode); // -> (width, height, n_embd)
     pos_embd = ggml_permute(ctx0, pos_embd, 1, 2, 0, 3);                         // -> (n_embd, width, height)
-    pos_embd = ggml_cont_2d(ctx0, pos_embd, n_embd, width * height);             // -> (n_embd, width * height)
+    pos_embd = ggml_cont_2d(ctx0, pos_embd, n_embd, static_cast<int64_t>(width) * height);             // -> (n_embd, width * height)
 
     return pos_embd;
 }
@@ -718,7 +718,7 @@ ggml_tensor * clip_graph::build_stack(ggml_tensor * cur, int32_t stack_factor, i
     }
 
     int64_t total_elements = ggml_nelements(cur);
-    int64_t stride = n_embed * stack_factor;
+    int64_t stride = static_cast<int64_t>(n_embed) * stack_factor;
 
     // Calculate padded length
     int64_t padded_len = GGML_PAD(total_elements, stride);
@@ -756,11 +756,11 @@ ggml_tensor * clip_graph::build_patch_merge_permute(ggml_tensor * cur, int scale
     }
 
     // unshuffle h
-    cur = ggml_reshape_3d(ctx0, cur, n_embd * scale_factor, width / scale_factor, height);
+    cur = ggml_reshape_3d(ctx0, cur, static_cast<int64_t>(n_embd) * scale_factor, width / scale_factor, height);
     cur = ggml_permute(ctx0, cur, 0, 2, 1, 3);
 
     // unshuffle w
-    cur = ggml_cont_3d(ctx0, cur, n_embd * scale_factor * scale_factor, height / scale_factor, width / scale_factor);
+    cur = ggml_cont_3d(ctx0, cur, static_cast<int64_t>(n_embd) * scale_factor * scale_factor, height / scale_factor, width / scale_factor);
     cur = ggml_permute(ctx0, cur, 0, 2, 1, 3);
 
     cur = ggml_cont_2d(ctx0, cur, cur->ne[0], cur->ne[1] * cur->ne[2]);
@@ -2214,7 +2214,7 @@ clip_image_f32 * clip_image_f32_get_img(const struct clip_image_f32_batch * batc
 void clip_build_img_from_pixels(const unsigned char * rgb_pixels, int nx, int ny, clip_image_u8 * img) {
     img->nx = nx;
     img->ny = ny;
-    img->buf.resize(3 * nx * ny);
+    img->buf.resize(3 * static_cast<int64_t>(nx) * ny);
     memcpy(img->buf.data(), rgb_pixels, img->buf.size());
 }
 
@@ -2249,7 +2249,7 @@ struct img_tool {
             std::array<uint8_t, 3> pad_color = {0, 0, 0}) {
         dst.nx = target_resolution.width;
         dst.ny = target_resolution.height;
-        dst.buf.resize(3 * dst.nx * dst.ny);
+        dst.buf.resize(3 * static_cast<int64_t>(dst.nx) * dst.ny);
 
         if (dst.nx == src.nx && dst.ny == src.ny) {
             // no resize needed, simple copy
@@ -2302,7 +2302,7 @@ struct img_tool {
     static void crop(const clip_image_u8 & image, clip_image_u8 & dst, int x, int y, int w, int h) {
         dst.nx = w;
         dst.ny = h;
-        dst.buf.resize(3 * w * h);
+        dst.buf.resize(3 * static_cast<int64_t>(w) * h);
 
         for (int i = 0; i < h; ++i) {
             for (int j = 0; j < w; ++j) {
@@ -2399,7 +2399,7 @@ private:
     static void resize_bilinear(const clip_image_u8 & src, clip_image_u8 & dst, int target_width, int target_height) {
         dst.nx = target_width;
         dst.ny = target_height;
-        dst.buf.resize(3 * target_width * target_height);
+        dst.buf.resize(3 * static_cast<int64_t>(target_width) * target_height);
 
         float x_ratio = static_cast<float>(src.nx - 1) / target_width;
         float y_ratio = static_cast<float>(src.ny - 1) / target_height;
@@ -2438,7 +2438,7 @@ private:
 
         dst.nx = target_width;
         dst.ny = target_height;
-        dst.buf.resize(3 * target_width * target_height);
+        dst.buf.resize(3 * static_cast<int64_t>(target_width) * target_height);
 
         float Cc;
         float C[5] = {};
@@ -3059,7 +3059,7 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
                     const int longer_side = std::max(img->nx, img->ny);
                     temp->nx = longer_side;
                     temp->ny = longer_side;
-                    temp->buf.resize(3 * longer_side * longer_side);
+                    temp->buf.resize(3 * static_cast<int64_t>(longer_side) * longer_side);
 
                     // background color in RGB from LLaVA (this is the mean rgb color * 255)
                     const std::array<uint8_t, 3> pad_color = {122, 116, 104};
@@ -3115,7 +3115,7 @@ size_t clip_embd_nbytes_by_img(const struct clip_ctx * ctx, int img_w, int img_h
     clip_image_f32 img;
     img.nx = img_w;
     img.ny = img_h;
-    return clip_n_output_tokens(ctx, &img) * clip_n_mmproj_embd(ctx) * sizeof(float);
+    return static_cast<int64_t>(clip_n_output_tokens(ctx, &img)) * clip_n_mmproj_embd(ctx) * sizeof(float);
 }
 
 int32_t clip_get_image_size(const struct clip_ctx * ctx) {
@@ -3386,7 +3386,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
     if (!imgs.is_audio) {
         size_t nelem = 0;
         for (const auto & img : imgs.entries) {
-            nelem += img->nx * img->ny * 3;
+            nelem += static_cast<int64_t>(img->nx) * img->ny * 3;
         }
         std::vector<float> inp_raw(nelem);
 
@@ -3407,7 +3407,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
             const int n = nx * ny;
 
             for (int b = 0; b < batch_size; b++) {
-                float * batch_entry = inp_raw.data() + b * (3*n);
+                float * batch_entry = inp_raw.data() + static_cast<int64_t>(b) * (3*static_cast<int64_t>(n));
                 for (int y = 0; y < ny; y++) {
                     for (int x = 0; x < nx; x++) {
                         size_t base_src = 3*(y * nx + x); // idx of the first channel
@@ -3427,8 +3427,8 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         const auto & mel_inp = imgs.entries[0];
         const int n_step = mel_inp->nx;
         const int n_mel  = mel_inp->ny;
-        std::vector<float> inp_raw(n_step * n_mel);
-        std::memcpy(inp_raw.data(), mel_inp->buf.data(), n_step * n_mel * sizeof(float));
+        std::vector<float> inp_raw(static_cast<int64_t>(n_step) * n_mel);
+        std::memcpy(inp_raw.data(), mel_inp->buf.data(), static_cast<int64_t>(n_step) * n_mel * sizeof(float));
         set_input_f32("inp_raw", inp_raw);
     }
 
@@ -3439,7 +3439,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
                 // inspired from siglip:
                 //    -> https://huggingface.co/HuggingFaceM4/siglip-so400m-14-980-flash-attn2-navit
                 //    -> https://huggingface.co/HuggingFaceM4/siglip-so400m-14-980-flash-attn2-navit/blob/d66538faeba44480d0bfaa42145eef26f9423199/modeling_siglip.py#L316
-                std::vector<int32_t> positions(pos_h * pos_w);
+                std::vector<int32_t> positions(static_cast<int64_t>(pos_h) * pos_w);
                 int bucket_coords_h[1024];
                 int bucket_coords_w[1024];
                 for (int i = 0; i < pos_h; i++){
@@ -3515,8 +3515,8 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
                 const int ipw = image_size_width  / patch_size;
                 const int iph = image_size_height / patch_size;
 
-                std::vector<int> idx    (ph * pw);
-                std::vector<int> inv_idx(ph * pw);
+                std::vector<int> idx    (static_cast<int64_t>(ph) * pw);
+                std::vector<int> inv_idx(static_cast<int64_t>(ph) * pw);
 
                 if (use_window_attn) {
                     const int attn_window_size = hparams.attn_window_size > 0 ? hparams.attn_window_size : 112;
@@ -3674,7 +3674,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
 
                 auto d_model = 512;
                 auto seq_len = n_frames * 2 - 1;
-                std::vector<float> pos_emb(d_model*seq_len);
+                std::vector<float> pos_emb(static_cast<int64_t>(d_model)*seq_len);
                 std::vector<double> inv_freq(d_model / 2);
                 for (size_t i = 0; i < inv_freq.size(); ++i) {
                     inv_freq[i] = std::exp(-(std::log(10000.0) / (float)d_model) * (2.0f * (float)(i)));
@@ -3750,7 +3750,11 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
             return ctx->model.mm_1_b->ne[0];
         case PROJECTOR_TYPE_QWEN3VL:
             // main path + deepstack paths
-            return ctx->model.mm_1_b->ne[0] * (1 + ctx->model.n_deepstack_layers);
+            {
+                const int64_t n_embd64 = ctx->model.mm_1_b->ne[0] * (1 + ctx->model.n_deepstack_layers);
+                GGML_ASSERT(n_embd64 >= std::numeric_limits<int>::min() && n_embd64 <= std::numeric_limits<int>::max());
+                return static_cast<int>(n_embd64);
+            }
         case PROJECTOR_TYPE_GEMMA3:
         case PROJECTOR_TYPE_GEMMA3NV:
             return ctx->model.mm_input_proj_w->ne[0];
@@ -3822,8 +3826,8 @@ bool clip_has_whisper_encoder(const struct clip_ctx * ctx) {
 
 bool clip_encode_float_image (struct clip_ctx * ctx, int n_threads, float * img, int h, int w, float * vec) {
     clip_image_f32 clip_img;
-    clip_img.buf.resize(h * w * 3);
-    for (int i = 0; i < h*w*3; i++)
+    clip_img.buf.resize(static_cast<int64_t>(h) * w * 3);
+    for (int64_t i = 0; i < static_cast<int64_t>(h) * w * 3; i++)
     {
         clip_img.buf[i] = img[i];
     }
@@ -3845,8 +3849,8 @@ void clip_image_f32_batch_add_mel(struct clip_image_f32_batch * batch, int n_mel
     clip_image_f32 * audio = new clip_image_f32;
     audio->nx = n_frames;
     audio->ny = n_mel;
-    audio->buf.resize(n_frames * n_mel);
-    std::memcpy(audio->buf.data(), mel, n_frames * n_mel * sizeof(float));
+    audio->buf.resize(static_cast<int64_t>(n_frames) * n_mel);
+    std::memcpy(audio->buf.data(), mel, static_cast<int64_t>(n_frames) * n_mel * sizeof(float));
 
     batch->entries.push_back(clip_image_f32_ptr(audio));
     batch->is_audio = true;
@@ -3863,8 +3867,8 @@ void clip_debug_encode(clip_ctx * ctx, int h, int w, float fill_value) {
     clip_image_f32 img;
     img.nx = w;
     img.ny = h;
-    img.buf.resize(h * w * 3);
-    for (int i = 0; i < h * w * 3; i++) {
+    img.buf.resize(static_cast<int64_t>(h) * w * 3);
+    for (int64_t i = 0; i < static_cast<int64_t>(h) * w * 3; i++) {
         img.buf[i] = static_cast<float>(fill_value);
     }
     clip_image_encode(ctx, 1, &img, nullptr);

@@ -551,7 +551,7 @@ struct mtmd_tokenizer {
             img_u8->nx = bitmap->nx;
             img_u8->ny = bitmap->ny;
             img_u8->buf.resize(bitmap->data.size());
-            std::memcpy(img_u8->buf.data(), bitmap->data.data(), img_u8->nx * img_u8->ny * 3);
+            std::memcpy(img_u8->buf.data(), bitmap->data.data(), (size_t)((int64_t)img_u8->nx * img_u8->ny) * 3);
 
             // preprocess image
             clip_image_f32_batch batch_f32;
@@ -811,7 +811,7 @@ int32_t mtmd_encode_chunk(mtmd_context * ctx, const mtmd_input_chunk * chunk) {
             return 1;
         }
         int n_mmproj_embd = ctx->n_embd_text;
-        ctx->image_embd_v.resize(chunk->tokens_audio->n_tokens * n_mmproj_embd);
+        ctx->image_embd_v.resize((size_t)chunk->tokens_audio->n_tokens * (uint32_t)n_mmproj_embd);
         bool ok = clip_image_batch_encode(
             ctx->ctx_a,
             ctx->n_threads,
@@ -831,7 +831,7 @@ int32_t mtmd_encode(mtmd_context * ctx, const mtmd_image_tokens * image_tokens) 
         return 1;
     }
     int n_mmproj_embd = clip_n_mmproj_embd(ctx_clip);
-    ctx->image_embd_v.resize(image_tokens->n_tokens() * n_mmproj_embd);
+    ctx->image_embd_v.resize((size_t)image_tokens->n_tokens() * (uint32_t)n_mmproj_embd);
     bool ok = false;
 
     if (clip_is_llava(ctx_clip)

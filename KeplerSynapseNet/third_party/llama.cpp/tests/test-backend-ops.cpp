@@ -154,8 +154,8 @@ static void init_tensor_kq_mask(ggml_tensor * tensor, float min = -1.0f, float m
 
     GGML_TENSOR_LOCALS( int32_t, ne, tensor, ne);
 
-    std::vector<float>       data_f32(ne0*ne1*ne2*ne3);
-    std::vector<ggml_fp16_t> data_f16(ne0*ne1*ne2*ne3);
+    std::vector<float>       data_f32(static_cast<size_t>(ne0)*ne1*ne2*ne3);
+    std::vector<ggml_fp16_t> data_f16(static_cast<size_t>(ne0)*ne1*ne2*ne3);
 
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -187,7 +187,8 @@ static void init_tensor_kq_mask(ggml_tensor * tensor, float min = -1.0f, float m
         }
     }
 
-    ggml_fp32_to_fp16_row(data_f32.data(), data_f16.data(), ne0*ne1*ne2*ne3);
+    const int64_t n_f16 = (ne0 == 0 || ne1 == 0 || ne2 == 0 || ne3 == 0) ? int64_t{0} : static_cast<int64_t>(ne0)*ne1*ne2*ne3;
+    ggml_fp32_to_fp16_row(data_f32.data(), data_f16.data(), n_f16);
 
     ggml_backend_tensor_set(tensor, data_f16.data(), 0, data_f16.size()*sizeof(ggml_fp16_t));
 }
@@ -200,7 +201,7 @@ static void init_tensor_tril(ggml_tensor * tensor, float min = -1.0f, float max 
     GGML_TENSOR_LOCALS(int32_t, ne, tensor, ne);
     GGML_TENSOR_LOCALS(size_t, nb, tensor, nb);
 
-    std::vector<float> data_f32(ne0*ne1*ne2*ne3);
+    std::vector<float> data_f32(static_cast<size_t>(ne0)*ne1*ne2*ne3);
 
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -279,8 +280,10 @@ static double nmse(const float * a, const float * b, size_t n) {
         float a_i = a[i];
         float b_i = b[i];
 
-        mse_a_b += (a_i - b_i) * (a_i - b_i);
-        mse_a_0 += a_i * a_i;
+        const float diff_sq = (a_i - b_i)*(a_i - b_i);
+        mse_a_b += (std::isfinite(diff_sq) ? static_cast<double>(diff_sq) : static_cast<double>(a_i - b_i)*(a_i - b_i));
+        const float a_sq = a_i*a_i;
+        mse_a_0 += (std::isfinite(a_sq) ? static_cast<double>(a_sq) : static_cast<double>(a_i)*a_i);
     }
 
     return mse_a_b / mse_a_0;
@@ -2200,11 +2203,11 @@ struct test_get_rows : public test_case {
             if (t->type == GGML_TYPE_I32) {
                 if (ggml_is_view_op(t->op)) { continue; }
                 // rows
-                std::vector<int> data(r*be1*be2);
+                std::vector<int> data(static_cast<size_t>(r)*be1*be2);
                 for (int i = 0; i < r*be1*be2; i++) {
                     data[i] = rand() % m;
                 }
-                ggml_backend_tensor_set(t, data.data(), 0, r * be1 * be2 * sizeof(int));
+                ggml_backend_tensor_set(t, data.data(), 0, static_cast<size_t>(r) * be1 * be2 * sizeof(int));
             } else {
                 init_tensor_uniform(t);
             }
@@ -2253,11 +2256,11 @@ struct test_get_rows_back : public test_case {
             if (t->type == GGML_TYPE_I32) {
                 if (ggml_is_view_op(t->op)) { continue; }
                 // rows
-                std::vector<int> data(r*b);
+                std::vector<int> data(static_cast<size_t>(r)*b);
                 for (int i = 0; i < r*b; i++) {
                     data[i] = rand() % m;
                 }
-                ggml_backend_tensor_set(t, data.data(), 0, r * b * sizeof(int));
+                ggml_backend_tensor_set(t, data.data(), 0, static_cast<size_t>(r) * b * sizeof(int));
             } else {
                 init_tensor_uniform(t);
             }
@@ -2364,7 +2367,9 @@ struct test_set_rows : public test_case {
                 err_estimate /= 8.0f;
             }
             err_estimate *= err_estimate;
-            err_estimate /= 0.25f*float(ne[0] * r * ne[2]*nr23[0] * ne[3]*nr23[1]);
+            const float count_f = float(ne[0] * r * ne[2]*nr23[0] * ne[3]*nr23[1]);
+            const float denom_f = 0.25f*count_f;
+            err_estimate /= (std::isfinite(denom_f) ? static_cast<double>(denom_f) : 0.25*static_cast<double>(count_f));
             return err_estimate;
         }
         return 1e-7;
@@ -2856,7 +2861,9 @@ struct test_cpy : public test_case {
                 err_estimate /= 8.0f;
             }
             err_estimate *= err_estimate;
-            err_estimate /= (150.0f*150.0f*0.25f)*float(ne[0] * ne[1] * ne[2] * ne[3]);
+            const float count_f = float(ne[0] * ne[1] * ne[2] * ne[3]);
+            const float denom_f = (150.0f*150.0f*0.25f)*count_f;
+            err_estimate /= (std::isfinite(denom_f) ? static_cast<double>(denom_f) : (150.0*150.0*0.25)*static_cast<double>(count_f));
             return err_estimate;
         }
         return 1e-6;
@@ -6612,7 +6619,11 @@ public:
         // compute the transposed [n_tokens, n_embd] V matrix
         struct ggml_tensor * v_cur_t = ggml_transpose(ctx, ggml_reshape_2d(ctx, v_cur, hp.n_embd_gqa(), hp.n_tokens));
 
-        struct ggml_tensor * k_cache_view = ggml_view_1d(ctx, k_l, hp.n_tokens*hp.n_embd_gqa(),
+        const uint64_t n_tokens_embd = static_cast<uint64_t>(static_cast<uint32_t>(hp.n_tokens)) * hp.n_embd_gqa();
+        if (n_tokens_embd > static_cast<uint64_t>(INT64_MAX)) {
+            GGML_ABORT("n_tokens * n_embd_gqa overflows int64_t");
+        }
+        struct ggml_tensor * k_cache_view = ggml_view_1d(ctx, k_l, static_cast<int64_t>(n_tokens_embd),
                 (ggml_row_size(k_l->type, hp.n_embd_gqa()))*hp.kv_head);
 
         struct ggml_tensor * v_cache_view = ggml_view_2d(ctx, v_l, hp.n_tokens, hp.n_embd_gqa(),
@@ -6656,7 +6667,11 @@ public:
 
         struct ggml_tensor * kqv_merged = ggml_permute(ctx, kqv, 0, 2, 1, 3);
 
-        struct ggml_tensor * cur = ggml_cont_2d(ctx, kqv_merged, hp.n_embd_head*hp.n_head, hp.n_tokens);
+        const uint64_t n_embd_heads = static_cast<uint64_t>(hp.n_embd_head) * hp.n_head;
+        if (n_embd_heads > static_cast<uint64_t>(INT64_MAX)) {
+            GGML_ABORT("n_embd_head * n_head overflows int64_t");
+        }
+        struct ggml_tensor * cur = ggml_cont_2d(ctx, kqv_merged, static_cast<int64_t>(n_embd_heads), hp.n_tokens);
 
         struct ggml_tensor * wo = ggml_new_tensor_2d(ctx, GGML_TYPE_Q4_0, hp.n_embd, hp.n_embd);
         cur = ggml_mul_mat(ctx, wo, cur);

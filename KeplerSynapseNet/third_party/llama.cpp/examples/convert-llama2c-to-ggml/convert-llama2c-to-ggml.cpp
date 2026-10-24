@@ -107,16 +107,16 @@ struct TransformerWeights {
 static void alloc_weights(TransformerWeights * w, const Config * p, bool shared_weights) {
     const int n_multiqueries = p->n_kv_heads <= 0 || p->n_kv_heads >= p->n_heads ? 1 : p->n_heads / p->n_kv_heads;
     try {
-        w->token_embedding_table.resize(p->vocab_size * p->dim);
+        w->token_embedding_table.resize(static_cast<size_t>(p->vocab_size) * p->dim);
         LOG_INF("%s: Allocating [%d] x [%d] = [%d] float space for w->token_embedding_table\n",__func__,p->vocab_size , p->dim, p->vocab_size * p->dim);
 
-        w->rms_att_weight.resize(p->n_layers * p->dim);
+        w->rms_att_weight.resize(static_cast<size_t>(p->n_layers) * p->dim);
         LOG_INF("%s: Allocating [%d] x [%d] = [%d] float space for w->rms_att_weight\n",__func__,p->n_layers, p->dim, p->n_layers * p->dim);
 
-        w->rms_ffn_weight.resize(p->n_layers * p->dim);
+        w->rms_ffn_weight.resize(static_cast<size_t>(p->n_layers) * p->dim);
         LOG_INF("%s: Allocating [%d] x [%d] = [%d] float space for w->rms_ffn_weight\n",__func__,p->n_layers , p->dim, p->n_layers * p->dim);
 
-        w->wq.resize(p->n_layers * p->dim * p->dim);
+        w->wq.resize(static_cast<size_t>(p->n_layers) * p->dim * p->dim);
         LOG_INF("%s: Allocating [%d] x [%d] x [%d] = [%d] float space for w->wq\n",__func__,p->n_layers, p->dim, p->dim, p->n_layers * p->dim * p->dim);
 
         w->wk.resize(p->n_layers * p->dim * p->dim / n_multiqueries);
@@ -125,16 +125,16 @@ static void alloc_weights(TransformerWeights * w, const Config * p, bool shared_
         w->wv.resize(p->n_layers * p->dim * p->dim / n_multiqueries);
         LOG_INF("%s: Allocating [%d] x [%d] x [%d] = [%d] float space for w->wv\n",__func__, p->n_layers, p->dim, p->dim / n_multiqueries, p->n_layers * p->dim * p->dim / n_multiqueries);
 
-        w->wo.resize(p->n_layers * p->dim * p->dim);
+        w->wo.resize(static_cast<size_t>(p->n_layers) * p->dim * p->dim);
         LOG_INF("%s: Allocating [%d] x [%d] x [%d] = [%d] float space for w->wo\n",__func__,p->n_layers, p->dim, p->dim, p->n_layers * p->dim * p->dim);
 
-        w->w1.resize(p->n_layers * p->hidden_dim * p->dim);
+        w->w1.resize(static_cast<size_t>(p->n_layers) * p->hidden_dim * p->dim);
         LOG_INF("%s: Allocating [%d] x [%d] x [%d] = [%d] float space for w->w1\n",__func__,p->n_layers, p->hidden_dim, p->dim, p->n_layers * p->hidden_dim * p->dim);
 
-        w->w2.resize(p->n_layers * p->hidden_dim * p->dim);
+        w->w2.resize(static_cast<size_t>(p->n_layers) * p->hidden_dim * p->dim);
         LOG_INF("%s: Allocating [%d] x [%d] x [%d] = [%d] float space for w->w2\n",__func__,p->n_layers, p->dim, p->hidden_dim, p->n_layers * p->hidden_dim * p->dim);
 
-        w->w3.resize(p->n_layers * p->hidden_dim * p->dim);
+        w->w3.resize(static_cast<size_t>(p->n_layers) * p->hidden_dim * p->dim);
         LOG_INF("%s: Allocating [%d] x [%d] x [%d] = [%d] float space for w->w3\n",__func__,p->n_layers, p->hidden_dim, p->dim, p->n_layers * p->hidden_dim * p->dim);
 
         w->rms_final_weight.resize(p->dim);
@@ -143,7 +143,7 @@ static void alloc_weights(TransformerWeights * w, const Config * p, bool shared_
         if (shared_weights) {
             w->wcls = {};
         } else {
-            w->wcls.resize(p->vocab_size * p->dim);
+            w->wcls.resize(static_cast<size_t>(p->vocab_size) * p->dim);
             LOG_INF("%s: Allocating [%d] x [%d] = [%d] float space for w->wcls\n",__func__,p->vocab_size , p->dim, p->vocab_size * p->dim);
         }
     }
@@ -167,7 +167,16 @@ static int checkpoint_init_weights(TransformerWeights * w, const Config * p, FIL
 
     // Skip freq_cis_real & freq_cis_imag
     int head_size = p->dim / p->n_heads;
-    fseek(f, p->seq_len * head_size * sizeof(float), SEEK_CUR);
+    const int64_t freq_cis_elems = static_cast<int64_t>(p->seq_len) * head_size;
+    if (freq_cis_elems > INT64_MAX / static_cast<int64_t>(sizeof(float)) ||
+        freq_cis_elems < INT64_MIN / static_cast<int64_t>(sizeof(float))) {
+        return 1;
+    }
+    const int64_t freq_cis_bytes = freq_cis_elems * static_cast<int64_t>(sizeof(float));
+    if (freq_cis_bytes > LONG_MAX || freq_cis_bytes < LONG_MIN) {
+        return 1;
+    }
+    fseek(f, static_cast<long>(freq_cis_bytes), SEEK_CUR);
 
     if (!shared_weights && fread(w->wcls.data(), sizeof(float), w->wcls.size(), f) != w->wcls.size()) return 1;
 
@@ -653,19 +662,19 @@ static void save_as_llama_model(
     for (uint32_t i = 0; i < model->hparams.n_layer; ++i){
         auto & layer = model->layers[i];
         // 1d
-        convert_weights_ak_to_gg(layer.attention_norm, &w->rms_att_weight[i*row_length]);
-        convert_weights_ak_to_gg(layer.ffn_norm      , &w->rms_ffn_weight[i*row_length]);
+        convert_weights_ak_to_gg(layer.attention_norm, &w->rms_att_weight[static_cast<size_t>(i)*static_cast<uint32_t>(row_length)]);
+        convert_weights_ak_to_gg(layer.ffn_norm      , &w->rms_ffn_weight[static_cast<size_t>(i)*static_cast<uint32_t>(row_length)]);
 
         // from 3d matrix layer x dim x dim to 2d matrix dim x dim
-        convert_weights_ak_to_gg(layer.wq            , &w->wq[i*row_length*row_length]);
-        convert_weights_ak_to_gg(layer.wo            , &w->wo[i*row_length*row_length]);
+        convert_weights_ak_to_gg(layer.wq            , &w->wq[static_cast<size_t>(i)*static_cast<uint32_t>(row_length)*static_cast<uint32_t>(row_length)]);
+        convert_weights_ak_to_gg(layer.wo            , &w->wo[static_cast<size_t>(i)*static_cast<uint32_t>(row_length)*static_cast<uint32_t>(row_length)]);
         // from 3d matrix layer x dim x dim to 2d matrix dim x dim / n_multiqueries
         convert_weights_ak_to_gg(layer.wk            , &w->wk[i*row_length*row_length/n_multiqueries]);
         convert_weights_ak_to_gg(layer.wv            , &w->wv[i*row_length*row_length/n_multiqueries]);
 
-        convert_weights_ak_to_gg(layer.w1            , &w->w1[i*row_length*n_ff]);
-        convert_weights_ak_to_gg(layer.w2            , &w->w2[i*n_ff*row_length]);
-        convert_weights_ak_to_gg(layer.w3            , &w->w3[i*row_length*n_ff]);
+        convert_weights_ak_to_gg(layer.w1            , &w->w1[static_cast<size_t>(i)*static_cast<uint32_t>(row_length)*static_cast<uint32_t>(n_ff)]);
+        convert_weights_ak_to_gg(layer.w2            , &w->w2[static_cast<size_t>(i)*static_cast<uint32_t>(n_ff)*static_cast<uint32_t>(row_length)]);
+        convert_weights_ak_to_gg(layer.w3            , &w->w3[static_cast<size_t>(i)*static_cast<uint32_t>(row_length)*static_cast<uint32_t>(n_ff)]);
     }
 
     struct gguf_context * ctx = gguf_init_empty();

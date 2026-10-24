@@ -116,7 +116,7 @@ inline static void ggml_vec_dot_f16_unroll(const int n, const int xs, float * GG
     ggml_fp16_t * GGML_RESTRICT x[GGML_VEC_DOT_UNROLL];
 
     for (int i = 0; i < GGML_VEC_DOT_UNROLL; ++i) {
-        x[i] = (ggml_fp16_t *) ((char *) xv + i*xs);
+        x[i] = (ggml_fp16_t *) ((char *) xv + (int64_t)i*xs);
     }
 
 #if defined(GGML_SIMD)
@@ -600,8 +600,8 @@ inline static void ggml_vec_mad_f32_unroll(const int n, const int xs, const int 
     const float * GGML_RESTRICT v[GGML_VEC_MAD_UNROLL];
 
     for (int i = 0; i < GGML_VEC_MAD_UNROLL; ++i) {
-        x[i] = (const float *) ((const char *) xv + i*xs);
-        v[i] = (const float *) ((const char *) vv + i*vs);
+        x[i] = (const float *) ((const char *) xv + (int64_t)i*xs);
+        v[i] = (const float *) ((const char *) vv + (int64_t)i*vs);
     }
 
 #if defined(GGML_SIMD)
@@ -730,9 +730,9 @@ inline static void ggml_vec_scale_f32(const int n, float * y, const float   v) {
             ay1 = GGML_F32_VEC_MUL(ay1, vx);
             GGML_F32_VEC_STORE(y + i, ay1);
 
-            ay2 = GGML_F32_VEC_LOAD(y + i + 1*ggml_f32_epr);
+            ay2 = GGML_F32_VEC_LOAD(y + i + (int64_t)1*ggml_f32_epr);
             ay2 = GGML_F32_VEC_MUL(ay2, vx);
-            GGML_F32_VEC_STORE(y + i + 1*ggml_f32_epr, ay2);
+            GGML_F32_VEC_STORE(y + i + (int64_t)1*ggml_f32_epr, ay2);
         }
         // leftovers
         // maximum number of leftover elements will be less that ggml_f32_epr. Apply predicated svmad on available elements only
@@ -789,13 +789,13 @@ inline static void ggml_vec_scale_f16(const int n, ggml_fp16_t * y, const float 
     svfloat16_t ay1, ay2;
 
     for (int i = 0; i < np; i += ggml_f16_step) {
-        ay1 = GGML_F16x_VEC_LOAD(y + i + 0*ggml_f16_epr, 0);
+        ay1 = GGML_F16x_VEC_LOAD(y + i + (int64_t)0*ggml_f16_epr, 0);
         ay1 = GGML_F16x_VEC_MUL(ay1, vx);
-        GGML_F16x_VEC_STORE(y + i + 0*ggml_f16_epr, ay1, 0);
+        GGML_F16x_VEC_STORE(y + i + (int64_t)0*ggml_f16_epr, ay1, 0);
 
-        ay2 = GGML_F16x_VEC_LOAD(y + i + 1*ggml_f16_epr, 1);
+        ay2 = GGML_F16x_VEC_LOAD(y + i + (int64_t)1*ggml_f16_epr, 1);
         ay2 = GGML_F16x_VEC_MUL(ay2, vx);
-        GGML_F16x_VEC_STORE(y + i + 1*ggml_f16_epr, ay2, 1);
+        GGML_F16x_VEC_STORE(y + i + (int64_t)1*ggml_f16_epr, ay2, 1);
     }
     // leftovers
     // maximum number of leftover elements will be less that ggmlF_16x_epr. Apply predicated svmad on available elements only

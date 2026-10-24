@@ -1854,7 +1854,7 @@ class tinyBLAS_HP16_PPC {
             s[2] = vec_perm(t[1], t[3], swiz3);
             s[3] = vec_perm(t[1], t[3], swiz4);
             for (int i = 0; i < 4; ++i)
-                vec_xst(s[i], 0, (vec_t*)(vecOffset + i * 16));
+                vec_xst(s[i], 0, (vec_t*)(vecOffset + (int64_t)i * 16));
         } else if (numVec == 8) {
             for (int i = 0; i < 4; i += 2) {
                 t[i+0] = vec_perm(c[i+0], c[i+1], swiz1);
@@ -1873,7 +1873,7 @@ class tinyBLAS_HP16_PPC {
             s[6] = vec_perm(t[5], t[7], swiz3);
             s[7] = vec_perm(t[5], t[7], swiz4);
             for (int i = 0; i < 8; ++i)
-                vec_xst(s[i], 0, (vec_t*)(vecOffset + i * 16));
+                vec_xst(s[i], 0, (vec_t*)(vecOffset + (int64_t)i * 16));
         }
     }
 

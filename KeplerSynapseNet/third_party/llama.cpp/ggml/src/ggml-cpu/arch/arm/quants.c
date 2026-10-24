@@ -54,9 +54,9 @@ void quantize_row_q8_0(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, i
         for (int j = 0; j < 8; j++) srcv[j]  = vld1q_f32(x + i*32 + 4*j);
         for (int j = 0; j < 8; j++) asrcv[j] = vabsq_f32(srcv[j]);
 
-        for (int j = 0; j < 4; j++) amaxv[2*j] = vmaxq_f32(asrcv[2*j], asrcv[2*j+1]);
-        for (int j = 0; j < 2; j++) amaxv[4*j] = vmaxq_f32(amaxv[4*j], amaxv[4*j+2]);
-        for (int j = 0; j < 1; j++) amaxv[8*j] = vmaxq_f32(amaxv[8*j], amaxv[8*j+4]);
+        for (int j = 0; j < 4; j++) amaxv[(int64_t)2*j] = vmaxq_f32(asrcv[(int64_t)2*j], asrcv[2*j+1]);
+        for (int j = 0; j < 2; j++) amaxv[(int64_t)4*j] = vmaxq_f32(amaxv[(int64_t)4*j], amaxv[4*j+2]);
+        for (int j = 0; j < 1; j++) amaxv[(int64_t)8*j] = vmaxq_f32(amaxv[(int64_t)8*j], amaxv[8*j+4]);
 
         const float amax = vmaxvq_f32(amaxv[0]);
 
@@ -96,9 +96,9 @@ void quantize_row_q8_1(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, i
         for (int j = 0; j < 8; j++) srcv[j]  = vld1q_f32(x + i*32 + 4*j);
         for (int j = 0; j < 8; j++) asrcv[j] = vabsq_f32(srcv[j]);
 
-        for (int j = 0; j < 4; j++) amaxv[2*j] = vmaxq_f32(asrcv[2*j], asrcv[2*j+1]);
-        for (int j = 0; j < 2; j++) amaxv[4*j] = vmaxq_f32(amaxv[4*j], amaxv[4*j+2]);
-        for (int j = 0; j < 1; j++) amaxv[8*j] = vmaxq_f32(amaxv[8*j], amaxv[8*j+4]);
+        for (int j = 0; j < 4; j++) amaxv[(int64_t)2*j] = vmaxq_f32(asrcv[(int64_t)2*j], asrcv[2*j+1]);
+        for (int j = 0; j < 2; j++) amaxv[(int64_t)4*j] = vmaxq_f32(amaxv[(int64_t)4*j], amaxv[4*j+2]);
+        for (int j = 0; j < 1; j++) amaxv[(int64_t)8*j] = vmaxq_f32(amaxv[(int64_t)8*j], amaxv[8*j+4]);
 
         const float amax = vmaxvq_f32(amaxv[0]);
 

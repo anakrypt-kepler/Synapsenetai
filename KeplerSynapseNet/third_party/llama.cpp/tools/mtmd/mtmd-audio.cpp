@@ -3,6 +3,7 @@
 #define _USE_MATH_DEFINES // for M_PI
 #include <cmath>
 #include <cstdint>
+#include <cstddef>
 #include <cstring>
 #include <thread>
 #include <vector>
@@ -78,7 +79,7 @@ void mtmd_audio_cache::fill_mel_filterbank_matrix(int   n_mel,
     const int n_fft_bins = n_fft / 2 + 1;
 
     // filterbank
-    std::vector<float> out(n_mel * n_fft_bins, 0);
+    std::vector<float> out((size_t)((int64_t)n_mel * n_fft_bins), 0);
     for (int m = 0; m < n_mel; ++m) {
         const double f_left   = hz_pts[m];
         const double f_center = hz_pts[m + 1];
@@ -324,7 +325,12 @@ static void log_mel_spectrogram_worker_thread(int                        ith,
             }
             // handle n_fft remainder
             for (; k < n_fft_bins; k++) {
-                sum += fft_out[k] * filters.data[j * n_fft_bins + k];
+                const float term = fft_out[k] * filters.data[j * n_fft_bins + k];
+                if (std::isfinite(term)) {
+                    sum += term;
+                } else {
+                    sum += (double)fft_out[k] * filters.data[j * n_fft_bins + k];
+                }
             }
             sum = params.use_natural_log
                 ? log(sum + 5.960464477539063e-08)
@@ -418,7 +424,7 @@ static bool log_mel_spectrogram(
         LOG_ERR("%s: not enough samples after padding\n", __func__);
         return false;
     }
-    out.data.resize(out.n_mel * out.n_len);
+    out.data.resize((size_t)((int64_t)out.n_mel * out.n_len));
 
     {
         std::vector<std::thread> workers(n_threads - 1);
@@ -567,10 +573,10 @@ bool mtmd_audio_preprocessor_whisper::preprocess(const float *                 s
         out_chunk.n_len     = n_len;
         out_chunk.n_mel     = out_full.n_mel;
         out_chunk.n_len_org = out_full.n_mel;  // unused
-        out_chunk.data.reserve(out_chunk.n_mel * out_chunk.n_len);
+        out_chunk.data.reserve((size_t)((int64_t)out_chunk.n_mel * out_chunk.n_len));
 
         for (int i = 0; i < out_full.n_mel; i++) {
-            auto src = out_full.data.begin() + i * out_full.n_len + off;
+            auto src = out_full.data.begin() + (std::ptrdiff_t)i * out_full.n_len + off;
             out_chunk.data.insert(out_chunk.data.end(), src, src + frames_per_chunk);
         }
 

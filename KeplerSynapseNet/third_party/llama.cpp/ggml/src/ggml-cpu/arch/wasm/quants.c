@@ -54,9 +54,9 @@ void quantize_row_q8_0(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, i
         for (int j = 0; j < 8; j++) srcv[j]  = wasm_v128_load(x + i*32 + 4*j);
         for (int j = 0; j < 8; j++) asrcv[j] = wasm_f32x4_abs(srcv[j]);
 
-        for (int j = 0; j < 4; j++) amaxv[2*j] = wasm_f32x4_max(asrcv[2*j], asrcv[2*j+1]);
-        for (int j = 0; j < 2; j++) amaxv[4*j] = wasm_f32x4_max(amaxv[4*j], amaxv[4*j+2]);
-        for (int j = 0; j < 1; j++) amaxv[8*j] = wasm_f32x4_max(amaxv[8*j], amaxv[8*j+4]);
+        for (int j = 0; j < 4; j++) amaxv[(int64_t)2*j] = wasm_f32x4_max(asrcv[(int64_t)2*j], asrcv[2*j+1]);
+        for (int j = 0; j < 2; j++) amaxv[(int64_t)4*j] = wasm_f32x4_max(amaxv[(int64_t)4*j], amaxv[4*j+2]);
+        for (int j = 0; j < 1; j++) amaxv[(int64_t)8*j] = wasm_f32x4_max(amaxv[(int64_t)8*j], amaxv[8*j+4]);
 
         const float amax = MAX(MAX(wasm_f32x4_extract_lane(amaxv[0], 0),
                                    wasm_f32x4_extract_lane(amaxv[0], 1)),
@@ -99,9 +99,9 @@ void quantize_row_q8_1(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, i
         for (int j = 0; j < 8; j++) srcv[j]  = wasm_v128_load(x + i*32 + 4*j);
         for (int j = 0; j < 8; j++) asrcv[j] = wasm_f32x4_abs(srcv[j]);
 
-        for (int j = 0; j < 4; j++) amaxv[2*j] = wasm_f32x4_max(asrcv[2*j], asrcv[2*j+1]);
-        for (int j = 0; j < 2; j++) amaxv[4*j] = wasm_f32x4_max(amaxv[4*j], amaxv[4*j+2]);
-        for (int j = 0; j < 1; j++) amaxv[8*j] = wasm_f32x4_max(amaxv[8*j], amaxv[8*j+4]);
+        for (int j = 0; j < 4; j++) amaxv[(int64_t)2*j] = wasm_f32x4_max(asrcv[(int64_t)2*j], asrcv[2*j+1]);
+        for (int j = 0; j < 2; j++) amaxv[(int64_t)4*j] = wasm_f32x4_max(amaxv[(int64_t)4*j], amaxv[4*j+2]);
+        for (int j = 0; j < 1; j++) amaxv[(int64_t)8*j] = wasm_f32x4_max(amaxv[(int64_t)8*j], amaxv[8*j+4]);
 
         const float amax = MAX(MAX(wasm_f32x4_extract_lane(amaxv[0], 0),
                                    wasm_f32x4_extract_lane(amaxv[0], 1)),
@@ -952,7 +952,7 @@ void ggml_vec_dot_q4_K_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const voi
             // Accumulate scaled results
             int32_t vacc1_sum = wasm_i32x4_extract_lane(vacc1, 0) + wasm_i32x4_extract_lane(vacc1, 1) +
                                 wasm_i32x4_extract_lane(vacc1, 2) + wasm_i32x4_extract_lane(vacc1, 3);
-            sumi1 += vacc1_sum * scales[2*j];
+            sumi1 += vacc1_sum * scales[(int64_t)2*j];
 
             int32_t vacc2_sum = wasm_i32x4_extract_lane(vacc2, 0) + wasm_i32x4_extract_lane(vacc2, 1) +
                                 wasm_i32x4_extract_lane(vacc2, 2) + wasm_i32x4_extract_lane(vacc2, 3);
@@ -1099,7 +1099,7 @@ void ggml_vec_dot_q5_K_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const voi
             int32_t sh = wasm_i32x4_extract_lane(sum_high, 0) + wasm_i32x4_extract_lane(sum_high, 1) +
                         wasm_i32x4_extract_lane(sum_high, 2) + wasm_i32x4_extract_lane(sum_high, 3);
 
-            sumi += sl * sc[2*j] + sh * sc[2*j+1];
+            sumi += sl * sc[(int64_t)2*j] + sh * sc[2*j+1];
         }
 
         sumf += d * sumi;

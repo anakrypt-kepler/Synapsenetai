@@ -167,7 +167,7 @@ static void process_logits(std::ostream& out, int n_vocab, const float * logits,
     for (auto & w : workers) {
         w.join();
     }
-    out.write((const char *)log_probs.data(), n_token*nv*sizeof(uint16_t));
+    out.write((const char *)log_probs.data(), size_t(n_token)*nv*sizeof(uint16_t));
 }
 
 struct kl_divergence_result {
@@ -185,6 +185,15 @@ struct kl_divergence_result {
     size_t n_same_top       = 0.0;
     size_t count            = 0.0;
 };
+
+// Finite float products are unchanged. Overflowed products are recomputed in double.
+static double float_mul_as_double(float a, float b) {
+    const float prod = a * b;
+    if (std::isfinite(prod)) {
+        return static_cast<double>(prod);
+    }
+    return static_cast<double>(a) * static_cast<double>(b);
+}
 
 static std::pair<double, float> log_softmax(int n_vocab, const float * logits, const uint16_t * base_log_prob, int tok, kl_divergence_result & kld) {
     float max_logit = logits[0];
@@ -207,13 +216,13 @@ static std::pair<double, float> log_softmax(int n_vocab, const float * logits, c
 
     const float nll = max_logit + log_sum_exp - logits[tok];
     kld.sum_nll  += nll;
-    kld.sum_nll2 += nll*nll;
+    kld.sum_nll2 += float_mul_as_double(nll, nll);
 
     const float nll_base = -(scale*base_log_prob[tok] + min_log_prob);
     kld.sum_nll_base  += nll_base;
-    kld.sum_nll_base2 += nll_base*nll_base;
+    kld.sum_nll_base2 += float_mul_as_double(nll_base, nll_base);
 
-    kld.sum_nll_nll_base += nll*nll_base;
+    kld.sum_nll_nll_base += float_mul_as_double(nll, nll_base);
 
     max_logit += log_sum_exp;
     double sum = 0;
@@ -227,7 +236,7 @@ static std::pair<double, float> log_softmax(int n_vocab, const float * logits, c
         }
         if (p_log_base > -16.f) {
             const float p_base = expf(p_log_base);
-            sum += p_base * (p_log_base - logits[i] + max_logit);
+            sum += float_mul_as_double(p_base, p_log_base - logits[i] + max_logit);
         }
     }
     kld.sum_kld  += sum;
@@ -241,7 +250,7 @@ static std::pair<double, float> log_softmax(int n_vocab, const float * logits, c
     const float p = expf(-nll);
     const float p_diff = p - p_base;
     kld.sum_p_diff  += p_diff;
-    const double p_diff2 = p_diff*p_diff;
+    const double p_diff2 = float_mul_as_double(p_diff, p_diff);
     kld.sum_p_diff2 += p_diff2;
     kld.sum_p_diff4 += p_diff2*p_diff2;
     kld.max_p_diff = std::max(kld.max_p_diff, std::fabs(p_diff));
@@ -519,9 +528,9 @@ static results_perplexity perplexity(llama_context * ctx, const common_params & 
     if (!params.logits_file.empty()) {
         logits_stream.write((const char *)&n_vocab, sizeof(n_vocab));
         logits_stream.write((const char *)&n_chunk, sizeof(n_chunk));
-        logits_stream.write((const char *)tokens.data(), n_chunk*n_ctx*sizeof(tokens[0]));
+        logits_stream.write((const char *)tokens.data(), size_t(n_chunk)*n_ctx*sizeof(tokens[0]));
         const int nv = 2*((n_vocab + 1)/2) + 4;
-        log_probs.resize(n_ctx * nv);
+        log_probs.resize(size_t(n_ctx) * nv);
     }
 
     // We get the logits for all the tokens in the context window (params.n_ctx)

@@ -77,7 +77,7 @@ AEEResult worker_pool_init_with_stack_size(worker_pool_context_t * context, uint
     }
 
     // Allocations
-    int size = (stack_size * n_threads) + (sizeof(worker_pool_t));
+    size_t size = ((size_t) stack_size * n_threads) + (sizeof(worker_pool_t));
 
     unsigned char * mem_blob = (unsigned char *) malloc(size);
     if (!mem_blob) {
@@ -85,7 +85,7 @@ AEEResult worker_pool_init_with_stack_size(worker_pool_context_t * context, uint
         return AEE_ENOMEMORY;
     }
 
-    worker_pool_t * me = (worker_pool_t *) (mem_blob + stack_size * n_threads);
+    worker_pool_t * me = (worker_pool_t *) (mem_blob + (size_t) stack_size * n_threads);
 
     // name for the first worker, useful in debugging threads
     char name[19];

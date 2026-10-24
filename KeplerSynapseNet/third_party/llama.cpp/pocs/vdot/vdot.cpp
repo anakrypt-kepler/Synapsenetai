@@ -79,7 +79,7 @@ inline double dot(int n, const block_q4_0* x, const float* y) {
                  y[6]*kValues[q1[3]] + y[7]*kValues[q2[3]];
             y += 8;
         }
-        sum += s*d;
+        sum += (std::isfinite(s*d) ? static_cast<double>(s*d) : static_cast<double>(s)*d);
         ++x;
     }
     return sum;
@@ -133,7 +133,7 @@ inline double dot3(int n, const block_q4_0* x, const float* y) {
                  y[6]*kValues[q[3]].first + y[7]*kValues[q[3]].second;
             y += 8; q += 4;
         }
-        sum += s*d;
+        sum += (std::isfinite(s*d) ? static_cast<double>(s*d) : static_cast<double>(s)*d);
         ++x;
     }
     return sum;
@@ -256,7 +256,10 @@ int main(int argc, char** argv) {
         fillRandomGaussianFloats(y1, rndm);
 
         // Compute the exact dot product
-        for (int k=0; k<kVecSize; ++k) exactSum += x1[k]*y1[k];
+        for (int k=0; k<kVecSize; ++k) {
+            const float prod = x1[k]*y1[k];
+            exactSum += (std::isfinite(prod) ? static_cast<double>(prod) : static_cast<double>(x1[k])*y1[k]);
+        }
 
         // quantize x.
         // Note, we do not include this in the timing as in practical application

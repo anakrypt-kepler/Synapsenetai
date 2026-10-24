@@ -5760,7 +5760,7 @@ static void ggml_cl_mul(ggml_backend_t backend, const ggml_tensor * src0, const 
         backend_ctx->enqueue_ndrange_kernel(kernel, 3, global_work_size, local_work_size_ptr, dst);
     } else {
         unsigned int nth = MIN(64, ne0);
-        size_t global_work_size[] = {ne01*nth, (size_t)ne02, (size_t)ne03};
+        size_t global_work_size[] = {(size_t)ne01*nth, (size_t)ne02, (size_t)ne03};
         size_t local_work_size[] = {nth, 1, 1};
 
         backend_ctx->enqueue_ndrange_kernel(kernel, 3, global_work_size, local_work_size, dst);
@@ -5881,7 +5881,7 @@ static void ggml_cl_div(ggml_backend_t backend, const ggml_tensor * src0, const 
         backend_ctx->enqueue_ndrange_kernel(kernel, 3, global_work_size, local_work_size, dst);
     } else {
         unsigned int nth = MIN(64, ne0);
-        size_t global_work_size[] = {ne01*nth, (size_t)ne02, (size_t)ne03};
+        size_t global_work_size[] = {(size_t)ne01*nth, (size_t)ne02, (size_t)ne03};
         size_t local_work_size[] = {nth, 1, 1};
 
         backend_ctx->enqueue_ndrange_kernel(kernel, 3, global_work_size, local_work_size, dst);
@@ -6002,7 +6002,7 @@ static void ggml_cl_sub(ggml_backend_t backend, const ggml_tensor * src0, const 
         backend_ctx->enqueue_ndrange_kernel(kernel, 3, global_work_size, local_work_size, dst);
     } else {
         unsigned int nth = MIN(64, ne0);
-        size_t global_work_size[] = {ne01*nth, (size_t)ne02, (size_t)ne03};
+        size_t global_work_size[] = {(size_t)ne01*nth, (size_t)ne02, (size_t)ne03};
         size_t local_work_size[] = {nth, 1, 1};
 
         backend_ctx->enqueue_ndrange_kernel(kernel, 3, global_work_size, local_work_size, dst);
