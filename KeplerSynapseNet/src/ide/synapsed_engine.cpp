@@ -424,19 +424,10 @@ int execArgvExit(const std::vector<std::string>& args) {
 
 std::string execCmd(const std::string& cmd) {
     std::vector<std::string> args;
-    // Quoted arguments take the argv path. Pipelines still need a shell.
-    if (splitArgsNoShell(cmd, args)) return execArgv(args);
-#ifdef _WIN32
-    return runCmdHidden(cmd).output;
-#else
-    std::array<char, 4096> buf;
-    std::string out;
-    FILE* p = POPEN(cmd.c_str(), "r");
-    if (!p) return "";
-    while (fgets(buf.data(), buf.size(), p)) out += buf.data();
-    PCLOSE(p);
-    return out;
-#endif
+    // A shell never parses this string. Pipes, redirects, and other shell
+    // syntax are refused instead of being handed to popen or cmd.exe.
+    if (!splitArgsNoShell(cmd, args)) return "";
+    return execArgv(args);
 }
 
 std::string normalizeListenerCred(std::string s) {
