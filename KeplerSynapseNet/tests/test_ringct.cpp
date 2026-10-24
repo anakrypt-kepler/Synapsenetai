@@ -110,6 +110,73 @@ int main() {
     synapse::crypto::Hash256 blockHash = synapse::crypto::sha256(std::string("ringct_block1"));
     if (!tm.applyBlockTransactionsFromBlock(pending, 1, blockHash)) return fail("apply shield");
 
+    // A spend ring may cite only outputs this node already stored. Ten more
+    // shields give the ring real members instead of points invented at send time.
+    uint64_t nextHeight = 2;
+    for (int n = 0; n < 10; ++n) {
+        auto fresh = tm.getUTXOs(addr);
+        if (fresh.empty()) return fail("decoy utxo");
+        const uint64_t decoyAtoms = 1000;
+        synapse::privacy::StealthPayment decoyPay;
+        if (!sender.createPayment(bob.getViewPublicKey(), bob.getSpendPublicKey(), decoyAtoms, decoyPay)) {
+            return fail("decoy payment");
+        }
+        auto decoyRange = synapse::crypto::ConfidentialTx::proveRange(decoyAtoms, decoyPay.blinding);
+        if (decoyRange.empty()) return fail("decoy range");
+        auto decoyBal = synapse::crypto::ConfidentialTx::proveKnownAmount(
+            decoyPay.commitment, decoyAtoms, decoyPay.blinding);
+        if (decoyBal.size() != 64) return fail("decoy balance proof");
+
+        synapse::core::Transaction decoyTx;
+        decoyTx.timestamp = static_cast<uint64_t>(std::time(nullptr));
+        decoyTx.status = synapse::core::TxStatus::PENDING;
+        decoyTx.balanceProof = decoyBal;
+        synapse::core::TxInput din;
+        din.prevTxHash = fresh[0].txHash;
+        din.outputIndex = fresh[0].outputIndex;
+        decoyTx.inputs.push_back(din);
+        synapse::core::TxOutput hiddenOut;
+        hiddenOut.amount = 0;
+        hiddenOut.address = "rct1" + synapse::crypto::toHex(decoyPay.oneTimeAddress);
+        hiddenOut.commitment = decoyPay.commitment;
+        hiddenOut.ephemeralPub = decoyPay.ephemeralPub;
+        hiddenOut.rangeProof = decoyRange;
+        hiddenOut.ecdh = decoyPay.ecdh;
+        decoyTx.outputs.push_back(hiddenOut);
+
+        uint64_t decoyFee = tm.estimateFee(0);
+        bool built = false;
+        for (int i = 0; i < 6; ++i) {
+            decoyTx.fee = decoyFee;
+            if (fresh[0].amount < decoyAtoms + decoyFee) return fail("decoy credit");
+            uint64_t change = fresh[0].amount - decoyAtoms - decoyFee;
+            decoyTx.outputs.resize(1);
+            if (change > 0) {
+                synapse::core::TxOutput ch;
+                ch.amount = change;
+                ch.address = addr;
+                decoyTx.outputs.push_back(ch);
+            }
+            decoyTx.txid = decoyTx.computeHash();
+            uint64_t need = tm.estimateFee(decoyTx.serialize().size());
+            if (need <= decoyFee) {
+                built = true;
+                break;
+            }
+            decoyFee = need;
+        }
+        if (!built) return fail("decoy fee");
+        if (!tm.signTransaction(decoyTx, kp.privateKey, hybrid)) return fail("sign decoy");
+        if (!tm.submitTransaction(decoyTx)) return fail("submit decoy");
+        auto decoyPending = tm.getPending();
+        synapse::crypto::Hash256 decoyBlock = synapse::crypto::sha256(
+            std::string("ringct_decoy_") + std::to_string(n));
+        if (!tm.applyBlockTransactionsFromBlock(decoyPending, nextHeight, decoyBlock)) {
+            return fail("apply decoy");
+        }
+        ++nextHeight;
+    }
+
     synapse::privacy::PrivateTxOut scanOut;
     scanOut.oneTime = pay.oneTimeAddress;
     scanOut.ephemeralPub = pay.ephemeralPub;
@@ -162,7 +229,7 @@ int main() {
     }
     if (!found) return fail("ringct not pending");
     synapse::crypto::Hash256 blockHash2 = synapse::crypto::sha256(std::string("ringct_block2"));
-    if (!tm.applyBlockTransactionsFromBlock({ringct}, 2, blockHash2)) return fail("apply ringct");
+    if (!tm.applyBlockTransactionsFromBlock({ringct}, nextHeight, blockHash2)) return fail("apply ringct");
 
     auto miner = synapse::crypto::generateKeyPair();
     synapse::crypto::Hash256 coinbaseId = synapse::crypto::sha256(std::string("ringct_coinbase_reward"));
