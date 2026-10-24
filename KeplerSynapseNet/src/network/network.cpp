@@ -1042,7 +1042,8 @@ bool Network::connect(const std::string& address, uint16_t port) {
             if (impl_->config.torRequired && isOnionAddr) {
                 return false;
             }
-            if (impl_->config.torRequired && !impl_->config.hybridMode) {
+            // Non-onion peers fail closed too. hybridMode must not resume on direct TCP.
+            if (impl_->config.torRequired) {
                 return false;
             }
         }

@@ -1,5 +1,8 @@
 // Peer handshake: X25519 + optional ML-KEM-768, then HKDF session key.
-// Magic 0x534E4554 = "SNET". SYNAPSE_HANDSHAKE_PQ_STRICT=1 refuses classic-only.
+// Magic 0x534E4554 = "SNET". The ML-KEM public key and ciphertext are inside
+// the signed transcript. A peer KEM key requires a full-size ML-KEM share.
+// With no KEM key from the peer, the classical handshake still completes.
+// SYNAPSE_HANDSHAKE_PQ_STRICT=1 refuses that classical-only result.
 // This is a hybrid KEM (RFC 10024 family: X25519 + ML-KEM-768), not Dilithium.
 // Signatures stay on KQAS application envelopes. Do not put HybridSig here.
 
@@ -7,9 +10,12 @@
 #include "crypto/crypto.h"
 #include "crypto/keys.h"
 #include "quantum/quantum_security.h"
+#include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <random>
+#include <string>
 #include <openssl/rand.h>
 
 namespace synapse {
@@ -23,6 +29,12 @@ static bool handshakePqStrictMode() {
     const char* env = std::getenv("SYNAPSE_HANDSHAKE_PQ_STRICT");
     if (!env || !*env) return false;
     return std::string(env) != "0";
+}
+
+static void wipeSecret(std::vector<uint8_t>& bytes) {
+    if (bytes.empty()) return;
+    crypto::secureZero(bytes.data(), bytes.size());
+    bytes.clear();
 }
 
 static std::vector<uint8_t> deriveHandshakeSessionKey(const std::vector<uint8_t>& classicalSharedSecret,
@@ -86,6 +98,7 @@ struct Handshake::Impl {
     std::vector<uint8_t> pendingRemotePublicKey;
     uint32_t capabilities = HANDSHAKE_CAP_HYBRID_KEM;
     uint32_t remoteCapabilities = 0;
+    bool initMessageSent = false;
     bool complete = false;
     mutable std::mutex mtx;
 
@@ -97,6 +110,7 @@ struct Handshake::Impl {
                                       std::vector<uint8_t>& sharedOut);
     void zeroKyberSecret();
     std::vector<uint8_t> deriveSessionKeyLocked();
+    std::vector<uint8_t> buildInitMessageLocked();
 };
 
 std::vector<uint8_t> Handshake::Impl::sign(const std::vector<uint8_t>& data) {
@@ -138,18 +152,9 @@ void Handshake::Impl::generateKyberKeyPair() {
 }
 
 void Handshake::Impl::zeroKyberSecret() {
-    if (!localKyberSecretKey.empty()) {
-        crypto::secureZero(localKyberSecretKey.data(), localKyberSecretKey.size());
-        localKyberSecretKey.clear();
-    }
-    if (!kyberSharedSecret.empty()) {
-        crypto::secureZero(kyberSharedSecret.data(), kyberSharedSecret.size());
-        kyberSharedSecret.clear();
-    }
-    if (!pendingClassicalSharedSecret.empty()) {
-        crypto::secureZero(pendingClassicalSharedSecret.data(), pendingClassicalSharedSecret.size());
-        pendingClassicalSharedSecret.clear();
-    }
+    wipeSecret(localKyberSecretKey);
+    wipeSecret(kyberSharedSecret);
+    wipeSecret(pendingClassicalSharedSecret);
 }
 
 bool Handshake::Impl::computeClassicalSharedSecret(const std::vector<uint8_t>& remotePublicKey,
@@ -160,8 +165,7 @@ bool Handshake::Impl::computeClassicalSharedSecret(const std::vector<uint8_t>& r
     }
     sharedOut = localKeys.sharedSecret(remotePublicKey);
     if (sharedOut.size() != crypto::SHA256_SIZE) {
-        if (!sharedOut.empty()) crypto::secureZero(sharedOut.data(), sharedOut.size());
-        sharedOut.clear();
+        wipeSecret(sharedOut);
         return false;
     }
     return true;
@@ -177,6 +181,40 @@ std::vector<uint8_t> Handshake::Impl::deriveSessionKeyLocked() {
         localNonce, remoteNonce);
 }
 
+std::vector<uint8_t> Handshake::Impl::buildInitMessageLocked() {
+    std::vector<uint8_t> msg;
+
+    auto writeU32 = [&msg](uint32_t val) {
+        for (int i = 0; i < 4; i++) msg.push_back((val >> (i * 8)) & 0xff);
+    };
+
+    writeU32(HANDSHAKE_MAGIC);
+    writeU32(PROTOCOL_VERSION);
+    writeU32(capabilities);
+
+    writeU32(static_cast<uint32_t>(nodeId.size()));
+    msg.insert(msg.end(), nodeId.begin(), nodeId.end());
+
+    writeU32(static_cast<uint32_t>(publicKey.size()));
+    msg.insert(msg.end(), publicKey.begin(), publicKey.end());
+
+    writeU32(static_cast<uint32_t>(localNonce.size()));
+    msg.insert(msg.end(), localNonce.begin(), localNonce.end());
+
+    writeU32(static_cast<uint32_t>(localKyberPublicKey.size()));
+    msg.insert(msg.end(), localKyberPublicKey.begin(), localKyberPublicKey.end());
+
+    writeU32(static_cast<uint32_t>(kyberCiphertextForRemote.size()));
+    msg.insert(msg.end(), kyberCiphertextForRemote.begin(), kyberCiphertextForRemote.end());
+
+    auto sig = sign(msg);
+    writeU32(static_cast<uint32_t>(sig.size()));
+    msg.insert(msg.end(), sig.begin(), sig.end());
+
+    initMessageSent = true;
+    return msg;
+}
+
 Handshake::Handshake() : impl_(std::make_unique<Impl>()) {}
 Handshake::~Handshake() {
     if (impl_) {
@@ -188,6 +226,14 @@ Handshake::~Handshake() {
 bool Handshake::init(const std::vector<uint8_t>& nodeId, const std::vector<uint8_t>& publicKey,
                      const std::vector<uint8_t>& privateKey) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
+    impl_->zeroKyberSecret();
+    impl_->kyberCiphertextForRemote.clear();
+    impl_->remoteKyberPublicKey.clear();
+    impl_->pendingRemotePublicKey.clear();
+    impl_->sessionKey.clear();
+    impl_->remoteNonce.clear();
+    impl_->remoteCapabilities = 0;
+    impl_->initMessageSent = false;
     impl_->nodeId = nodeId;
     impl_->publicKey = publicKey;
     impl_->privateKey = privateKey;
@@ -211,37 +257,7 @@ void Handshake::setCapabilities(uint32_t caps) {
 
 std::vector<uint8_t> Handshake::createInitMessage() {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-
-    std::vector<uint8_t> msg;
-
-    auto writeU32 = [&msg](uint32_t val) {
-        for (int i = 0; i < 4; i++) msg.push_back((val >> (i * 8)) & 0xff);
-    };
-
-    writeU32(HANDSHAKE_MAGIC);
-    writeU32(PROTOCOL_VERSION);
-    writeU32(impl_->capabilities);
-
-    writeU32(impl_->nodeId.size());
-    msg.insert(msg.end(), impl_->nodeId.begin(), impl_->nodeId.end());
-
-    writeU32(impl_->publicKey.size());
-    msg.insert(msg.end(), impl_->publicKey.begin(), impl_->publicKey.end());
-
-    writeU32(impl_->localNonce.size());
-    msg.insert(msg.end(), impl_->localNonce.begin(), impl_->localNonce.end());
-
-    auto sig = impl_->sign(msg);
-    writeU32(sig.size());
-    msg.insert(msg.end(), sig.begin(), sig.end());
-
-    writeU32(static_cast<uint32_t>(impl_->localKyberPublicKey.size()));
-    msg.insert(msg.end(), impl_->localKyberPublicKey.begin(), impl_->localKyberPublicKey.end());
-
-    writeU32(static_cast<uint32_t>(impl_->kyberCiphertextForRemote.size()));
-    msg.insert(msg.end(), impl_->kyberCiphertextForRemote.begin(), impl_->kyberCiphertextForRemote.end());
-
-    return msg;
+    return impl_->buildInitMessageLocked();
 }
 
 HandshakeResult Handshake::processInitMessage(const std::vector<uint8_t>& data) {
@@ -250,62 +266,90 @@ HandshakeResult Handshake::processInitMessage(const std::vector<uint8_t>& data) 
     HandshakeResult result{};
     result.success = false;
 
+    wipeSecret(impl_->kyberSharedSecret);
+    impl_->kyberCiphertextForRemote.clear();
+    impl_->remoteKyberPublicKey.clear();
+    wipeSecret(impl_->pendingClassicalSharedSecret);
+    impl_->pendingRemotePublicKey.clear();
+    impl_->sessionKey.clear();
+
     if (data.size() < 16) {
         result.error = "Message too short";
         return result;
     }
 
-    auto readU32 = [&data](size_t& pos) -> uint32_t {
-        if (pos + 4 > data.size()) return 0;
+    auto readU32 = [&data](size_t& pos, uint32_t& out) -> bool {
+        if (pos > data.size() || data.size() - pos < 4) return false;
         uint32_t val = 0;
-        for (int i = 0; i < 4; i++) val |= static_cast<uint32_t>(data[pos + i]) << (i * 8);
+        for (int i = 0; i < 4; i++) val |= static_cast<uint32_t>(data[pos + static_cast<size_t>(i)]) << (i * 8);
         pos += 4;
-        return val;
+        out = val;
+        return true;
+    };
+
+    auto readBytes = [&data](size_t& pos, uint32_t len, std::vector<uint8_t>& out) -> bool {
+        if (pos > data.size() || static_cast<size_t>(len) > data.size() - pos) return false;
+        out.assign(data.begin() + pos, data.begin() + pos + len);
+        pos += len;
+        return true;
     };
 
     size_t pos = 0;
-    uint32_t magic = readU32(pos);
-    if (magic != HANDSHAKE_MAGIC) {
+    uint32_t magic = 0;
+    if (!readU32(pos, magic) || magic != HANDSHAKE_MAGIC) {
         result.error = "Invalid magic";
         return result;
     }
 
-    result.remoteVersion = readU32(pos);
-    result.remoteCapabilities = readU32(pos);
-    impl_->remoteCapabilities = result.remoteCapabilities;
+    uint32_t remoteVersion = 0;
+    uint32_t remoteCaps = 0;
+    if (!readU32(pos, remoteVersion) || !readU32(pos, remoteCaps)) {
+        result.error = "Message too short";
+        return result;
+    }
+    result.remoteVersion = remoteVersion;
+    result.remoteCapabilities = remoteCaps;
 
-    uint32_t nodeIdLen = readU32(pos);
-    if (pos + nodeIdLen > data.size()) {
+    uint32_t nodeIdLen = 0;
+    if (!readU32(pos, nodeIdLen) || !readBytes(pos, nodeIdLen, result.remoteNodeId)) {
         result.error = "Invalid node ID length";
         return result;
     }
-    result.remoteNodeId.assign(data.begin() + pos, data.begin() + pos + nodeIdLen);
-    pos += nodeIdLen;
 
-    uint32_t pubKeyLen = readU32(pos);
-    if (pos + pubKeyLen > data.size()) {
+    uint32_t pubKeyLen = 0;
+    if (!readU32(pos, pubKeyLen) || !readBytes(pos, pubKeyLen, result.remotePublicKey)) {
         result.error = "Invalid public key length";
         return result;
     }
-    result.remotePublicKey.assign(data.begin() + pos, data.begin() + pos + pubKeyLen);
-    pos += pubKeyLen;
 
-    uint32_t nonceLen = readU32(pos);
-    if (pos + nonceLen > data.size()) {
+    uint32_t nonceLen = 0;
+    std::vector<uint8_t> remoteNonce;
+    if (!readU32(pos, nonceLen) || !readBytes(pos, nonceLen, remoteNonce)) {
         result.error = "Invalid nonce length";
         return result;
     }
-    impl_->remoteNonce.assign(data.begin() + pos, data.begin() + pos + nonceLen);
-    pos += nonceLen;
 
-    size_t signedLen = pos;
-    uint32_t sigLen = readU32(pos);
-    if (sigLen == 0 || pos + sigLen > data.size()) {
+    uint32_t remoteKemPkLen = 0;
+    std::vector<uint8_t> remoteKemPk;
+    if (!readU32(pos, remoteKemPkLen) || !readBytes(pos, remoteKemPkLen, remoteKemPk)) {
+        result.error = "Invalid Kyber public key length";
+        return result;
+    }
+
+    uint32_t remoteCtLen = 0;
+    std::vector<uint8_t> remoteCt;
+    if (!readU32(pos, remoteCtLen) || !readBytes(pos, remoteCtLen, remoteCt)) {
+        result.error = "Invalid Kyber ciphertext length";
+        return result;
+    }
+
+    const size_t signedLen = pos;
+    uint32_t sigLen = 0;
+    std::vector<uint8_t> signature;
+    if (!readU32(pos, sigLen) || sigLen == 0 || !readBytes(pos, sigLen, signature)) {
         result.error = "Invalid signature length";
         return result;
     }
-    std::vector<uint8_t> signature(data.begin() + pos, data.begin() + pos + sigLen);
-    pos += sigLen;
 
     std::vector<uint8_t> signedData(data.begin(), data.begin() + signedLen);
     if (!impl_->verify(signedData, signature, result.remotePublicKey)) {
@@ -313,46 +357,85 @@ HandshakeResult Handshake::processInitMessage(const std::vector<uint8_t>& data) 
         return result;
     }
 
-    if (pos + 4 <= data.size()) {
-        uint32_t remoteKyberPkLen = readU32(pos);
-        if (remoteKyberPkLen > 0) {
-            if (pos + remoteKyberPkLen > data.size()) {
-                result.error = "Invalid Kyber public key length";
-                return result;
-            }
-            if (remoteKyberPkLen == quantum::KYBER_PUBLIC_KEY_SIZE) {
-                impl_->remoteKyberPublicKey.assign(data.begin() + pos, data.begin() + pos + remoteKyberPkLen);
-            }
-            pos += remoteKyberPkLen;
-        }
+    impl_->remoteCapabilities = result.remoteCapabilities;
+    impl_->remoteNonce = std::move(remoteNonce);
+
+    auto fail = [&](const char* message) -> HandshakeResult {
+        wipeSecret(impl_->kyberSharedSecret);
+        impl_->remoteKyberPublicKey.clear();
+        impl_->kyberCiphertextForRemote.clear();
+        result.success = false;
+        result.sessionKey.clear();
+        result.error = message;
+        return result;
+    };
+
+    const bool peerSentKemKey = remoteKemPkLen > 0;
+    if (peerSentKemKey && remoteKemPkLen != quantum::KYBER_PUBLIC_KEY_SIZE) {
+        return fail("Invalid Kyber public key length");
+    }
+    if (remoteCtLen > 0 && remoteCtLen != quantum::KYBER_CIPHERTEXT_SIZE) {
+        return fail("Invalid Kyber ciphertext length");
+    }
+    // The first flight carries the peer KEM key and an empty ciphertext.
+    // A handshake message sent after ours must include their ciphertext share.
+    if (impl_->initMessageSent && peerSentKemKey && remoteCtLen != quantum::KYBER_CIPHERTEXT_SIZE) {
+        return fail("Invalid Kyber shared secret");
     }
 
-    if (pos + 4 <= data.size()) {
-        uint32_t remoteCtLen = readU32(pos);
-        if (remoteCtLen > 0) {
-            if (pos + remoteCtLen > data.size()) {
-                result.error = "Invalid Kyber ciphertext length";
-                return result;
-            }
-            if (remoteCtLen == quantum::KYBER_CIPHERTEXT_SIZE &&
-                impl_->localKyberSecretKey.size() == quantum::KYBER_SECRET_KEY_SIZE) {
-                quantum::KyberCiphertext ct{};
-                std::memcpy(ct.data(), data.data() + pos, remoteCtLen);
-                quantum::KyberSecretKey sk{};
-                std::memcpy(sk.data(), impl_->localKyberSecretKey.data(), sk.size());
-                quantum::Kyber kyber;
-                auto ss = kyber.decapsulate(ct, sk);
-                crypto::secureZero(sk.data(), sk.size());
-                if (ss.size() == quantum::KYBER_SHARED_SECRET_SIZE) {
-                    impl_->kyberSharedSecret = std::move(ss);
-                }
-            }
-            pos += remoteCtLen;
+    if (remoteKemPkLen == quantum::KYBER_PUBLIC_KEY_SIZE) {
+        impl_->remoteKyberPublicKey = std::move(remoteKemPk);
+    }
+
+    if (remoteCtLen == quantum::KYBER_CIPHERTEXT_SIZE) {
+        if (impl_->localKyberSecretKey.size() != quantum::KYBER_SECRET_KEY_SIZE) {
+            return fail("Invalid Kyber shared secret");
         }
+        quantum::KyberCiphertext ct{};
+        std::memcpy(ct.data(), remoteCt.data(), remoteCt.size());
+        quantum::KyberSecretKey sk{};
+        std::memcpy(sk.data(), impl_->localKyberSecretKey.data(), sk.size());
+        quantum::Kyber kyber;
+        auto ss = kyber.decapsulate(ct, sk);
+        crypto::secureZero(sk.data(), sk.size());
+        if (ss.size() != quantum::KYBER_SHARED_SECRET_SIZE) {
+            wipeSecret(ss);
+            return fail("Invalid Kyber shared secret");
+        }
+        impl_->kyberSharedSecret = std::move(ss);
+    }
+
+    if (impl_->kyberSharedSecret.empty()
+        && impl_->remoteKyberPublicKey.size() == quantum::KYBER_PUBLIC_KEY_SIZE
+        && impl_->kyberCiphertextForRemote.empty()) {
+        quantum::KyberPublicKey remotePk{};
+        std::memcpy(remotePk.data(), impl_->remoteKyberPublicKey.data(), remotePk.size());
+        quantum::Kyber kyber;
+        auto enc = kyber.encapsulate(remotePk);
+        const bool shareOk = enc.success
+            && enc.ciphertext.size() == quantum::KYBER_CIPHERTEXT_SIZE
+            && enc.sharedSecret.size() == quantum::KYBER_SHARED_SECRET_SIZE;
+        if (!shareOk) {
+            wipeSecret(enc.sharedSecret);
+            return fail("Invalid Kyber shared secret");
+        }
+        impl_->kyberCiphertextForRemote = std::move(enc.ciphertext);
+        impl_->kyberSharedSecret = std::move(enc.sharedSecret);
+    }
+
+    if (peerSentKemKey && impl_->kyberSharedSecret.size() != quantum::KYBER_SHARED_SECRET_SIZE) {
+        return fail("Invalid Kyber shared secret");
+    }
+
+    if (handshakePqStrictMode()
+        && impl_->kyberSharedSecret.size() != quantum::KYBER_SHARED_SECRET_SIZE) {
+        return fail("Hybrid KEM strict mode: peer did not contribute a Kyber shared secret");
     }
 
     std::vector<uint8_t> classicalShared;
     if (!impl_->computeClassicalSharedSecret(result.remotePublicKey, classicalShared)) {
+        wipeSecret(impl_->kyberSharedSecret);
+        impl_->kyberCiphertextForRemote.clear();
         result.error = "Failed to derive classical shared secret";
         return result;
     }
@@ -360,34 +443,13 @@ HandshakeResult Handshake::processInitMessage(const std::vector<uint8_t>& data) 
     impl_->pendingClassicalSharedSecret = classicalShared;
     impl_->pendingRemotePublicKey = result.remotePublicKey;
 
-    if (impl_->remoteKyberPublicKey.size() == quantum::KYBER_PUBLIC_KEY_SIZE &&
-        impl_->kyberCiphertextForRemote.empty()) {
-        quantum::KyberPublicKey remotePk{};
-        std::memcpy(remotePk.data(), impl_->remoteKyberPublicKey.data(), remotePk.size());
-        quantum::Kyber kyber;
-        auto enc = kyber.encapsulate(remotePk);
-        if (enc.success &&
-            enc.ciphertext.size() == quantum::KYBER_CIPHERTEXT_SIZE &&
-            enc.sharedSecret.size() == quantum::KYBER_SHARED_SECRET_SIZE) {
-            impl_->kyberCiphertextForRemote = std::move(enc.ciphertext);
-            if (impl_->kyberSharedSecret.empty()) {
-                impl_->kyberSharedSecret = std::move(enc.sharedSecret);
-            } else {
-                crypto::secureZero(enc.sharedSecret.data(), enc.sharedSecret.size());
-            }
-        }
-    }
-
-    if (handshakePqStrictMode()
-        && impl_->kyberSharedSecret.size() != quantum::KYBER_SHARED_SECRET_SIZE) {
-        crypto::secureZero(classicalShared.data(), classicalShared.size());
-        result.error = "Hybrid KEM strict mode: peer did not contribute a Kyber shared secret";
-        return result;
-    }
-
     auto sessionKey = impl_->deriveSessionKeyLocked();
-    crypto::secureZero(classicalShared.data(), classicalShared.size());
+    wipeSecret(classicalShared);
     if (sessionKey.empty()) {
+        wipeSecret(impl_->pendingClassicalSharedSecret);
+        wipeSecret(impl_->kyberSharedSecret);
+        impl_->pendingRemotePublicKey.clear();
+        impl_->kyberCiphertextForRemote.clear();
         result.error = "Failed to derive session key";
         return result;
     }
@@ -400,7 +462,7 @@ HandshakeResult Handshake::processInitMessage(const std::vector<uint8_t>& data) 
 
 std::vector<uint8_t> Handshake::createResponseMessage(const HandshakeResult& initResult) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-    auto msg = createInitMessage();
+    auto msg = impl_->buildInitMessageLocked();
     std::vector<uint8_t> ackInput = initResult.remoteNodeId;
     ackInput.insert(ackInput.end(), impl_->remoteNonce.begin(), impl_->remoteNonce.end());
     auto ack = crypto::sha256(ackInput.data(), ackInput.size());

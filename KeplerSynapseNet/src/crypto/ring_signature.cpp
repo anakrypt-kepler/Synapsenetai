@@ -21,6 +21,9 @@ namespace {
 constexpr size_t kPointSize = crypto_core_ed25519_BYTES;
 constexpr size_t kScalarSize = crypto_core_ed25519_SCALARBYTES;
 constexpr size_t kHashSize = crypto_core_ed25519_HASHBYTES;
+// Untrusted deserialize counts must not size an allocation. Protocol rings
+// are far smaller than this (private spends use 11).
+constexpr uint32_t kMaxCountedFields = 4096;
 
 void requireSodium() {
     static bool initialized = false;
@@ -44,7 +47,7 @@ void appendU32(std::vector<uint8_t>& buffer, uint32_t value) {
 }
 
 uint32_t readU32(const std::vector<uint8_t>& data, size_t& offset) {
-    if (offset + 4 > data.size()) {
+    if (offset > data.size() || data.size() - offset < 4) {
         throw std::runtime_error("ring signature deserialize out of bounds");
     }
     uint32_t value = static_cast<uint32_t>(data[offset]) |
@@ -57,12 +60,40 @@ uint32_t readU32(const std::vector<uint8_t>& data, size_t& offset) {
 
 std::vector<uint8_t> readField(const std::vector<uint8_t>& data, size_t& offset) {
     uint32_t length = readU32(data, offset);
-    if (offset + length > data.size()) {
+    if (offset > data.size() || static_cast<size_t>(length) > data.size() - offset) {
         throw std::runtime_error("ring signature deserialize field overflow");
     }
     std::vector<uint8_t> field(data.begin() + offset, data.begin() + offset + length);
     offset += length;
     return field;
+}
+
+// A counted section is `count` length-prefixed fields. Reject an over-cap
+// count, and reject a count the remaining blob cannot actually hold, before
+// any reserve sized by that count. Invalid input throws and does not return
+// a partial signature.
+void requireCountedFields(const std::vector<uint8_t>& data, size_t offset, uint32_t count) {
+    if (count > kMaxCountedFields) {
+        throw std::runtime_error("ring signature member count exceeds limit");
+    }
+    size_t cursor = offset;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t length = readU32(data, cursor);
+        if (cursor > data.size() || static_cast<size_t>(length) > data.size() - cursor) {
+            throw std::runtime_error("ring signature deserialize field overflow");
+        }
+        cursor += static_cast<size_t>(length);
+    }
+}
+
+void readCountedFields(const std::vector<uint8_t>& data, size_t& offset,
+                       std::vector<std::vector<uint8_t>>& out) {
+    uint32_t count = readU32(data, offset);
+    requireCountedFields(data, offset, count);
+    out.reserve(static_cast<size_t>(count));
+    for (uint32_t i = 0; i < count; ++i) {
+        out.push_back(readField(data, offset));
+    }
 }
 
 std::vector<uint8_t> scalarAdd(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
@@ -164,11 +195,7 @@ RingSignature RingSignature::deserialize(const std::vector<uint8_t>& data) {
     size_t offset = 0;
     sig.keyImage = readField(data, offset);
     sig.c0 = readField(data, offset);
-    uint32_t count = readU32(data, offset);
-    sig.responses.reserve(count);
-    for (uint32_t i = 0; i < count; ++i) {
-        sig.responses.push_back(readField(data, offset));
-    }
+    readCountedFields(data, offset, sig.responses);
     return sig;
 }
 
@@ -196,16 +223,8 @@ MlsagSignature MlsagSignature::deserialize(const std::vector<uint8_t>& data) {
     size_t offset = 0;
     sig.keyImage = readField(data, offset);
     sig.c0 = readField(data, offset);
-    uint32_t nKey = readU32(data, offset);
-    sig.respKey.reserve(nKey);
-    for (uint32_t i = 0; i < nKey; ++i) {
-        sig.respKey.push_back(readField(data, offset));
-    }
-    uint32_t nCommit = readU32(data, offset);
-    sig.respCommit.reserve(nCommit);
-    for (uint32_t i = 0; i < nCommit; ++i) {
-        sig.respCommit.push_back(readField(data, offset));
-    }
+    readCountedFields(data, offset, sig.respKey);
+    readCountedFields(data, offset, sig.respCommit);
     return sig;
 }
 

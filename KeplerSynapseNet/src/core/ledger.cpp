@@ -2,6 +2,8 @@
 // Difficulty is a tiny PoW on the block hash (spam brake), not the main consensus.
 // Reorgs swap the in-memory chain when a heavier fork arrives (totalWork).
 // IdentityRegistry is updated when IDENTITY_BIND events land.
+// Height 0 is only the opening genesis. Every later block extends the resident tip.
+// A chain longer than memory keeps that tip, not the oldest 1000 blocks.
 
 #include "core/ledger.h"
 #include "crypto/address.h"
@@ -54,6 +56,20 @@ bool producerTrailerOk(const Block& block) {
         "core.block.producer", payload, binding, block.producerQuantumSignature);
 }
 
+// Empty event trailers stay classical-only, matching the optional PQ note on
+// the ledger header. A present KQAS trailer must AND-verify HybridSig over the
+// classical event bytes, bound to the author. Parsing the envelope is not enough.
+bool eventTrailerOk(const Event& event) {
+    if (event.quantumSignature.empty()) return true;
+
+    Event body = event;
+    body.quantumSignature.clear();
+    const std::vector<uint8_t> payload = body.serialize();
+    const std::vector<uint8_t> binding(event.author.begin(), event.author.end());
+    return quantum::verifyApplicationPayload(
+        "core.ledger.event", payload, binding, event.quantumSignature);
+}
+
 } // namespace
 
 static void writeU64(std::vector<uint8_t>& out, uint64_t val) {
@@ -88,6 +104,7 @@ static uint16_t readU16(const uint8_t* p) {
 constexpr uint32_t MAX_EVENTS_PER_BLOCK = 1000;
 constexpr size_t MAX_EVENT_SIZE = 1 << 20; // 1MB
 // Trailer byte after classic event bytes: 0x01 means a PQ signature blob follows.
+// Absence of the trailer is classical-only and remains valid.
 static constexpr uint8_t EVENT_TRAILER_V1_QUANTUM_SIG = 0x01;
 static constexpr uint32_t EVENT_MAX_QUANTUM_SIGNATURE_SIZE = 65536;
 static constexpr uint32_t BLOCK_V2_MAGIC = 0xB10C0002u;
@@ -122,6 +139,22 @@ static uint64_t chainWorkFromBlocks(const std::vector<Block>& blocks) {
         work = saturatingAddWork(work, block.difficulty);
     }
     return work;
+}
+
+static bool loadChainBlock(database::Database& db, uint64_t height, Block& out) {
+    auto blockData = db.get("block:" + std::to_string(height));
+    if (blockData.empty()) return false;
+    Block block = Block::deserialize(blockData);
+    if (block.height != height || block.computeHash() != block.hash) return false;
+    out = std::move(block);
+    return true;
+}
+
+static const Block* findResidentBlock(const std::vector<Block>& blocks, uint64_t height) {
+    for (const auto& block : blocks) {
+        if (block.height == height) return &block;
+    }
+    return nullptr;
 }
 
 std::vector<uint8_t> Event::serialize() const {
@@ -184,9 +217,7 @@ crypto::Hash256 Event::computeHash() const {
 bool Event::verify() const {
     crypto::Hash256 computed = computeHash();
     if (computed != hash) return false;
-    if (!quantumSignature.empty() && !quantum::isApplicationSignatureEnvelope(quantumSignature)) {
-        return false;
-    }
+    if (!eventTrailerOk(*this)) return false;
     if (type == EventType::GENESIS) {
         if (id != 0) return false;
         if (prevHash != crypto::Hash256{}) return false;
@@ -383,6 +414,7 @@ struct Ledger::Impl {
     std::vector<Block> blocks;
     std::map<crypto::Hash256, uint64_t> blockHashIndex;
     std::map<uint64_t, EventIndex> eventIndex;
+    std::unordered_set<uint64_t> usedEventIds;
     std::map<crypto::PublicKey, std::vector<uint64_t>> eventsByAuthor;
     std::map<EventType, std::vector<uint64_t>> eventsByType;
     std::vector<ChainFork> forks;
@@ -412,6 +444,11 @@ struct Ledger::Impl {
     void rebuildIndexes();
     bool validateBlock(const Block& block);
     bool validateEvent(const Event& event);
+    bool linksToTip(const Block& block) const;
+    bool declaredDifficultyOk(const Block& block, bool requireWork) const;
+    bool eventIdsAcceptable(const std::vector<Event>& events) const;
+    bool eventIdAvailable(uint64_t id) const;
+    void rememberEventIds(const Block& block);
     bool appendBlockUnlocked(const Block& block);
     void handleReorg(const std::vector<Block>& newChain);
     uint64_t calculateChainWork(const std::vector<Block>& chain);
@@ -489,18 +526,61 @@ void Ledger::Impl::rebuildIndexes() {
     }
 }
 
+bool Ledger::Impl::linksToTip(const Block& block) const {
+    if (blocks.empty()) {
+        return currentHeight == 0 && block.height == 0;
+    }
+    return block.prevHash == blocks.back().hash &&
+           block.height == blocks.back().height + 1;
+}
+
+bool Ledger::Impl::declaredDifficultyOk(const Block& block, bool requireWork) const {
+    if (block.difficulty == 0) return false;
+    const bool openingGenesis = blocks.empty() && currentHeight == 0 && block.height == 0;
+    if (openingGenesis) {
+        // Local append of the opening block does not mine. The canonical
+        // genesis hash has no leading zero, so validation exempts that block
+        // alone. Any other opening block still has to clear the chain bar.
+        if (!requireWork) return true;
+        if (block.hash == Ledger::createGenesisBlock().hash) return true;
+    }
+
+    const uint32_t required = std::max(currentDifficulty, 1u);
+    if (block.difficulty < required) return false;
+    if (requireWork && !block.meetsTarget()) return false;
+    return true;
+}
+
+bool Ledger::Impl::eventIdsAcceptable(const std::vector<Event>& events) const {
+    std::unordered_set<uint64_t> seen;
+    seen.reserve(events.size() * 2 + 1);
+    for (const auto& event : events) {
+        if (!seen.insert(event.id).second) return false;
+        if (usedEventIds.find(event.id) != usedEventIds.end()) return false;
+    }
+    return true;
+}
+
+bool Ledger::Impl::eventIdAvailable(uint64_t id) const {
+    if (usedEventIds.find(id) != usedEventIds.end()) return false;
+    for (const auto& pending : pendingEvents) {
+        if (pending.id == id) return false;
+    }
+    return true;
+}
+
+void Ledger::Impl::rememberEventIds(const Block& block) {
+    for (const auto& event : block.events) usedEventIds.insert(event.id);
+}
+
 bool Ledger::Impl::validateBlock(const Block& block) {
     if (block.computeHash() != block.hash) return false;
     if (block.computeMerkleRoot() != block.merkleRoot) return false;
-    if (!block.meetsTarget()) return false;
-    
-    if (block.height > 0) {
-        if (blocks.empty()) return false;
-        if (block.prevHash != blocks.back().hash) return false;
-        if (block.height != blocks.back().height + 1) return false;
-        if (block.timestamp < blocks.back().timestamp) return false;
-    }
-    
+    if (!linksToTip(block)) return false;
+    if (!blocks.empty() && block.timestamp < blocks.back().timestamp) return false;
+    if (!declaredDifficultyOk(block, true)) return false;
+    if (!eventIdsAcceptable(block.events)) return false;
+
     for (const auto& event : block.events) {
         if (!validateEvent(event)) return false;
     }
@@ -515,29 +595,33 @@ bool Ledger::Impl::validateEvent(const Event& event) {
 
 void Ledger::Impl::handleReorg(const std::vector<Block>& newChain) {
     if (newChain.empty()) return;
-    
-    uint64_t forkHeight = newChain[0].height;
-    
-    if (forkHeight >= blocks.size()) return;
-    
+
+    const uint64_t forkHeight = newChain[0].height;
+    const auto forkIt = std::find_if(blocks.begin(), blocks.end(), [&](const Block& block) {
+        return block.height == forkHeight;
+    });
+    if (forkIt == blocks.end()) return;
+    const size_t forkIndex = static_cast<size_t>(forkIt - blocks.begin());
+
     uint64_t newWork = calculateChainWork(newChain);
     uint64_t currentWork = 0;
-    for (size_t i = forkHeight; i < blocks.size(); i++) {
+    for (size_t i = forkIndex; i < blocks.size(); i++) {
         currentWork = saturatingAddWork(currentWork, blocks[i].difficulty);
     }
-    
+
     if (newWork <= currentWork) return;
-    
+
     ChainFork fork;
     fork.forkHeight = forkHeight;
-    fork.forkHash = blocks[forkHeight].prevHash;
-    fork.alternateChain.assign(blocks.begin() + forkHeight, blocks.end());
+    fork.forkHash = forkIt->prevHash;
+    fork.alternateChain.assign(forkIt, blocks.end());
     fork.totalWork = currentWork;
     forks.push_back(fork);
-    
-    blocks.erase(blocks.begin() + forkHeight, blocks.end());
-    
+
+    blocks.erase(forkIt, blocks.end());
+
     for (const auto& block : newChain) {
+        rememberEventIds(block);
         blocks.push_back(block);
         blockHashIndex[block.hash] = block.height;
     }
@@ -606,6 +690,7 @@ bool Ledger::open(const std::string& dbPath) {
         impl_->blocks.clear();
         impl_->blockHashIndex.clear();
         impl_->eventIndex.clear();
+        impl_->usedEventIds.clear();
         impl_->eventsByAuthor.clear();
         impl_->eventsByType.clear();
         impl_->forks.clear();
@@ -636,56 +721,80 @@ bool Ledger::open(const std::string& dbPath) {
         }
 
         uint64_t storedHeight = impl_->currentHeight;
-        uint64_t loadLimit = std::min(storedHeight, static_cast<uint64_t>(impl_->maxBlocksInMemory));
+        const uint64_t memoryCap = static_cast<uint64_t>(impl_->maxBlocksInMemory);
         bool recovered = false;
-        uint64_t recoveredHeight = 0;
 
-        for (uint64_t i = 0; i < loadLimit; i++) {
-            auto blockData = impl_->db.get("block:" + std::to_string(i));
-            if (blockData.empty()) {
-                recovered = true;
-                break;
+        if (memoryCap > 0 && storedHeight > memoryCap) {
+            // The resident window is the tail, so blocks.back() is the stored tip.
+            // A broken link refuses extension and does not install the oldest
+            // blocks as that tip, and it does not delete the stored suffix.
+            std::vector<Block> tail;
+            tail.reserve(static_cast<size_t>(memoryCap));
+            crypto::Hash256 prevHash{};
+            bool havePrev = false;
+            bool linked = true;
+            for (uint64_t i = 0; i < storedHeight; i++) {
+                Block block;
+                if (!loadChainBlock(impl_->db, i, block) ||
+                    (havePrev && block.prevHash != prevHash)) {
+                    linked = false;
+                    break;
+                }
+                impl_->rememberEventIds(block);
+                prevHash = block.hash;
+                havePrev = true;
+                if (i >= storedHeight - memoryCap) tail.push_back(std::move(block));
+            }
+            const bool tipResident = linked &&
+                tail.size() == static_cast<size_t>(memoryCap) &&
+                tail.back().height + 1 == storedHeight;
+            if (tipResident) impl_->blocks = std::move(tail);
+        } else {
+            uint64_t loadLimit = std::min(storedHeight, memoryCap);
+            uint64_t recoveredHeight = 0;
+
+            for (uint64_t i = 0; i < loadLimit; i++) {
+                Block block;
+                if (!loadChainBlock(impl_->db, i, block)) {
+                    recovered = true;
+                    break;
+                }
+                if (i > 0 && block.prevHash != impl_->blocks.back().hash) {
+                    recovered = true;
+                    break;
+                }
+
+                impl_->rememberEventIds(block);
+                impl_->blocks.push_back(std::move(block));
+                recoveredHeight = i + 1;
             }
 
-            Block block = Block::deserialize(blockData);
-            if (block.height != i || block.computeHash() != block.hash) {
-                recovered = true;
-                break;
+            if (recovered) {
+                impl_->currentHeight = recoveredHeight;
+                impl_->eventCounter = maxEventIdFromBlocks(impl_->blocks);
+                impl_->totalWork = chainWorkFromBlocks(impl_->blocks);
+                impl_->currentDifficulty = impl_->blocks.empty() ? 1 : impl_->blocks.back().difficulty;
+
+                for (uint64_t i = recoveredHeight; i < storedHeight; i++) {
+                    impl_->db.del("block:" + std::to_string(i));
+                }
+
+                std::vector<uint8_t> heightBuf;
+                writeU64(heightBuf, impl_->currentHeight);
+                impl_->db.put("meta:height", heightBuf);
+
+                std::vector<uint8_t> counterBuf;
+                writeU64(counterBuf, impl_->eventCounter);
+                impl_->db.put("meta:eventCounter", counterBuf);
+
+                std::vector<uint8_t> workBuf;
+                writeU64(workBuf, impl_->totalWork);
+                impl_->db.put("meta:totalWork", workBuf);
+
+                std::vector<uint8_t> diffBuf;
+                writeU32(diffBuf, impl_->currentDifficulty);
+                impl_->db.put("meta:difficulty", diffBuf);
             }
-            if (i > 0 && block.prevHash != impl_->blocks.back().hash) {
-                recovered = true;
-                break;
-            }
-
-            impl_->blocks.push_back(block);
-            recoveredHeight = i + 1;
-        }
-
-        if (recovered) {
-            impl_->currentHeight = recoveredHeight;
-            impl_->eventCounter = maxEventIdFromBlocks(impl_->blocks);
-            impl_->totalWork = chainWorkFromBlocks(impl_->blocks);
-            impl_->currentDifficulty = impl_->blocks.empty() ? 1 : impl_->blocks.back().difficulty;
-
-            for (uint64_t i = recoveredHeight; i < storedHeight; i++) {
-                impl_->db.del("block:" + std::to_string(i));
-            }
-
-            std::vector<uint8_t> heightBuf;
-            writeU64(heightBuf, impl_->currentHeight);
-            impl_->db.put("meta:height", heightBuf);
-
-            std::vector<uint8_t> counterBuf;
-            writeU64(counterBuf, impl_->eventCounter);
-            impl_->db.put("meta:eventCounter", counterBuf);
-
-            std::vector<uint8_t> workBuf;
-            writeU64(workBuf, impl_->totalWork);
-            impl_->db.put("meta:totalWork", workBuf);
-
-            std::vector<uint8_t> diffBuf;
-            writeU32(diffBuf, impl_->currentDifficulty);
-            impl_->db.put("meta:difficulty", diffBuf);
         }
 
         impl_->rebuildIndexes();
@@ -747,9 +856,17 @@ bool Ledger::append(const Event& event) {
 
     {
         std::lock_guard<std::mutex> lock(impl_->mtx);
+        std::lock_guard<std::mutex> eventLock(impl_->eventMtx);
+
+        if (e.id != 0 && !impl_->eventIdAvailable(e.id)) return false;
 
         if (e.id == 0) {
+            if (impl_->eventCounter == std::numeric_limits<uint64_t>::max()) return false;
             e.id = ++impl_->eventCounter;
+            while (!impl_->eventIdAvailable(e.id)) {
+                if (impl_->eventCounter == std::numeric_limits<uint64_t>::max()) return false;
+                e.id = ++impl_->eventCounter;
+            }
         } else if (e.id > impl_->eventCounter) {
             impl_->eventCounter = e.id;
         }
@@ -775,10 +892,7 @@ bool Ledger::append(const Event& event) {
         std::vector<uint8_t> counterBuf;
         writeU64(counterBuf, impl_->eventCounter);
         impl_->db.put("meta:eventCounter", counterBuf);
-    }
 
-    {
-        std::lock_guard<std::mutex> lock(impl_->eventMtx);
         if (impl_->pendingEvents.size() >= impl_->maxPendingEvents) {
             return false;
         }
@@ -792,9 +906,13 @@ bool Ledger::append(const Event& event) {
 bool Ledger::Impl::appendBlockUnlocked(const Block& block) {
     Block b = block;
 
-    if (b.difficulty == 0) {
-        b.difficulty = currentDifficulty;
+    if (!linksToTip(b)) return false;
+    if (!declaredDifficultyOk(b, false)) return false;
+    if (!eventIdsAcceptable(b.events)) return false;
+    for (const auto& event : b.events) {
+        if (!eventTrailerOk(event)) return false;
     }
+
     if (b.merkleRoot == crypto::Hash256{}) {
         b.merkleRoot = b.computeMerkleRoot();
     }
@@ -807,6 +925,7 @@ bool Ledger::Impl::appendBlockUnlocked(const Block& block) {
     blockHashIndex[b.hash] = b.height;
     currentHeight = b.height + 1;
     totalWork = b.totalWork;
+    rememberEventIds(b);
 
     uint64_t maxEventId = eventCounter;
     for (size_t i = 0; i < b.events.size(); i++) {
@@ -837,11 +956,19 @@ bool Ledger::Impl::appendBlockUnlocked(const Block& block) {
         std::lock_guard<std::mutex> lock(eventMtx);
         if (!pendingEvents.empty() && !b.events.empty()) {
             std::unordered_set<std::string> included;
+            std::unordered_set<uint64_t> includedIds;
             included.reserve(b.events.size() * 2);
-            for (const auto& e : b.events) included.insert(crypto::toHex(e.hash));
+            includedIds.reserve(b.events.size() * 2 + 1);
+            for (const auto& ev : b.events) {
+                included.insert(crypto::toHex(ev.hash));
+                includedIds.insert(ev.id);
+            }
             pendingEvents.erase(
                 std::remove_if(pendingEvents.begin(), pendingEvents.end(),
-                               [&included](const Event& e) { return included.count(crypto::toHex(e.hash)) > 0; }),
+                               [&included, &includedIds](const Event& e) {
+                                   return included.count(crypto::toHex(e.hash)) > 0 ||
+                                          includedIds.count(e.id) > 0;
+                               }),
                 pendingEvents.end());
         }
     }
@@ -869,7 +996,8 @@ bool Ledger::Impl::appendBlockUnlocked(const Block& block) {
     return true;
 }
 
-// Append a fully formed block. Must link prevHash to the current tip (or genesis).
+// Append a fully formed block. Height 0 is accepted only as the opening genesis.
+// Every later block must extend the resident tip by previous hash and next height.
 bool Ledger::appendBlock(const Block& block) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     return impl_->appendBlockUnlocked(block);
@@ -905,10 +1033,9 @@ Event Ledger::getEvent(uint64_t id) const {
     auto it = impl_->eventIndex.find(id);
     if (it != impl_->eventIndex.end()) {
         const EventIndex& idx = it->second;
-        if (idx.blockHeight < impl_->blocks.size()) {
-            const Block& block = impl_->blocks[idx.blockHeight];
-            if (idx.indexInBlock < block.events.size()) {
-                return block.events[idx.indexInBlock];
+        if (const Block* block = findResidentBlock(impl_->blocks, idx.blockHeight)) {
+            if (idx.indexInBlock < block->events.size()) {
+                return block->events[idx.indexInBlock];
             }
         }
     }
@@ -921,8 +1048,8 @@ Event Ledger::getEvent(uint64_t id) const {
 Block Ledger::getBlock(uint64_t height) const {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     
-    if (height < impl_->blocks.size()) {
-        return impl_->blocks[height];
+    if (const Block* block = findResidentBlock(impl_->blocks, height)) {
+        return *block;
     }
     
     auto data = impl_->db.get("block:" + std::to_string(height));
@@ -935,8 +1062,8 @@ Block Ledger::getBlockByHash(const crypto::Hash256& hash) const {
     
     auto it = impl_->blockHashIndex.find(hash);
     if (it != impl_->blockHashIndex.end()) {
-        if (it->second < impl_->blocks.size()) {
-            return impl_->blocks[it->second];
+        if (const Block* block = findResidentBlock(impl_->blocks, it->second)) {
+            if (block->hash == hash) return *block;
         }
     }
     
@@ -1038,7 +1165,10 @@ uint32_t Ledger::currentDifficulty() const {
 
 bool Ledger::verify() const {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-    
+
+    if (impl_->blocks.empty()) return impl_->currentHeight == 0;
+    if (impl_->blocks.back().height + 1 != impl_->currentHeight) return false;
+
     for (size_t i = 0; i < impl_->blocks.size(); i++) {
         if (!verifyBlock(impl_->blocks[i])) return false;
         
@@ -1067,22 +1197,28 @@ bool Ledger::verifyBlock(const Block& block) const {
 
 bool Ledger::verifyChain() const {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-    
-    crypto::Hash256 prevHash{};
-    uint64_t expectedHeight = 0;
+
+    if (impl_->blocks.empty()) return impl_->currentHeight == 0;
+    if (impl_->blocks.back().height + 1 != impl_->currentHeight) return false;
+
+    crypto::Hash256 prevHash = impl_->blocks.front().prevHash;
+    uint64_t expectedHeight = impl_->blocks.front().height;
+    bool first = true;
     uint64_t totalWork = 0;
-    
+
     for (const auto& block : impl_->blocks) {
         if (block.height != expectedHeight) return false;
-        if (expectedHeight > 0 && block.prevHash != prevHash) return false;
+        if (!first && block.prevHash != prevHash) return false;
         if (block.computeHash() != block.hash) return false;
         if (block.computeMerkleRoot() != block.merkleRoot) return false;
-        
+
         prevHash = block.hash;
         expectedHeight++;
         totalWork = saturatingAddWork(totalWork, block.difficulty);
+        first = false;
     }
-    
+
+    (void)totalWork;
     return true;
 }
 
@@ -1195,6 +1331,7 @@ bool Ledger::importFromFile(const std::string& path) {
     impl_->blocks.clear();
     impl_->blockHashIndex.clear();
     impl_->eventIndex.clear();
+    impl_->usedEventIds.clear();
     impl_->eventsByAuthor.clear();
     impl_->eventsByType.clear();
     
@@ -1207,6 +1344,11 @@ bool Ledger::importFromFile(const std::string& path) {
         f.read(reinterpret_cast<char*>(data.data()), size);
         
         Block block = Block::deserialize(data);
+        if (!impl_->eventIdsAcceptable(block.events)) {
+            impl_->rebuildIndexes();
+            return false;
+        }
+        impl_->rememberEventIds(block);
         impl_->blocks.push_back(block);
         impl_->blockHashIndex[block.hash] = block.height;
         

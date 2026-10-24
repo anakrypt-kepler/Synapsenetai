@@ -1,17 +1,13 @@
-// Load a GGUF into llama.cpp. Sleep inhibitor keeps the laptop awake while
-// inferencing. Unload before swapping models — two models will OOM a 8 GB box.
+// Load a GGUF into llama.cpp. Unload before swapping models — two models will OOM a 8 GB box.
 
 #include "model/model_loader.h"
 #include "model/model_inference.h"
-#include "utils/sleep_inhibitor.h"
 #include "utils/logger.h"
 #include "utils/config.h"
 #include <fstream>
 #include <atomic>
-#include <thread>
 #include <mutex>
 #include <filesystem>
-#include <chrono>
 #include <cmath>
 #include <numeric>
 #include <algorithm>
@@ -20,12 +16,8 @@
 #include <iomanip>
 #include <cctype>
 #include <sys/resource.h>
-#include <cstdio>
 #include <cstdlib>
 #include <mutex>
-#ifndef _WIN32
-#include <sys/wait.h>
-#endif
 #ifdef USE_LLAMA_CPP
 #include "llama.h"
 #endif
@@ -125,45 +117,57 @@ static uint64_t getFreeDiskSpace(const std::string& path) {
     }
 }
 
-static std::string shellEscape(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 2);
-    out.push_back('\'');
-    for (char c : s) {
-        if (c == '\'') out.append("'\\''");
-        else out.push_back(c);
+static bool hasUrlScheme(const std::string& value, const char* scheme) {
+    const size_t n = std::char_traits<char>::length(scheme);
+    if (value.size() < n) return false;
+    for (size_t i = 0; i < n; ++i) {
+        unsigned char c = static_cast<unsigned char>(value[i]);
+        if (c >= 'A' && c <= 'Z') c = static_cast<unsigned char>(c - 'A' + 'a');
+        if (c != static_cast<unsigned char>(scheme[i])) return false;
     }
-    out.push_back('\'');
-    return out;
+    return true;
 }
 
-static std::string trimWS(const std::string& s) {
-    size_t b = 0;
-    while (b < s.size() && std::isspace(static_cast<unsigned char>(s[b]))) b++;
-    size_t e = s.size();
-    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) e--;
-    return s.substr(b, e - b);
+static bool urlUsesHttps(const std::string& url) {
+    constexpr char kScheme[] = "https://";
+    constexpr size_t kSchemeLen = sizeof(kScheme) - 1;
+    return hasUrlScheme(url, kScheme) && url.size() > kSchemeLen;
 }
 
-static int decodeSystemExitCode(int rc) {
-#ifdef _WIN32
-    return rc;
-#else
-    if (rc == -1) return -1;
-    if (WIFEXITED(rc)) return WEXITSTATUS(rc);
-    if (WIFSIGNALED(rc)) return 128 + WTERMSIG(rc);
-    return rc;
-#endif
-}
-
-static std::string readSmallFile(const std::string& path, size_t maxBytes) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return {};
-    std::string out;
-    out.resize(maxBytes);
-    in.read(out.data(), static_cast<std::streamsize>(maxBytes));
-    out.resize(static_cast<size_t>(in.gcount()));
-    return out;
+static bool urlContainsShellMetacharacters(const std::string& url) {
+    for (unsigned char c : url) {
+        if (c <= 0x20 || c == 0x7F) return true;
+        switch (c) {
+        case '$':
+        case '`':
+        case '\\':
+        case '"':
+        case '\'':
+        case ';':
+        case '&':
+        case '|':
+        case '<':
+        case '>':
+        case '(':
+        case ')':
+        case '{':
+        case '}':
+        case '[':
+        case ']':
+        case '*':
+        case '?':
+        case '!':
+        case '#':
+        case '%':
+        case '^':
+        case '~':
+        case '@':
+            return true;
+        default:
+            break;
+        }
+    }
+    return false;
 }
 
 static std::string defaultModelsDir() {
@@ -188,7 +192,7 @@ static std::string defaultModelsDir() {
 }
 
 static std::string modelUrlForName(const std::string& name) {
-    if (name.rfind("http://", 0) == 0 || name.rfind("https://", 0) == 0) return name;
+    if (hasUrlScheme(name, "http://") || hasUrlScheme(name, "https://")) return name;
     if (name == "llama-2-7b-chat.Q2_K.gguf") {
         return "https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q2_K.gguf";
     }
@@ -205,36 +209,6 @@ static std::string modelUrlForName(const std::string& name) {
         return "https://huggingface.co/TheBloke/deepseek-coder-6.7B-instruct-GGUF/resolve/main/deepseek-coder-6.7b-instruct.Q4_K_M.gguf";
     }
     return {};
-}
-
-static uint64_t tryFetchContentLengthCurl(const std::string& url) {
-#ifndef _WIN32
-    std::string cmd = "curl -sI -L " + shellEscape(url);
-    FILE* fp = popen(cmd.c_str(), "r");
-    if (!fp) return 0;
-    char buf[4096];
-    uint64_t len = 0;
-    while (fgets(buf, sizeof(buf), fp)) {
-        std::string line(buf);
-        std::string lower;
-        lower.reserve(line.size());
-        for (char c : line) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-        const std::string k = "content-length:";
-        if (lower.rfind(k, 0) == 0) {
-            std::string v = trimWS(line.substr(k.size()));
-            try {
-                len = static_cast<uint64_t>(std::stoull(v));
-            } catch (...) {
-                len = 0;
-            }
-        }
-    }
-    pclose(fp);
-    return len;
-#else
-    (void)url;
-    return 0;
-#endif
 }
 
 ModelLoader::ModelLoader() : impl_(std::make_unique<Impl>()) {}
@@ -790,179 +764,45 @@ bool ModelLoader::downloadModel(const std::string& modelName,
         impl_->setError("Unknown model id (no URL mapping): " + modelName);
         return false;
     }
+    if (!urlUsesHttps(url)) {
+        impl_->setError("Refusing model URL that does not use https");
+        return false;
+    }
+    if (urlContainsShellMetacharacters(url)) {
+        impl_->setError("Refusing model URL that contains shell metacharacters");
+        return false;
+    }
 
     std::string modelsDir = impl_->config.cacheDir.empty() ? defaultModelsDir() : impl_->config.cacheDir;
-    std::filesystem::create_directories(modelsDir);
 
     std::string filename = modelName;
-    if (filename.rfind("http://", 0) == 0 || filename.rfind("https://", 0) == 0) {
+    if (hasUrlScheme(filename, "https://")) {
         filename = std::filesystem::path(filename).filename().string();
         if (filename.empty()) filename = "model.gguf";
     }
 
-    std::string dest = (std::filesystem::path(modelsDir) / filename).string();
-    std::string part = dest + ".part";
-    std::string errPath = part + ".err";
+    const std::filesystem::path destPath = std::filesystem::path(modelsDir) / filename;
+    const std::string dest = destPath.string();
 
     impl_->info.name = filename;
     impl_->info.path = dest;
 
-    if (std::filesystem::exists(dest) && std::filesystem::file_size(dest) > 0) {
+    bool alreadyPresent = false;
+    {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(destPath, ec) && !ec) {
+            const auto size = std::filesystem::file_size(destPath, ec);
+            alreadyPresent = !ec && size > 0;
+        }
+    }
+    if (alreadyPresent) {
         if (progressCallback) progressCallback(1.0);
         return true;
     }
 
-    uint64_t existingPart = 0;
-    {
-        std::error_code ec;
-        if (std::filesystem::exists(part, ec) && !ec) {
-            existingPart = static_cast<uint64_t>(std::filesystem::file_size(part, ec));
-            if (ec) existingPart = 0;
-        }
-    }
-
-    impl_->downloading = true;
-    impl_->setState(ModelState::DOWNLOADING);
-
-    uint64_t expected = tryFetchContentLengthCurl(url);
-    if (expected > 0) {
-        impl_->info.sizeBytes = expected;
-    }
-    if (expected > 0) {
-        uint64_t free = getFreeDiskSpace(dest);
-        if (free > 0 && free < expected + (64ULL * 1024 * 1024)) {
-            impl_->downloading = false;
-            impl_->setError("Not enough disk space for download: need " + formatBytes(expected) +
-                            ", available " + formatBytes(free));
-            return false;
-        }
-    }
-
-    std::atomic<bool> done{false};
-    std::thread watcher([&]() {
-        while (!done.load()) {
-            if (progressCallback) {
-                uint64_t cur = 0;
-                std::error_code ec;
-                if (std::filesystem::exists(part, ec) && !ec) {
-                    cur = std::filesystem::file_size(part, ec);
-                    if (ec) cur = 0;
-                }
-                if (expected > 0) {
-                    double p = static_cast<double>(cur) / static_cast<double>(expected);
-                    if (p > 0.99) p = 0.99;
-                    if (p < 0.0) p = 0.0;
-                    progressCallback(p);
-                } else {
-                    progressCallback(cur > 0 ? 0.5 : 0.0);
-                }
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        }
-    });
-
-    utils::Logger::info("Downloading model: " + filename);
-    utils::SleepInhibitor inhibitor;
-    inhibitor.acquire("SynapseNet model download");
-    const int maxAttempts = 50;
-    int attempt = 0;
-    int lastExit = 0;
-    std::string lastErr;
-    for (; attempt < maxAttempts; ++attempt) {
-#ifdef _WIN32
-        std::string cmd = "powershell -NoProfile -Command \""
-                          "$ProgressPreference='SilentlyContinue';"
-                          "Invoke-WebRequest -Uri " + url + " -OutFile " + part + "\"";
-#else
-        std::string cmd = "curl -sS -L --fail --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 ";
-        if (existingPart > 0) {
-            cmd += "-C - ";
-        }
-        cmd += "--speed-time 60 --speed-limit 1024 ";
-        cmd += "-o " + shellEscape(part) + " " + shellEscape(url);
-        cmd += " >/dev/null 2>" + shellEscape(errPath);
-#endif
-
-        uint64_t before = 0;
-        {
-            std::error_code ec;
-            if (std::filesystem::exists(part, ec) && !ec) {
-                before = static_cast<uint64_t>(std::filesystem::file_size(part, ec));
-                if (ec) before = 0;
-            }
-        }
-
-        int rc = std::system(cmd.c_str());
-        lastExit = decodeSystemExitCode(rc);
-
-        uint64_t after = before;
-        {
-            std::error_code ec;
-            if (std::filesystem::exists(part, ec) && !ec) {
-                after = static_cast<uint64_t>(std::filesystem::file_size(part, ec));
-                if (ec) after = before;
-            }
-        }
-
-        if (expected > 0 && after >= expected) {
-            lastExit = 0;
-            lastErr.clear();
-            break;
-        }
-
-        if (lastExit == 0 && expected > 0 && after < expected) {
-            lastExit = 1;
-            lastErr = "Download incomplete: " + formatBytes(after) + " / " + formatBytes(expected);
-        } else if (lastExit != 0) {
-            lastErr = trimWS(readSmallFile(errPath, 4096));
-            if (lastErr.empty()) lastErr = "curl exit " + std::to_string(lastExit);
-        } else {
-            lastErr.clear();
-        }
-
-        if (expected > 0 && after >= expected) break;
-        if (attempt + 1 >= maxAttempts) break;
-
-        utils::Logger::warn("Download retry (" + std::to_string(attempt + 1) + "/" + std::to_string(maxAttempts) +
-                            ") exit=" + std::to_string(lastExit) + " bytes=" + formatBytes(after) +
-                            (lastErr.empty() ? "" : " err=" + lastErr));
-        existingPart = after;
-        std::this_thread::sleep_for(std::chrono::seconds(3));
-    }
-
-    done = true;
-    if (watcher.joinable()) watcher.join();
-
-    if (lastExit != 0) {
-        impl_->downloading = false;
-        std::string msg = "Download failed";
-        if (!lastErr.empty()) msg += ": " + lastErr;
-        msg += " (exit " + std::to_string(lastExit) + ")";
-        impl_->setError(msg);
-        std::error_code ec;
-        uint64_t sz = 0;
-        if (std::filesystem::exists(part, ec) && !ec) {
-            sz = static_cast<uint64_t>(std::filesystem::file_size(part, ec));
-            if (ec) sz = 0;
-        }
-        if (sz == 0) {
-            std::filesystem::remove(part, ec);
-        }
-        return false;
-    }
-
-    std::error_code ec;
-    std::filesystem::rename(part, dest, ec);
-    if (ec) {
-        impl_->downloading = false;
-        impl_->setError("Download saved but rename failed: " + ec.message());
-        return false;
-    }
-
     impl_->downloading = false;
-    impl_->setState(ModelState::UNLOADED);
-    if (progressCallback) progressCallback(1.0);
-    return true;
+    impl_->setError("Cannot download model without a shell command");
+    return false;
 }
 
 bool ModelLoader::cancelDownload() {

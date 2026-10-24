@@ -518,9 +518,14 @@ bool verifyPrivateTx(const PrivateTx& tx, std::string& err) {
     }
 
     const auto pqc = quantum::getPQCBackendStatus();
-    // MLSAG authorizes the spend. A Dilithium envelope on this blob would
-    // link stealth outputs. If a legacy v3 pqcSig is present, still check it.
-    if (pqc.dilithiumReal && !tx.pqcSig.empty()) {
+    // MLSAG authorizes the spend. Dilithium on this blob is a linkability
+    // fingerprint, so an empty envelope stays valid. A present envelope must
+    // verify; if Dilithium is unavailable it cannot, so fail closed.
+    if (!tx.pqcSig.empty()) {
+        if (!pqc.dilithiumReal) {
+            err = "pqc_sig unverifiable";
+            return false;
+        }
         std::vector<uint8_t> pqcMsg = message;
         pqcMsg.insert(pqcMsg.end(), tx.txid.begin(), tx.txid.end());
         if (!StealthAddress::verifyHybrid(pqcMsg, tx.pqcSig)) {

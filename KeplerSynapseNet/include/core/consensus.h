@@ -3,6 +3,8 @@
 // Validator set + voting around ledger events.
 // Not Proof of Work. Validators are selected from stake/reputation, they vote
 // APPROVE/REJECT/ABSTAIN, and a majority + quorum finalizes the event.
+// Voter ids are stored with each result. A tally ahead of that list is refused,
+// and votes are refused after votingTimeout. Older result records still load.
 // Proposer selection is deterministic from (seed, height) so every node agrees.
 
 #include "crypto/crypto.h"
@@ -71,6 +73,9 @@ struct ValidationResult {
     uint64_t endTime;
     std::vector<Vote> votes;
     uint64_t reward;
+    // Public keys already counted in totalVotes. Records written before this
+    // list existed load with it empty; a tally ahead of it refuses new votes.
+    std::vector<crypto::PublicKey> voterIds;
 };
 
 struct ConsensusConfig {
@@ -81,8 +86,10 @@ struct ConsensusConfig {
     double majorityThreshold = 0.6;
     double minReputation = 0.5;
     uint64_t submissionStake = 10;
+    // Share of eligible validators that must vote before an event can finalize.
     double quorum = 0.67;
     uint32_t blockFinality = 6;
+    // Seconds after startTime during which a new vote is accepted.
     uint32_t votingTimeout = 300;
     std::vector<uint8_t> seed;
 };

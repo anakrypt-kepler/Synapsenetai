@@ -167,6 +167,18 @@ static std::vector<uint8_t> encodeMint(uint64_t amount, const crypto::PublicKey&
                                        bool claimed, const std::vector<uint8_t>& lockP);
 static bool decodeMint(const std::vector<uint8_t>& rec, RewardMint& out);
 
+static bool verifyRingCtAgainstPool(
+    const Transaction& tx,
+    const std::unordered_map<std::string, std::vector<uint8_t>>& rctOuts,
+    const std::unordered_set<std::string>& rctKeyImages,
+    const std::unordered_set<std::string>& rctGenesis,
+    std::unordered_set<std::string>& spentImages,
+    std::unordered_map<std::string, std::vector<uint8_t>>& createdRct);
+
+static bool inputsEqualOutputsPlusFee(
+    const Transaction& tx,
+    const std::unordered_map<std::string, std::vector<UTXO>>& utxoSet);
+
 static bool verifyTransactionLocked(
     const Transaction& tx,
     const std::unordered_map<std::string, std::vector<UTXO>>& utxoSet,
@@ -174,7 +186,8 @@ static bool verifyTransactionLocked(
     const std::vector<Transaction>& pending,
     uint64_t minFeePerKB,
     const std::unordered_map<std::string, std::vector<uint8_t>>& rctOuts,
-    const std::unordered_set<std::string>& rctKeyImages);
+    const std::unordered_set<std::string>& rctKeyImages,
+    const std::unordered_set<std::string>& rctGenesis);
 
 std::vector<uint8_t> TxInput::serialize() const {
     std::vector<uint8_t> out;
@@ -586,11 +599,14 @@ static void seedAndLoadRct(
 static bool rctMemberKnown(
     const std::unordered_map<std::string, std::vector<uint8_t>>& rctOuts,
     const std::unordered_map<std::string, std::vector<uint8_t>>& createdRct,
+    const std::unordered_set<std::string>& rctGenesis,
     const std::vector<uint8_t>& P,
     const std::vector<uint8_t>& C
 ) {
     if (P.size() != 32 || C.size() != 32) return false;
     std::string hex = crypto::toHex(P);
+    // Node-local random genesis points are padding, not prior outputs.
+    if (rctGenesis.count(hex) > 0) return false;
     auto it = createdRct.find(hex);
     if (it != createdRct.end()) {
         return it->second.size() == C.size() &&
@@ -883,7 +899,7 @@ bool TransferManager::submitTransaction(const Transaction& tx) {
         // First owner sweep stays secp-signed and linkable; do not require Dilithium.
         return applyRewardClaimLocked(tx);
     }
-    if (!verifyTransactionLocked(tx, impl_->utxoSet, impl_->mempool, impl_->pending, impl_->config.minFeePerKB, impl_->rctOuts, impl_->rctKeyImages)) return false;
+    if (!verifyTransactionLocked(tx, impl_->utxoSet, impl_->mempool, impl_->pending, impl_->config.minFeePerKB, impl_->rctOuts, impl_->rctKeyImages, impl_->rctGenesis)) return false;
 
     if (impl_->mempool.size() >= impl_->config.maxMempoolSize) {
         auto feeRateLess = [](const Transaction& lhs, const Transaction& rhs) -> bool {
@@ -949,7 +965,27 @@ bool TransferManager::confirmTransaction(const crypto::Hash256& txid) {
         [&txid](const Transaction& tx) { return tx.txid == txid; });
     
     if (it == impl_->pending.end()) return false;
-    
+
+    // Signature and value conservation before any input is marked spent.
+    // An empty quantum signature stays valid for a coinbase with no inputs,
+    // the first secp reward sweep, and an MLSAG RingCT spend.
+    if (!it->verify()) return false;
+    if (!quantumSignaturePolicyOk(*it)) return false;
+    if (it->isRewardClaim()) {
+        return applyRewardClaimLocked(*it);
+    }
+    if (it->isRingCtSpend()) {
+        if (it->fee != 0) return false;
+        std::unordered_set<std::string> spentImages;
+        std::unordered_map<std::string, std::vector<uint8_t>> createdRct;
+        if (!verifyRingCtAgainstPool(*it, impl_->rctOuts, impl_->rctKeyImages, impl_->rctGenesis,
+                                      spentImages, createdRct)) {
+            return false;
+        }
+    } else if (!it->inputs.empty()) {
+        if (!inputsEqualOutputsPlusFee(*it, impl_->utxoSet)) return false;
+    }
+
     Transaction tx = *it;
     tx.status = TxStatus::CONFIRMED;
     impl_->pending.erase(it);
@@ -1160,6 +1196,7 @@ static bool verifyRingCtAgainstPool(
     const Transaction& tx,
     const std::unordered_map<std::string, std::vector<uint8_t>>& rctOuts,
     const std::unordered_set<std::string>& rctKeyImages,
+    const std::unordered_set<std::string>& rctGenesis,
     std::unordered_set<std::string>& spentImages,
     std::unordered_map<std::string, std::vector<uint8_t>>& createdRct
 ) {
@@ -1173,8 +1210,13 @@ static bool verifyRingCtAgainstPool(
         if (rctKeyImages.count(hex) || spentImages.count(hex)) return false;
         spentImages.insert(hex);
         if (inp.ringP.size() != inp.ringC.size() || inp.ringP.size() < 2) return false;
+        std::unordered_set<std::string> seenRing;
+        seenRing.reserve(inp.ringP.size() * 2);
         for (size_t i = 0; i < inp.ringP.size(); ++i) {
-            if (!rctMemberKnown(rctOuts, createdRct, inp.ringP[i], inp.ringC[i])) return false;
+            if (inp.ringP[i].size() != 32) return false;
+            std::string member = crypto::toHex(inp.ringP[i]);
+            if (!seenRing.insert(member).second) return false;
+            if (!rctMemberKnown(rctOuts, createdRct, rctGenesis, inp.ringP[i], inp.ringC[i])) return false;
         }
     }
     for (const auto& o : tx.outputs) {
@@ -1182,7 +1224,7 @@ static bool verifyRingCtAgainstPool(
         auto P = outputP(o);
         if (P.size() != 32) return false;
         std::string hex = crypto::toHex(P);
-        if (rctOuts.count(hex) || createdRct.count(hex)) return false;
+        if (rctGenesis.count(hex) || rctOuts.count(hex) || createdRct.count(hex)) return false;
         createdRct[hex] = o.commitment;
     }
     return true;
@@ -1205,6 +1247,87 @@ static bool sumOutputCommitments(const std::vector<TxOutput>& outputs, std::vect
     return sum.size() == 32;
 }
 
+static bool rewardClaimAuthorAndAmountOk(const Transaction& tx, const RewardMint& mint) {
+    if (tx.fee != 0 || tx.inputs.size() != 1 || tx.outputs.empty()) return false;
+    const auto& inp = tx.inputs.front();
+    if (inp.outputIndex != 0) return false;
+    if (inp.pubKey != mint.author) return false;
+    std::vector<TxOutput> hidden;
+    hidden.reserve(tx.outputs.size());
+    for (const auto& outp : tx.outputs) {
+        if (!outp.isRingCt()) return false;
+        hidden.push_back(outp);
+    }
+    if (hidden.empty()) return false;
+    std::vector<uint8_t> sumC;
+    if (!sumOutputCommitments(hidden, sumC)) return false;
+    return crypto::ConfidentialTx::verifyKnownAmount(sumC, mint.amount, tx.balanceProof);
+}
+
+static bool lookupUnspentAmount(
+    const std::unordered_map<std::string, std::vector<UTXO>>& utxoSet,
+    const TxInput& inp,
+    uint64_t& amountOut) {
+    const auto ownerAliases = addressAliasesFromPubKey(inp.pubKey);
+    if (ownerAliases[0].empty()) return false;
+    for (const auto& ownerAddr : ownerAliases) {
+        if (ownerAddr.empty()) continue;
+        auto it = utxoSet.find(ownerAddr);
+        if (it == utxoSet.end()) continue;
+        for (const auto& utxo : it->second) {
+            if (!utxo.spent && utxo.txHash == inp.prevTxHash && utxo.outputIndex == inp.outputIndex) {
+                amountOut = utxo.amount;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool inputsEqualOutputsPlusFee(
+    const Transaction& tx,
+    const std::unordered_map<std::string, std::vector<UTXO>>& utxoSet) {
+    if (tx.inputs.empty() || tx.outputs.empty()) return false;
+    std::unordered_set<std::string> seenInputs;
+    uint64_t totalInput = 0;
+    for (const auto& inp : tx.inputs) {
+        std::string key = crypto::toHex(inp.prevTxHash) + ":" + std::to_string(inp.outputIndex);
+        if (!seenInputs.insert(key).second) return false;
+        uint64_t amount = 0;
+        if (!lookupUnspentAmount(utxoSet, inp, amount)) return false;
+        if (!safeAddU64(totalInput, amount, totalInput)) return false;
+    }
+
+    if (tx.isShield()) {
+        std::vector<TxOutput> hidden;
+        uint64_t transparentOut = 0;
+        for (const auto& outp : tx.outputs) {
+            if (outp.isRingCt()) {
+                hidden.push_back(outp);
+            } else {
+                if (outp.amount == 0 || !isValidWalletAddress(outp.address)) return false;
+                if (!safeAddU64(transparentOut, outp.amount, transparentOut)) return false;
+            }
+        }
+        if (hidden.empty()) return false;
+        std::vector<uint8_t> sumC;
+        if (!sumOutputCommitments(hidden, sumC)) return false;
+        if (totalInput < tx.fee) return false;
+        uint64_t rest = totalInput - tx.fee;
+        if (rest < transparentOut) return false;
+        return crypto::ConfidentialTx::verifyKnownAmount(sumC, rest - transparentOut, tx.balanceProof);
+    }
+
+    uint64_t totalOutput = 0;
+    for (const auto& outp : tx.outputs) {
+        if (outp.amount == 0 || !isValidWalletAddress(outp.address)) return false;
+        if (!safeAddU64(totalOutput, outp.amount, totalOutput)) return false;
+    }
+    uint64_t required = 0;
+    if (!safeAddU64(totalOutput, tx.fee, required)) return false;
+    return totalInput == required;
+}
+
 static bool verifyTransactionLocked(
     const Transaction& tx,
     const std::unordered_map<std::string, std::vector<UTXO>>& utxoSet,
@@ -1212,7 +1335,8 @@ static bool verifyTransactionLocked(
     const std::vector<Transaction>& pending,
     uint64_t minFeePerKB,
     const std::unordered_map<std::string, std::vector<uint8_t>>& rctOuts,
-    const std::unordered_set<std::string>& rctKeyImages) {
+    const std::unordered_set<std::string>& rctKeyImages,
+    const std::unordered_set<std::string>& rctGenesis) {
     if (tx.inputs.empty() || tx.outputs.empty()) return false;
     if (tx.inputs.size() > MAX_TX_INPUTS || tx.outputs.size() > MAX_TX_OUTPUTS) return false;
     if (tx.timestamp == 0) return false;
@@ -1240,7 +1364,7 @@ static bool verifyTransactionLocked(
         for (const auto& ptx : pending) takeImages(ptx);
         std::unordered_set<std::string> spentImages;
         std::unordered_map<std::string, std::vector<uint8_t>> createdRct;
-        return verifyRingCtAgainstPool(tx, rctOuts, pendingImages, spentImages, createdRct);
+        return verifyRingCtAgainstPool(tx, rctOuts, pendingImages, rctGenesis, spentImages, createdRct);
     }
 
     std::unordered_set<std::string> seenInputs;
@@ -1323,7 +1447,7 @@ static bool verifyTransactionLocked(
 
 bool TransferManager::verifyTransaction(const Transaction& tx) const {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-    return verifyTransactionLocked(tx, impl_->utxoSet, impl_->mempool, impl_->pending, impl_->config.minFeePerKB, impl_->rctOuts, impl_->rctKeyImages);
+    return verifyTransactionLocked(tx, impl_->utxoSet, impl_->mempool, impl_->pending, impl_->config.minFeePerKB, impl_->rctOuts, impl_->rctKeyImages, impl_->rctGenesis);
 }
 
 namespace {
@@ -1339,18 +1463,39 @@ static bool verifyTransactionForBlock(
     const std::unordered_map<std::string, std::vector<synapse::core::UTXO>>& utxoSet,
     const std::unordered_map<std::string, std::vector<uint8_t>>& rctOuts,
     const std::unordered_set<std::string>& rctKeyImages,
+    const std::unordered_set<std::string>& rctGenesis,
+    const std::unordered_map<std::string, RewardMint>& mints,
+    const std::unordered_map<std::string, synapse::core::Transaction>& mempool,
+    const database::Database& db,
     uint64_t minFeePerKB,
     std::unordered_set<std::string>& spentOutpoints,
     std::unordered_map<std::string, SimUtxo>& createdOutpoints,
     std::unordered_set<std::string>& spentImages,
-    std::unordered_map<std::string, std::vector<uint8_t>>& createdRct) {
+    std::unordered_map<std::string, std::vector<uint8_t>>& createdRct,
+    std::unordered_set<std::string>& claimedRewardIds) {
 
     if (tx.inputs.empty() || tx.outputs.empty()) return false;
     if (tx.computeHash() != tx.txid) return false;
     if (!tx.verify()) return false;
     if (!quantumSignaturePolicyOk(tx)) return false;
     if (tx.isRewardClaim()) {
-        return tx.fee == 0 && !tx.outputs.empty();
+        if (tx.inputs.size() != 1) return false;
+        const std::string ridHex = synapse::crypto::toHex(tx.inputs.front().prevTxHash);
+        if (claimedRewardIds.count(ridHex) > 0) return false;
+        auto mit = mints.find(ridHex);
+        if (mit == mints.end() || mit->second.claimed) return false;
+        if (!rewardClaimAuthorAndAmountOk(tx, mit->second)) return false;
+        const std::string txHex = synapse::crypto::toHex(tx.txid);
+        if (mempool.count(txHex) > 0 || db.exists("tx:" + txHex)) return false;
+        for (const auto& outp : tx.outputs) {
+            auto P = outputP(outp);
+            if (P.size() != 32 || outp.commitment.size() != 32) return false;
+            const std::string phex = synapse::crypto::toHex(P);
+            if (rctGenesis.count(phex) > 0 || rctOuts.count(phex) > 0 || createdRct.count(phex) > 0) return false;
+            createdRct[phex] = outp.commitment;
+        }
+        claimedRewardIds.insert(ridHex);
+        return true;
     }
     if (!tx.isRingCtSpend()) {
         if (tx.fee < (serializedSizeForFee(tx) / 1000 + 1) * minFeePerKB) return false;
@@ -1359,7 +1504,7 @@ static bool verifyTransactionForBlock(
     }
 
     if (tx.isRingCtSpend()) {
-        return verifyRingCtAgainstPool(tx, rctOuts, rctKeyImages, spentImages, createdRct);
+        return verifyRingCtAgainstPool(tx, rctOuts, rctKeyImages, rctGenesis, spentImages, createdRct);
     }
 
     std::unordered_set<std::string> seenInputs;
@@ -1468,11 +1613,14 @@ bool TransferManager::verifyTransactionsInBlockOrder(const std::vector<Transacti
     std::unordered_map<std::string, SimUtxo> created;
     std::unordered_set<std::string> spentImages;
     std::unordered_map<std::string, std::vector<uint8_t>> createdRct;
+    std::unordered_set<std::string> claimedRewards;
     spent.reserve(txs.size() * 8);
     created.reserve(txs.size() * 4);
     for (const auto& tx : txs) {
         if (!verifyTransactionForBlock(tx, impl_->utxoSet, impl_->rctOuts, impl_->rctKeyImages,
-                                       impl_->config.minFeePerKB, spent, created, spentImages, createdRct)) return false;
+                                       impl_->rctGenesis, impl_->mints, impl_->mempool, impl_->db,
+                                       impl_->config.minFeePerKB, spent, created, spentImages, createdRct,
+                                       claimedRewards)) return false;
     }
     return true;
 }
@@ -1500,13 +1648,18 @@ bool TransferManager::applyBlockTransactionsFromBlock(
     std::unordered_map<std::string, SimUtxo> created;
     std::unordered_set<std::string> spentImages;
     std::unordered_map<std::string, std::vector<uint8_t>> createdRct;
+    std::unordered_set<std::string> claimedRewards;
     if (!verifyTransactionForBlock(txs.front(), impl_->utxoSet, impl_->rctOuts, impl_->rctKeyImages,
-                                   impl_->config.minFeePerKB, spent, created, spentImages, createdRct)) {
+                                   impl_->rctGenesis, impl_->mints, impl_->mempool, impl_->db,
+                                   impl_->config.minFeePerKB, spent, created, spentImages, createdRct,
+                                   claimedRewards)) {
         return false;
     }
     for (size_t i = 1; i < txs.size(); ++i) {
         if (!verifyTransactionForBlock(txs[i], impl_->utxoSet, impl_->rctOuts, impl_->rctKeyImages,
-                                       impl_->config.minFeePerKB, spent, created, spentImages, createdRct)) return false;
+                                       impl_->rctGenesis, impl_->mints, impl_->mempool, impl_->db,
+                                       impl_->config.minFeePerKB, spent, created, spentImages, createdRct,
+                                       claimedRewards)) return false;
     }
 
     std::unordered_set<std::string> blockTxIds;
@@ -2089,7 +2242,7 @@ bool TransferManager::rollbackBlockTransactions(uint64_t blockHeight, const cryp
         if (tx.txid == crypto::Hash256{}) continue;
         if (tx.status != TxStatus::PENDING) continue;
         if (existingPending.count(hex) > 0) continue;
-        if (!verifyTransactionLocked(tx, impl_->utxoSet, impl_->mempool, impl_->pending, impl_->config.minFeePerKB, impl_->rctOuts, impl_->rctKeyImages)) continue;
+        if (!verifyTransactionLocked(tx, impl_->utxoSet, impl_->mempool, impl_->pending, impl_->config.minFeePerKB, impl_->rctOuts, impl_->rctKeyImages, impl_->rctGenesis)) continue;
         impl_->pending.push_back(tx);
         impl_->mempool[hex] = tx;
         existingPending.insert(hex);
@@ -2170,6 +2323,7 @@ bool TransferManager::applyRewardClaimLocked(const Transaction& tx) {
     if (!tx.isRewardClaim()) return false;
     if (tx.computeHash() != tx.txid) return false;
     if (!tx.verify()) return false;
+    if (!quantumSignaturePolicyOk(tx)) return false;
     if (tx.inputs.size() != 1) return false;
 
     const auto& inp = tx.inputs.front();
@@ -2177,34 +2331,32 @@ bool TransferManager::applyRewardClaimLocked(const Transaction& tx) {
     auto mit = impl_->mints.find(ridHex);
     if (mit == impl_->mints.end()) return false;
     RewardMint& mint = mit->second;
-    if (mint.claimed) {
-        return impl_->db.exists("tx:" + crypto::toHex(tx.txid));
-    }
-    if (inp.pubKey != mint.author) return false;
-    if (inp.outputIndex != 0) return false;
+    if (!rewardClaimAuthorAndAmountOk(tx, mint)) return false;
+    if (mint.claimed) return false;
+    const std::string hex = crypto::toHex(tx.txid);
+    if (impl_->mempool.count(hex) > 0 || impl_->db.exists("tx:" + hex)) return false;
 
     std::vector<TxOutput> hidden;
+    std::vector<std::string> freshKeys;
+    hidden.reserve(tx.outputs.size());
+    freshKeys.reserve(tx.outputs.size());
+    std::unordered_set<std::string> seenOut;
     for (const auto& o : tx.outputs) {
         if (!o.isRingCt()) return false;
-        hidden.push_back(o);
-    }
-    if (hidden.empty()) return false;
-    std::vector<uint8_t> sumC;
-    if (!sumOutputCommitments(hidden, sumC)) return false;
-    if (!crypto::ConfidentialTx::verifyKnownAmount(sumC, mint.amount, tx.balanceProof)) return false;
-
-    std::string hex = crypto::toHex(tx.txid);
-    if (impl_->mempool.count(hex) || impl_->db.exists("tx:" + hex)) {
-        // Already stored as pending/confirmed.
-    }
-
-    for (const auto& o : hidden) {
         auto P = outputP(o);
         if (P.size() != 32 || o.commitment.size() != 32) return false;
         std::string phex = crypto::toHex(P);
-        if (impl_->rctOuts.count(phex)) return false;
-        impl_->rctOuts[phex] = o.commitment;
-        std::vector<uint8_t> rec = o.commitment;
+        if (impl_->rctGenesis.count(phex) > 0 || impl_->rctOuts.count(phex) > 0) return false;
+        if (!seenOut.insert(phex).second) return false;
+        hidden.push_back(o);
+        freshKeys.push_back(std::move(phex));
+    }
+    if (hidden.empty()) return false;
+
+    for (size_t i = 0; i < hidden.size(); ++i) {
+        const std::string& phex = freshKeys[i];
+        impl_->rctOuts[phex] = hidden[i].commitment;
+        std::vector<uint8_t> rec = hidden[i].commitment;
         rec.push_back(0);
         impl_->db.put("rct:" + phex, rec);
     }
@@ -2476,6 +2628,7 @@ std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> TransferManag
     std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> out;
     for (const auto& kv : impl_->rctOuts) {
         if (out.size() >= limit) break;
+        if (impl_->rctGenesis.count(kv.first) > 0) continue;
         auto P = crypto::fromHex(kv.first);
         if (P.size() != 32 || kv.second.size() != 32) continue;
         out.emplace_back(std::move(P), kv.second);

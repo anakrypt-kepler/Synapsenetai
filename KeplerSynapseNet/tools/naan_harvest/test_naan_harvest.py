@@ -6,6 +6,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from urllib.parse import urlsplit
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -26,6 +27,12 @@ from plan import (
 KEPLER = HERE.parents[1]
 
 
+def _host_is(url: str, domain: str) -> bool:
+    host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    domain = domain.lower().rstrip(".")
+    return bool(host) and (host == domain or host.endswith("." + domain))
+
+
 class NaanHarvestPlanTests(unittest.TestCase):
     def test_user_stop_is_the_only_hard_exit(self):
         self.assertEqual(decide_loop(True, False, 0, 100), LoopAction.STOP_USER)
@@ -36,12 +43,26 @@ class NaanHarvestPlanTests(unittest.TestCase):
     def test_ai_clearnet_is_not_forced_onto_ahmia(self):
         ahmia = "juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion"
         urls = [pick_target("AI", tick).url for tick in range(12)]
-        self.assertTrue(any("arxiv.org" in u or "duckduckgo.com" in u or "brave.com" in u or "wikipedia.org" in u for u in urls))
-        self.assertFalse(any(ahmia in u for u in urls))
+        self.assertTrue(any(
+            _host_is(u, "arxiv.org")
+            or _host_is(u, "duckduckgo.com")
+            or _host_is(u, "brave.com")
+            or _host_is(u, "wikipedia.org")
+            for u in urls
+        ))
+        self.assertFalse(any(_host_is(u, ahmia) for u in urls))
 
     def test_crypto_direct_page_stays_https(self):
         t = pick_target("crypto", 0)
-        self.assertTrue(t.url.startswith("https://arxiv.org"))
+        parts = urlsplit(t.url)
+        self.assertEqual(parts.scheme, "https")
+        self.assertEqual((parts.hostname or "").lower(), "arxiv.org")
+        self.assertFalse(t.onion)
+
+    def test_topic_text_does_not_rename_clearnet_host(self):
+        t = pick_target("duckduckgo", 1)
+        self.assertEqual(t.engine, "brave")
+        self.assertTrue(_host_is(t.url, "search.brave.com"))
         self.assertFalse(t.onion)
 
     def test_onion_topics_rotate_more_than_one_engine(self):
@@ -51,12 +72,11 @@ class NaanHarvestPlanTests(unittest.TestCase):
         self.assertEqual(len(set(urls)), len(DARKNET_ENGINES))
 
     def test_clearnet_roster_has_duckduckgo_and_brave(self):
-        blob = " ".join(CLEARNET_ENGINES)
-        self.assertIn("duckduckgo.com", blob)
-        self.assertIn("search.brave.com", blob)
-        self.assertIn("wikipedia.org", blob)
-        self.assertIn("arxiv.org", blob)
         self.assertEqual(len(CLEARNET_ENGINES), 4)
+        self.assertTrue(any(_host_is(u, "duckduckgo.com") for u in CLEARNET_ENGINES))
+        self.assertTrue(any(_host_is(u, "search.brave.com") for u in CLEARNET_ENGINES))
+        self.assertTrue(any(_host_is(u, "wikipedia.org") for u in CLEARNET_ENGINES))
+        self.assertTrue(any(_host_is(u, "arxiv.org") for u in CLEARNET_ENGINES))
         self.assertEqual(
             CLEARNET_ENGINES,
             (
@@ -99,8 +119,8 @@ class NaanHarvestPlanTests(unittest.TestCase):
         hrefs = extract_hrefs(html)
         self.assertIn("https://arxiv.org/abs/2401.00001", hrefs)
         self.assertIn("https://en.wikipedia.org/wiki/Tor", hrefs)
-        self.assertFalse(any("duckduckgo.com" in u for u in hrefs))
-        self.assertFalse(any("brave.com/search" in u for u in hrefs))
+        self.assertFalse(any(_host_is(u, "duckduckgo.com") for u in hrefs))
+        self.assertFalse(any(_host_is(u, "search.brave.com") for u in hrefs))
 
     def test_ahmia_javascript_stub_is_junk(self):
         html = (
@@ -168,8 +188,24 @@ class NaanHarvestPlanTests(unittest.TestCase):
         self.assertTrue(is_search_surface(
             "http://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/?q=ai"
         ))
+        for raw in CLEARNET_ENGINES:
+            self.assertTrue(is_search_surface(raw + "ai"))
+        for raw in DARKNET_ENGINES:
+            self.assertTrue(is_search_surface(raw + "ai"))
+        self.assertTrue(is_search_surface("https://export.arxiv.org/list/cs.AI/recent"))
+        self.assertTrue(is_search_surface("https://en.wikipedia.org/w/index.php?search=tor"))
+        self.assertTrue(is_search_surface("https://ahmia.fi/search/?q=ai"))
+        self.assertTrue(is_search_surface("https://user:pass@html.duckduckgo.com/html/?q=ai"))
         self.assertFalse(is_search_surface("https://arxiv.org/abs/2401.00001"))
         self.assertFalse(is_search_surface("https://en.wikipedia.org/wiki/Tor"))
+        self.assertFalse(is_search_surface("https://brave.com/search?q=ai"))
+        self.assertFalse(is_search_surface("https://duckduckgo.com.evil.example/html/?q=ai"))
+        self.assertFalse(is_search_surface("https://evil.example/search?q=duckduckgo.com"))
+        self.assertFalse(is_search_surface("https://duckduckgo.com@evil.example/html"))
+        self.assertFalse(is_search_surface("https://notwikipedia.org/w/index.php?search=tor"))
+        self.assertFalse(is_search_surface("https://arxiv.org.evil.example/search/?query=ai"))
+        self.assertFalse(is_search_surface("https://search.brave.com.evil.example/search?q=ai"))
+        self.assertFalse(is_search_surface("https://notahmia.fi/search/?q=ai"))
 
     def test_relative_result_hrefs_resolve_off_search_pages(self):
         html = (
@@ -179,7 +215,7 @@ class NaanHarvestPlanTests(unittest.TestCase):
         )
         arxiv = extract_hrefs(html, 8, "https://arxiv.org/list/cs.AI/recent")
         self.assertIn("https://arxiv.org/abs/2401.00001", arxiv)
-        self.assertFalse(any("duckduckgo.com" in u for u in arxiv))
+        self.assertFalse(any(_host_is(u, "duckduckgo.com") for u in arxiv))
         wiki = extract_hrefs(
             '<a href="/wiki/Tor">t</a>', 8, "https://en.wikipedia.org/w/index.php?search=tor"
         )

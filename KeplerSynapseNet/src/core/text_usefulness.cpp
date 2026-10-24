@@ -33,6 +33,52 @@ std::string excerptOf(const std::string& body) {
     return body.substr(0, pos);
 }
 
+std::string normalizeTopic(const std::string& in) {
+    size_t begin = 0;
+    size_t end = in.size();
+    while (begin < end) {
+        const unsigned char c = static_cast<unsigned char>(in[begin]);
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+        ++begin;
+    }
+    while (end > begin) {
+        const unsigned char c = static_cast<unsigned char>(in[end - 1]);
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+        --end;
+    }
+    return lowerCopy(in.substr(begin, end - begin));
+}
+
+// Last "topic: <expected>" line that introduces the caller trailer ("url:" is
+// the next line). An earlier topic line belongs to the page text.
+size_t callerTopicTrailer(const std::string& body, const std::string& normalizedTopic) {
+    if (normalizedTopic.empty()) return std::string::npos;
+    const std::string needle = "\ntopic: ";
+    size_t last = std::string::npos;
+    size_t pos = 0;
+    while ((pos = body.find(needle, pos)) != std::string::npos) {
+        const size_t valueStart = pos + needle.size();
+        const size_t lineEnd = body.find('\n', valueStart);
+        if (lineEnd == std::string::npos) break;
+        std::string value = body.substr(valueStart, lineEnd - valueStart);
+        while (!value.empty() && (value.back() == '\r' || value.back() == ' ' || value.back() == '\t'))
+            value.pop_back();
+        const bool urlFollows = lineEnd + 1 < body.size()
+            && body.compare(lineEnd + 1, 4, "url:") == 0;
+        if (urlFollows && normalizeTopic(value) == normalizedTopic) last = pos;
+        pos = valueStart;
+    }
+    return last;
+}
+
+std::string excerptBeforeCallerTopic(const std::string& body, const std::string& normalizedTopic) {
+    const size_t pos = callerTopicTrailer(body, normalizedTopic);
+    // No caller trailer: keep the previous excerpt bound so record metadata
+    // is not counted as page text.
+    if (pos == std::string::npos) return excerptOf(body);
+    return body.substr(0, pos);
+}
+
 bool isWordChar(unsigned char c) {
     return std::isalnum(c) != 0;
 }
@@ -119,15 +165,8 @@ size_t countNeedle(const std::string& hay, const char* needle) {
     return n;
 }
 
-} // namespace
-
-bool isHarvestKnowledge(const std::string& body) {
-    return body.find("\ntopic: ") != std::string::npos
-        && body.find("\nurl: ") != std::string::npos
-        && body.find("\nvia: ") != std::string::npos;
-}
-
-TextUsefulness assessTextUsefulness(const std::string& title, const std::string& body) {
+TextUsefulness assessFromParts(const std::string& title, const std::string& body,
+                               const std::string& excerptRaw, const std::string& topic) {
     TextUsefulness out;
     out.harvest = isHarvestKnowledge(body);
     if (!out.harvest) {
@@ -139,7 +178,7 @@ TextUsefulness assessTextUsefulness(const std::string& title, const std::string&
         return out;
     }
 
-    const std::string excerpt = lowerCopy(excerptOf(body) + "\n" + title);
+    const std::string excerpt = lowerCopy(excerptRaw + "\n" + title);
     std::unordered_set<std::string> bag;
     countWords(excerpt, out.words, out.uniqueWords, bag);
 
@@ -169,7 +208,6 @@ TextUsefulness assessTextUsefulness(const std::string& title, const std::string&
         return out;
     }
 
-    const std::string topic = fieldAfter(body, "topic: ");
     out.topicHits = topicHitsFor(topic, excerpt);
     if (out.topicHits < 2) {
         out.reason = "topic_mismatch";
@@ -179,6 +217,24 @@ TextUsefulness assessTextUsefulness(const std::string& title, const std::string&
     out.passed = true;
     out.reason = "ok";
     return out;
+}
+
+} // namespace
+
+bool isHarvestKnowledge(const std::string& body) {
+    return body.find("\ntopic: ") != std::string::npos
+        && body.find("\nurl: ") != std::string::npos
+        && body.find("\nvia: ") != std::string::npos;
+}
+
+TextUsefulness assessTextUsefulness(const std::string& title, const std::string& body) {
+    return assessFromParts(title, body, excerptOf(body), fieldAfter(body, "topic: "));
+}
+
+TextUsefulness assessTextUsefulness(const std::string& title, const std::string& body,
+                                    const std::string& topic) {
+    const std::string normalized = normalizeTopic(topic);
+    return assessFromParts(title, body, excerptBeforeCallerTopic(body, normalized), normalized);
 }
 
 void bindUsefulnessVote(poe_v1::ValidationVoteV1& vote, const TextUsefulness& use) {

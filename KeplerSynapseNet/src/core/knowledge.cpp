@@ -62,13 +62,21 @@ static void writeString(std::vector<uint8_t>& out, const std::string& s) {
     out.insert(out.end(), s.begin(), s.end());
 }
 
-static std::string readString(const uint8_t*& p, const uint8_t* end) {
-    if (p + 4 > end) return std::string();
-    uint32_t len = readU32(p); p += 4;
-    if (p + len > end) return std::string();
-    std::string s(reinterpret_cast<const char*>(p), len);
+static bool bytesRemain(const uint8_t* p, const uint8_t* end, size_t n) {
+    if (p > end) return false;
+    return static_cast<size_t>(end - p) >= n;
+}
+
+// False means the length prefix or the payload does not fit. Callers must
+// discard the entry; an empty string is not a stand-in for a short read.
+static bool readString(const uint8_t*& p, const uint8_t* end, std::string& out) {
+    if (!bytesRemain(p, end, 4)) return false;
+    uint32_t len = readU32(p);
+    p += 4;
+    if (!bytesRemain(p, end, len)) return false;
+    out.assign(reinterpret_cast<const char*>(p), len);
     p += len;
-    return s;
+    return true;
 }
 
 std::vector<uint8_t> KnowledgeEntry::serialize() const {
@@ -90,23 +98,43 @@ std::vector<uint8_t> KnowledgeEntry::serialize() const {
 }
 
 KnowledgeEntry KnowledgeEntry::deserialize(const std::vector<uint8_t>& data) {
-    KnowledgeEntry e;
-    if (data.size() < 50) return e;
+    constexpr uint32_t kMaxTags = 64;
     const uint8_t* p = data.data();
-    const uint8_t* end = data.data() + data.size();
-    e.id = readU64(p); p += 8;
-    e.question = readString(p, end);
-    e.answer = readString(p, end);
-    e.source = readString(p, end);
-    e.timestamp = readU64(p); p += 8;
-    std::memcpy(e.author.data(), p, 33); p += 33;
-    std::memcpy(e.signature.data(), p, 64); p += 64;
-    uint64_t scoreBits = readU64(p); p += 8;
+    const uint8_t* end = p + data.size();
+    KnowledgeEntry e{};
+
+    if (!bytesRemain(p, end, 8)) return KnowledgeEntry{};
+    e.id = readU64(p);
+    p += 8;
+    if (!readString(p, end, e.question)) return KnowledgeEntry{};
+    if (!readString(p, end, e.answer)) return KnowledgeEntry{};
+    if (!readString(p, end, e.source)) return KnowledgeEntry{};
+
+    // timestamp, author, signature, score, validations, tag count.
+    // The signature is copied in full; verify() is unchanged.
+    constexpr size_t kFixedTail =
+        8 + crypto::PUBLIC_KEY_SIZE + crypto::SIGNATURE_SIZE + 8 + 4 + 4;
+    if (!bytesRemain(p, end, kFixedTail)) return KnowledgeEntry{};
+    e.timestamp = readU64(p);
+    p += 8;
+    std::memcpy(e.author.data(), p, crypto::PUBLIC_KEY_SIZE);
+    p += crypto::PUBLIC_KEY_SIZE;
+    std::memcpy(e.signature.data(), p, crypto::SIGNATURE_SIZE);
+    p += crypto::SIGNATURE_SIZE;
+    uint64_t scoreBits = readU64(p);
+    p += 8;
     std::memcpy(&e.score, &scoreBits, sizeof(double));
-    e.validations = readU32(p); p += 4;
-    uint32_t tagCount = readU32(p); p += 4;
+    e.validations = readU32(p);
+    p += 4;
+    uint32_t tagCount = readU32(p);
+    p += 4;
+    if (tagCount > kMaxTags) return KnowledgeEntry{};
+
+    e.tags.reserve(tagCount);
     for (uint32_t i = 0; i < tagCount; i++) {
-        e.tags.push_back(readString(p, end));
+        std::string tag;
+        if (!readString(p, end, tag)) return KnowledgeEntry{};
+        e.tags.push_back(std::move(tag));
     }
     e.hash = e.computeHash();
     return e;

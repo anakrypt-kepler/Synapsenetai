@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <random>
 #include <ctime>
+#include <limits>
 #include <sstream>
 #include <iomanip>
 #include <functional>
@@ -172,6 +173,21 @@ public:
     }
 };
 
+static bool checkedMul(int a, int b, int& product) {
+    if (a == 0 || b == 0) {
+        product = 0;
+        return true;
+    }
+    if (a == std::numeric_limits<int>::min() && b == -1) return false;
+    if (b == std::numeric_limits<int>::min() && a == -1) return false;
+    if (a > 0 && b > 0 && a > std::numeric_limits<int>::max() / b) return false;
+    if (a < 0 && b < 0 && a < std::numeric_limits<int>::max() / b) return false;
+    if (a > 0 && b < 0 && b < std::numeric_limits<int>::min() / a) return false;
+    if (a < 0 && b > 0 && a < std::numeric_limits<int>::min() / b) return false;
+    product = a * b;
+    return true;
+}
+
 class BanManager {
 private:
     struct BanEntry {
@@ -207,7 +223,12 @@ public:
         auto it = bannedPeers.find(peerId);
         if (it != bannedPeers.end()) {
             entry.banCount = it->second.banCount + 1;
-            entry.banUntil = entry.banTime + duration * entry.banCount;
+            int scaledDuration = 0;
+            if (!checkedMul(duration, entry.banCount, scaledDuration)) {
+                entry.banUntil = std::numeric_limits<time_t>::max();
+            } else {
+                entry.banUntil = entry.banTime + scaledDuration;
+            }
         } else {
             entry.banCount = 1;
         }

@@ -20,6 +20,13 @@ static std::string trim(const std::string& value) {
     return value.substr(start, end - start + 1);
 }
 
+// Fixed marker written when a control password is set. It is not the password.
+static constexpr char kNotStoredMarker[] = "[REDACTED_PASSWORD]";
+
+static bool isNotStoredMarker(const std::string& value) {
+    return value == kNotStoredMarker;
+}
+
 static std::vector<std::string> splitList(const std::string& value) {
     std::vector<std::string> items;
     std::stringstream ss(value);
@@ -588,7 +595,10 @@ static void applyConfigKeyValue(SearchConfig& cfg,
         return;
     }
     if (key == "tor_control_password") {
-        cfg.tor.controlPassword = value;
+        // The saved marker means the value was not stored. Do not use it as the password.
+        if (!isNotStoredMarker(value)) {
+            cfg.tor.controlPassword = value;
+        }
         return;
     }
     if (key == "tor_use_new_circuit") {
@@ -1692,6 +1702,9 @@ bool saveSearchConfig(const SearchConfig& inputConfig, const std::string& path) 
     file << "tor_socks_port=" << config.tor.socksPort << "\n";
     file << "tor_control_host=" << config.tor.controlHost << "\n";
     file << "tor_control_port=" << config.tor.controlPort << "\n";
+    // Local control password. Cookie auth is preferred, but AUTHENTICATE still
+    // needs this value after a restart, so the settings file keeps it.
+    // A previous redacted marker is ignored on load and is not a password.
     file << "tor_control_password=" << config.tor.controlPassword << "\n";
     file << "tor_use_new_circuit=" << (config.tor.useNewCircuit ? "1" : "0") << "\n";
     file << "tor_circuit_timeout=" << config.tor.circuitTimeout << "\n";

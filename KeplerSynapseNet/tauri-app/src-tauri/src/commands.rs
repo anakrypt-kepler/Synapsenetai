@@ -137,36 +137,80 @@ pub struct SetupConfig {
     pub mine_background: bool,
 }
 
-#[tauri::command]
-pub fn save_setup_config(config: SetupConfig) -> Result<(), String> {
-    let dir = config_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create config dir: {}", e))?;
+/// Quote a wizard value as a TOML basic string. Backslashes, quotes, and
+/// newlines are escaped so they stay inside the value.
+fn toml_quoted(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    for c in value.chars() {
+        match c {
+            '\\' => quoted.push_str("\\\\"),
+            '"' => quoted.push_str("\\\""),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            c if c.is_control() => {
+                quoted.push_str(&format!("\\u{:04x}", u32::from(c)));
+            }
+            c => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
 
+fn push_quoted(out: &mut String, key: &str, value: &str) {
+    out.push_str(key);
+    out.push_str(" = ");
+    out.push_str(&toml_quoted(value));
+    out.push('\n');
+}
+
+fn connection_kind(connection_type: &str) -> &'static str {
+    if connection_type == "tor_bridges" {
+        "tor_bridges"
+    } else {
+        "tor"
+    }
+}
+
+/// model_path is copied from the quote on that line with no unescaping, so
+/// backslashes in a real path must be written unchanged. Quotes and newlines
+/// cannot be represented that way and are refused.
+fn quote_model_path(path: &str) -> Result<String, String> {
+    if path.chars().any(|c| c == '"' || c == '\n' || c == '\r' || c.is_control()) {
+        return Err("model path cannot contain quotes or newlines".to_string());
+    }
+    let mut quoted = String::with_capacity(path.len() + 2);
+    quoted.push('"');
+    quoted.push_str(path);
+    quoted.push('"');
+    Ok(quoted)
+}
+
+fn render_setup_toml(config: &SetupConfig) -> Result<String, String> {
     let mut content = String::new();
     content.push_str("[wallet]\n");
-    content.push_str(&format!("mode = \"{}\"\n", config.wallet_mode));
+    push_quoted(&mut content, "mode", &config.wallet_mode);
     if let Some(ref pwd) = config.password {
         if !pwd.is_empty() {
             content.push_str("password_protected = true\n");
         }
     }
     content.push_str("\n[connection]\n");
-    let conn = if config.connection_type == "tor_bridges" {
-        "tor_bridges"
-    } else {
-        "tor"
-    };
-    content.push_str(&format!("type = \"{}\"\n", conn));
+    push_quoted(&mut content, "type", connection_kind(&config.connection_type));
     if let Some(ref bridges) = config.bridge_lines {
         if !bridges.is_empty() {
-            content.push_str(&format!("bridge_lines = \"\"\"\n{}\n\"\"\"\n", bridges));
+            push_quoted(&mut content, "bridge_lines", bridges);
         }
     }
     content.push_str("\n[ai]\n");
-    content.push_str(&format!("mode = \"{}\"\n", config.ai_model));
+    push_quoted(&mut content, "mode", &config.ai_model);
     if let Some(ref path) = config.model_path {
         if !path.is_empty() {
-            content.push_str(&format!("model_path = \"{}\"\n", path));
+            content.push_str("model_path = ");
+            content.push_str(&quote_model_path(path)?);
+            content.push('\n');
         }
     }
     content.push_str("\n[resources]\n");
@@ -176,13 +220,26 @@ pub fn save_setup_config(config: SetupConfig) -> Result<(), String> {
     content.push_str(&format!("gpu_enabled = {}\n", config.gpu_enabled));
     if let Some(ref device) = config.gpu_device {
         if !device.is_empty() {
-            content.push_str(&format!("gpu_device = \"{}\"\n", device));
+            push_quoted(&mut content, "gpu_device", device);
         }
     }
     content.push_str(&format!("gpu_layers = {}\n", config.gpu_layers));
     content.push_str("\n[startup]\n");
-    content.push_str(&format!("launch_at_login = {}\n", config.launch_at_startup));
+    content.push_str(&format!(
+        "launch_at_login = {}\n",
+        config.launch_at_startup
+    ));
     content.push_str(&format!("mine_background = {}\n", config.mine_background));
+    Ok(content)
+}
+
+#[tauri::command]
+pub fn save_setup_config(config: SetupConfig) -> Result<(), String> {
+    let dir = config_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create config dir: {}", e))?;
+
+    let content = render_setup_toml(&config)?;
+    let conn = connection_kind(&config.connection_type);
 
     std::fs::write(config_path(), content)
         .map_err(|e| format!("failed to write config: {}", e))?;
@@ -593,9 +650,52 @@ fn windows_ram_mb() -> u64 {
     8192
 }
 
+fn json_flag_true(value: &serde_json::Value, key: &str) -> bool {
+    match value.get(key) {
+        Some(serde_json::Value::Bool(true)) => true,
+        Some(serde_json::Value::String(text)) if text.eq_ignore_ascii_case("true") => true,
+        _ => false,
+    }
+}
+
+fn engine_says_wallet_exists(value: &serde_json::Value) -> bool {
+    if json_flag_true(value, "existing")
+        || json_flag_true(value, "exists")
+        || json_flag_true(value, "wallet_exists")
+    {
+        return true;
+    }
+    for key in ["error", "message", "detail", "reason", "status"] {
+        if let Some(text) = value.get(key).and_then(|v| v.as_str()) {
+            let lower = text.to_ascii_lowercase();
+            if lower.contains("wallet") && lower.contains("already") && lower.contains("exist") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// When the engine reports that a wallet is already present, return its
+/// address and leave the recovery phrase out of the response.
+fn redact_existing_wallet(raw: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return raw.to_string();
+    };
+    if !value.is_object() || !engine_says_wallet_exists(&value) {
+        return raw.to_string();
+    }
+    let address = value
+        .get("address")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    serde_json::json!({ "address": address }).to_string()
+}
+
 #[tauri::command]
 pub fn wallet_create() -> Result<String, String> {
-    ffi::rpc_call("wallet.create", "{}")
+    let raw = ffi::rpc_call("wallet.create", "{}")?;
+    Ok(redact_existing_wallet(&raw))
 }
 
 #[tauri::command]
@@ -736,4 +836,127 @@ pub fn privacy_view_scan(view_priv: String, spend_pub: String) -> Result<String,
 #[tauri::command]
 pub fn privacy_status() -> Result<String, String> {
     ffi::rpc_call("privacy.status", "{}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup(path: Option<&str>, bridges: Option<&str>, mode: &str) -> SetupConfig {
+        SetupConfig {
+            wallet_mode: mode.to_string(),
+            seed_phrase: Some("not-stored".to_string()),
+            password: Some("not-stored".to_string()),
+            connection_type: "tor".to_string(),
+            bridge_lines: bridges.map(str::to_string),
+            ai_model: "skip".to_string(),
+            model_path: path.map(str::to_string),
+            cpu_threads: 2,
+            ram_limit_mb: 4096,
+            disk_limit_mb: 50000,
+            gpu_enabled: false,
+            gpu_device: Some("gpu:0\nname \"x\"".to_string()),
+            gpu_layers: 32,
+            launch_at_startup: false,
+            mine_background: false,
+        }
+    }
+
+    #[test]
+    fn plain_setup_keeps_the_previous_layout() {
+        let rendered = render_setup_toml(&setup(None, None, "create")).unwrap();
+        assert_eq!(
+            rendered,
+            "\
+[wallet]
+mode = \"create\"
+password_protected = true
+
+[connection]
+type = \"tor\"
+
+[ai]
+mode = \"skip\"
+
+[resources]
+cpu_threads = 2
+ram_limit_mb = 4096
+disk_limit_mb = 50000
+gpu_enabled = false
+gpu_device = \"gpu:0\\nname \\\"x\\\"\"
+gpu_layers = 32
+
+[startup]
+launch_at_login = false
+mine_background = false
+"
+        );
+        assert!(!rendered.contains("not-stored"));
+    }
+
+    #[test]
+    fn wizard_quotes_and_newlines_stay_inside_values() {
+        let mode = "create\"\npassword_protected = false";
+        let bridges = "line1\nline \"two\"";
+        let rendered = render_setup_toml(&setup(Some("C:/models/a.gguf"), Some(bridges), mode))
+            .unwrap();
+        let parsed: toml::Value = toml::from_str(&rendered).expect("setup toml should parse");
+        assert_eq!(parsed["wallet"]["mode"].as_str(), Some(mode));
+        assert_eq!(parsed["connection"]["bridge_lines"].as_str(), Some(bridges));
+        assert_eq!(
+            parsed["resources"]["gpu_device"].as_str(),
+            Some("gpu:0\nname \"x\"")
+        );
+        assert_eq!(parsed["ai"]["model_path"].as_str(), Some("C:/models/a.gguf"));
+        assert!(parsed.get("password_protected").is_none());
+    }
+
+    #[test]
+    fn model_path_keeps_windows_backslashes() {
+        let rendered =
+            render_setup_toml(&setup(Some("C:\\models\\a.gguf"), None, "create")).unwrap();
+        assert!(rendered.contains("model_path = \"C:\\models\\a.gguf\"\n"));
+    }
+
+    #[test]
+    fn model_path_rejects_quotes_and_newlines() {
+        let quoted = render_setup_toml(&setup(Some("C:\\models\\a\"b.gguf"), None, "create"));
+        assert!(quoted.is_err());
+        let split = render_setup_toml(&setup(Some("C:\\models\\a.gguf\nextra = 1"), None, "create"));
+        assert!(split.is_err());
+    }
+
+    #[test]
+    fn existing_wallet_returns_address_without_phrase() {
+        let raw = r#"{"address":"addr-1","seed":"hidden-value","mnemonic":"hidden-value","ok":true,"existing":true}"#;
+        let out = redact_existing_wallet(raw);
+        assert_eq!(out, r#"{"address":"addr-1"}"#);
+        assert!(!out.contains("hidden-value"));
+        assert!(!out.contains("mnemonic"));
+        assert!(!out.contains("seed"));
+    }
+
+    #[test]
+    fn existing_wallet_message_returns_address_only() {
+        let raw = r#"{"address":"addr-2","seed":"hidden-value","error":"wallet already exists"}"#;
+        assert_eq!(
+            redact_existing_wallet(raw),
+            r#"{"address":"addr-2"}"#
+        );
+    }
+
+    #[test]
+    fn new_wallet_response_is_unchanged() {
+        let raw = r#"{"address":"addr-1","seed":"hidden-value","ok":true}"#;
+        assert_eq!(redact_existing_wallet(raw), raw);
+        let phrase_mentions_wallet = r#"{"address":"addr-1","seed":"wallet already exists","ok":true}"#;
+        assert_eq!(
+            redact_existing_wallet(phrase_mentions_wallet),
+            phrase_mentions_wallet
+        );
+        let missing = r#"{"error":"not initialized"}"#;
+        assert_eq!(redact_existing_wallet(missing), missing);
+        let absent = r#"{"error":"wallet does not exist","seed":"hidden-value"}"#;
+        assert_eq!(redact_existing_wallet(absent), absent);
+    }
 }

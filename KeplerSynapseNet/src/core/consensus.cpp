@@ -1,5 +1,8 @@
 // Validator votes around ledger events. Deterministic proposer, persisted
 // validator set + results so a restart does not lose an in-flight epoch.
+// Result records keep the voter id list. Quorum and the voting timeout are
+// applied before finality. A present vote trailer still has to pass HybridSig,
+// and an empty classical signature still fails.
 
 #include "core/consensus.h"
 #include "wide128.h"
@@ -175,6 +178,83 @@ static Validator deserializeValidator(const std::vector<uint8_t>& data) {
     return v;
 }
 
+// Fixed prefix shared with records that predate the voter list.
+// eventId u64 | state u8 | four u32 counters | average f64 |
+// start u64 | end u64 | reward u64.
+static constexpr size_t kResultFixedBytes = 8 + 1 + (4 * 4) + 8 + 8 + 8 + 8;
+static_assert(kResultFixedBytes == 57, "consensus result prefix size");
+static constexpr uint8_t kResultVoterListV1 = 1;
+static constexpr uint32_t kMaxPersistedVoters = 4096;
+static constexpr size_t kPersistedVoterBytes = crypto::PUBLIC_KEY_SIZE + 1;
+
+static void appendPersistedVoters(std::vector<uint8_t>& out, const ValidationResult& r) {
+    struct Entry {
+        crypto::PublicKey id;
+        VoteType type;
+    };
+    std::vector<Entry> voters;
+    voters.reserve(r.voterIds.size() + r.votes.size());
+    auto add = [&voters](const crypto::PublicKey& id, VoteType type) {
+        if (voters.size() >= kMaxPersistedVoters) return;
+        for (const auto& existing : voters) {
+            if (existing.id == id) return;
+        }
+        Entry entry;
+        entry.id = id;
+        entry.type = type;
+        voters.push_back(entry);
+    };
+    for (const auto& id : r.voterIds) {
+        VoteType type = VoteType::ABSTAIN;
+        for (const auto& vote : r.votes) {
+            if (vote.validator == id) {
+                type = vote.type;
+                break;
+            }
+        }
+        add(id, type);
+    }
+    for (const auto& vote : r.votes) add(vote.validator, vote.type);
+
+    out.push_back(kResultVoterListV1);
+    writeU32(out, static_cast<uint32_t>(voters.size()));
+    for (const auto& voter : voters) {
+        out.insert(out.end(), voter.id.begin(), voter.id.end());
+        out.push_back(static_cast<uint8_t>(voter.type));
+    }
+}
+
+// On success, r.votes holds voter id and vote type only. The classical
+// signature is not stored again. Vote::verify still rejects an all-zero
+// signature, so a restored record cannot be submitted as a new vote.
+static bool loadPersistedVoters(ValidationResult& r, const uint8_t* p, size_t n) {
+    if (n < 1 + 4 || p[0] != kResultVoterListV1) return false;
+    const uint32_t count = readU32(p + 1);
+    if (count > kMaxPersistedVoters) return false;
+    const size_t need = 1 + 4 + static_cast<size_t>(count) * kPersistedVoterBytes;
+    if (n < need) return false;
+
+    std::vector<crypto::PublicKey> ids;
+    std::vector<Vote> votes;
+    ids.reserve(count);
+    votes.reserve(count);
+    const uint8_t* cur = p + 5;
+    for (uint32_t i = 0; i < count; ++i) {
+        Vote vote;
+        vote.eventId = r.eventId;
+        std::memcpy(vote.validator.data(), cur, crypto::PUBLIC_KEY_SIZE);
+        cur += crypto::PUBLIC_KEY_SIZE;
+        const uint8_t typeByte = *cur++;
+        if (typeByte > static_cast<uint8_t>(VoteType::ABSTAIN)) return false;
+        vote.type = static_cast<VoteType>(typeByte);
+        ids.push_back(vote.validator);
+        votes.push_back(vote);
+    }
+    r.voterIds = std::move(ids);
+    r.votes = std::move(votes);
+    return true;
+}
+
 static std::vector<uint8_t> serializeResult(const ValidationResult& r) {
     std::vector<uint8_t> out;
     writeU64(out, r.eventId);
@@ -187,12 +267,13 @@ static std::vector<uint8_t> serializeResult(const ValidationResult& r) {
     writeU64(out, r.startTime);
     writeU64(out, r.endTime);
     writeU64(out, r.reward);
+    appendPersistedVoters(out, r);
     return out;
 }
 
 static ValidationResult deserializeResult(const std::vector<uint8_t>& data) {
     ValidationResult r;
-    if (data.size() < 8 + 1 + 4*4 + 8 + 8 + 8) return r;
+    if (data.size() < kResultFixedBytes) return r;
     size_t off = 0;
     r.eventId = readU64(data.data() + off); off += 8;
     r.state = static_cast<ConsensusState>(data[off++]);
@@ -204,6 +285,11 @@ static ValidationResult deserializeResult(const std::vector<uint8_t>& data) {
     r.startTime = readU64(data.data() + off); off += 8;
     r.endTime = readU64(data.data() + off); off += 8;
     r.reward = readU64(data.data() + off); off += 8;
+    if (data.size() > off) {
+        // A missing or truncated voter list stays empty. Callers refuse a new
+        // vote when totalVotes is ahead of that list. The fixed prefix still loads.
+        loadPersistedVoters(r, data.data() + off, data.size() - off);
+    }
     return r;
 }
 
@@ -233,6 +319,76 @@ template <typename ImplT>
 static void saveResultToDb(ImplT* impl, uint64_t eventId, const ValidationResult& r) {
     std::vector<uint8_t> data = serializeResult(r);
     impl->db.put(std::string("consensus:result:") + std::to_string(eventId), data);
+}
+
+static uint32_t eligibleValidatorCount(const std::unordered_map<std::string, Validator>& validators) {
+    uint32_t count = 0;
+    for (const auto& entry : validators) {
+        if (!entry.second.eligible) continue;
+        if (count == UINT32_MAX) break;
+        ++count;
+    }
+    return count;
+}
+
+// quorum is the fraction of eligible validators that must participate.
+// A non-finite value never passes. A non-positive value adds no extra bar.
+static bool quorumReached(uint32_t totalVotes, uint32_t eligible, double quorum) {
+    if (!std::isfinite(quorum)) return false;
+    if (quorum <= 0.0) return true;
+    if (eligible == 0) return false;
+    const double scaled = quorum * static_cast<double>(eligible);
+    if (!std::isfinite(scaled) || scaled > static_cast<double>(UINT32_MAX)) return false;
+    // Fractions in (0, 1] still need one vote. Above that, round up so a
+    // short tally cannot pass on a binary rounding error.
+    uint32_t need = 1;
+    if (scaled > 1.0) {
+        const double ceiled = std::ceil(scaled - 1e-9);
+        if (!std::isfinite(ceiled) || ceiled < 1.0 || ceiled > static_cast<double>(UINT32_MAX)) return false;
+        need = static_cast<uint32_t>(ceiled);
+    }
+    return totalVotes >= need;
+}
+
+static bool finalityReached(const ValidationResult& result, uint32_t eligible, const ConsensusConfig& cfg) {
+    if (result.totalVotes == 0 || result.totalVotes < result.requiredVotes) return false;
+    return quorumReached(result.totalVotes, eligible, cfg.quorum);
+}
+
+static bool intervalElapsed(uint64_t now, uint64_t start, uint64_t timeout) {
+    if (now <= start) return false;
+    return (now - start) > timeout;
+}
+
+static bool voteWindowClosed(uint64_t now, const ValidationResult& result, const ConsensusConfig& cfg) {
+    if (intervalElapsed(now, result.startTime, cfg.votingTimeout)) return true;
+    if (intervalElapsed(now, result.startTime, cfg.validationTimeout)) return true;
+    return false;
+}
+
+static bool validatorAlreadyVoted(const ValidationResult& result, const crypto::PublicKey& id) {
+    for (const auto& known : result.voterIds) {
+        if (known == id) return true;
+    }
+    for (const auto& prior : result.votes) {
+        if (prior.validator == id) return true;
+    }
+    return false;
+}
+
+static bool tallyAheadOfVoters(const ValidationResult& result) {
+    const size_t known = std::max(result.voterIds.size(), result.votes.size());
+    return static_cast<size_t>(result.totalVotes) > known;
+}
+
+template <typename ImplT>
+static void markExpired(ImplT* impl, uint64_t eventId, ValidationResult& result, uint64_t now) {
+    result.state = ConsensusState::EXPIRED;
+    result.endTime = now;
+    saveResultToDb(impl, eventId, result);
+    if (impl->stateCallback) {
+        impl->stateCallback(eventId, ConsensusState::EXPIRED);
+    }
 }
 
 Consensus::Consensus() : impl_(std::make_unique<Impl>()) {}
@@ -346,6 +502,13 @@ bool Consensus::vote(const Vote& vote) {
         it->second.state != ConsensusState::VALIDATING) {
         return false;
     }
+
+    const uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+    if (voteWindowClosed(now, it->second, impl_->config)) {
+        // This vote is late. Close from the stored tally, or expire it.
+        finalizeValidation(vote.eventId);
+        return false;
+    }
     
     if (!vote.verify()) return false;
     
@@ -354,12 +517,19 @@ bool Consensus::vote(const Vote& vote) {
     if (valIt == impl_->validators.end() || !valIt->second.eligible) {
         return false;
     }
-    
-    for (const auto& v : it->second.votes) {
-        if (v.validator == vote.validator) return false;
+
+    // The stored tally can outlive the voter list across a restart. Refuse
+    // every new vote in that case, including one from a validator we cannot
+    // prove is new. A repeated id is refused as well.
+    if (tallyAheadOfVoters(it->second) || validatorAlreadyVoted(it->second, vote.validator)) {
+        if (finalityReached(it->second, eligibleValidatorCount(impl_->validators), impl_->config)) {
+            finalizeValidation(vote.eventId);
+        }
+        return false;
     }
     
     it->second.votes.push_back(vote);
+    it->second.voterIds.push_back(vote.validator);
     it->second.totalVotes++;
     
     if (vote.type == VoteType::APPROVE) {
@@ -384,7 +554,7 @@ bool Consensus::vote(const Vote& vote) {
     // persist result
     saveResultToDb(impl_.get(), it->first, it->second);
     
-    if (it->second.totalVotes >= it->second.requiredVotes) {
+    if (finalityReached(it->second, eligibleValidatorCount(impl_->validators), impl_->config)) {
         finalizeValidation(vote.eventId);
     }
     
@@ -396,9 +566,23 @@ bool Consensus::finalizeValidation(uint64_t eventId) {
     if (it == impl_->results.end()) return false;
     
     ValidationResult& result = it->second;
-    result.endTime = std::time(nullptr);
+    if (result.state != ConsensusState::PENDING &&
+        result.state != ConsensusState::VALIDATING) {
+        return false;
+    }
+
+    const uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+    const uint32_t eligible = eligibleValidatorCount(impl_->validators);
+    if (!finalityReached(result, eligible, impl_->config)) {
+        if (voteWindowClosed(now, result, impl_->config)) {
+            markExpired(impl_.get(), eventId, result, now);
+        }
+        return false;
+    }
+
+    result.endTime = now;
     
-    double approveRatio = static_cast<double>(result.approveVotes) / result.totalVotes;
+    double approveRatio = static_cast<double>(result.approveVotes) / static_cast<double>(result.totalVotes);
     
     if (approveRatio >= impl_->config.majorityThreshold) {
         result.state = ConsensusState::APPROVED;
@@ -737,19 +921,30 @@ void Consensus::onValidationComplete(std::function<void(const ValidationResult&)
 
 void Consensus::processTimeouts() {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-    uint64_t now = std::time(nullptr);
-    
-    for (auto& [id, result] : impl_->results) {
-        if (result.state == ConsensusState::PENDING || 
+    std::vector<uint64_t> openIds;
+    for (const auto& [id, result] : impl_->results) {
+        if (result.state == ConsensusState::PENDING ||
             result.state == ConsensusState::VALIDATING) {
-            if (now - result.startTime > impl_->config.validationTimeout) {
-                result.state = ConsensusState::EXPIRED;
-                result.endTime = now;
-                if (impl_->stateCallback) {
-                    impl_->stateCallback(id, ConsensusState::EXPIRED);
-                }
-            }
+            openIds.push_back(id);
         }
+    }
+
+    for (uint64_t id : openIds) {
+        auto it = impl_->results.find(id);
+        if (it == impl_->results.end()) continue;
+        if (it->second.state != ConsensusState::PENDING &&
+            it->second.state != ConsensusState::VALIDATING) {
+            continue;
+        }
+        const uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+        const bool closed = voteWindowClosed(now, it->second, impl_->config);
+        const bool ready = finalityReached(
+            it->second, eligibleValidatorCount(impl_->validators), impl_->config);
+        if (!closed && !ready) continue;
+        // Ready rounds finalize from the stored tally. A closed round that
+        // never reached quorum is persisted as EXPIRED so a restart cannot
+        // accept a later vote.
+        finalizeValidation(id);
     }
 }
 
@@ -1084,7 +1279,9 @@ bool Consensus::voteOnProposal(const std::string& proposalId,
     v.type = approve ? VoteType::APPROVE : VoteType::REJECT;
     v.scoreGiven = 1.0;
     v.timestamp = std::time(nullptr);
-    // leave signature empty (internal vote), vote() allows unsigned internal votes
+    // No classical signature is attached. Vote::verify rejects an all-zero
+    // signature, including when a quantum trailer is present, so this
+    // unsigned call does not count as a vote.
 
     bool ok = vote(v);
     if (impl_->onVoteCallback) impl_->onVoteCallback(proposalId, approve);

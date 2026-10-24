@@ -106,25 +106,44 @@ function hashPassword(password: string, salt?: string): string {
 }
 
 function verifyPassword(password: string, stored: string): boolean {
-  if (!stored.includes(":")) {
-    return stored === crypto.createHash("sha256").update(password).digest("hex");
+  const separator = stored.indexOf(":");
+  if (separator <= 0 || separator !== stored.lastIndexOf(":")) {
+    return false;
   }
-  const [salt, hash] = stored.split(":");
-  const derived = crypto.scryptSync(password, salt, 64).toString("hex");
-  return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(derived, "hex"));
+  const salt = stored.slice(0, separator);
+  const hash = stored.slice(separator + 1);
+  if (!/^[0-9a-fA-F]{128}$/.test(hash)) {
+    return false;
+  }
+  const derived = crypto.scryptSync(password, salt, 64);
+  const storedBuf = Buffer.from(hash, "hex");
+  if (storedBuf.length !== derived.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(storedBuf, derived);
 }
 
 function sanitizeText(raw: unknown, maxLen = 10000): string {
   let s = String(raw ?? "").slice(0, maxLen);
-  // Strip all HTML tags
-  s = s.replace(/<[^>]*>/g, "");
-  // Strip any remaining event handlers (defense in depth)
-  s = s.replace(/on\w+\s*=/gi, "");
-  // Decode and re-strip (catch entity-encoded tags)
-  s = s.replace(/&#x([0-9a-fA-F]+);/g, (_: string, hex: string) => String.fromCharCode(parseInt(hex, 16)))
-       .replace(/&#(\d+);/g, (_: string, dec: string) => String.fromCharCode(parseInt(dec, 10)));
-  s = s.replace(/<[^>]*>/g, "");
-  s = s.replace(/on\w+\s*=/gi, "");
+  let previous: string;
+  // Decode numeric character references until none remain, then strip tags and
+  // event-handler text until each pattern stops matching.
+  do {
+    previous = s;
+    s = s.replace(/&#x([0-9a-fA-F]+);/g, (_: string, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+  } while (s !== previous);
+  do {
+    previous = s;
+    s = s.replace(/&#(\d+);/g, (_: string, dec: string) => String.fromCharCode(parseInt(dec, 10)));
+  } while (s !== previous);
+  do {
+    previous = s;
+    s = s.replace(/<[^>]*>/g, "");
+  } while (s !== previous);
+  do {
+    previous = s;
+    s = s.replace(/on\w+\s*=/gi, "");
+  } while (s !== previous);
   return s.trim();
 }
 
@@ -905,10 +924,6 @@ export async function registerRoutes(
       const user = await storage.getUserByEmail(email);
       if (!user || !verifyPassword(parsed.data.password, user.password)) {
         return res.status(401).json({ message: "Invalid email or password" });
-      }
-      if (!user.password.includes(":")) {
-        const upgraded = hashPassword(parsed.data.password);
-        await storage.updateUser(user.id, { password: upgraded } as any);
       }
 
       const token = generateToken();

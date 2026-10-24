@@ -210,11 +210,21 @@ void runNetworkLoop(const NetworkLoopHooks& hooks) {
                 netCfg.maxOutbound = maxOutbound;
                 netCfgChanged = true;
             }
-            if (!netCfg.hybridMode) {
-                netCfg.hybridMode = true;
+            if (!netCfg.torRequired) {
+                netCfg.torRequired = true;
+                netCfgChanged = true;
+            }
+            // Direct TCP only if Tor is down and clearnet P2P fallback is explicitly on.
+            const bool allowDirect = !torReachable && hooks.allowP2PFallback();
+            if (netCfg.hybridMode != allowDirect) {
+                netCfg.hybridMode = allowDirect;
                 netCfgChanged = true;
             }
         } else {
+            if (netCfg.torRequired) {
+                netCfg.torRequired = false;
+                netCfgChanged = true;
+            }
             const bool socksAvailable = hooks.probeTorSocks();
             if (socksAvailable) {
                 if (!netCfg.hybridMode) {

@@ -22,7 +22,14 @@ struct TextUsefulness {
 
 bool isHarvestKnowledge(const std::string& body);
 
+// Topic lexicon is taken from the topic line stored on the record.
 TextUsefulness assessTextUsefulness(const std::string& title, const std::string& body);
+
+// Topic lexicon is the caller-supplied topic. A topic line inside the page
+// does not select the lexicon. Scored text stops before the caller's own
+// topic trailer, the last matching topic line placed in front of "url:".
+TextUsefulness assessTextUsefulness(const std::string& title, const std::string& body,
+                                    const std::string& topic);
 
 void bindUsefulnessVote(poe_v1::ValidationVoteV1& vote, const TextUsefulness& use);
 bool usefulnessVoteMatches(const poe_v1::ValidationVoteV1& vote, const TextUsefulness& use);

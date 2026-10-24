@@ -252,6 +252,24 @@ void pow2Scalar(int bit, unsigned char out[crypto_core_ed25519_SCALARBYTES]) {
     out[bit / 8] = static_cast<unsigned char>(1u << (bit % 8));
 }
 
+// Canonical identity on ed25519: y = 1 and the x sign bit clear.
+bool isIdentityPoint(const unsigned char point[crypto_core_ed25519_BYTES]) {
+    unsigned char identity[crypto_core_ed25519_BYTES];
+    std::memset(identity, 0, sizeof identity);
+    identity[0] = 1;
+    return sodium_memcmp(point, identity, sizeof identity) == 0;
+}
+
+// A Pedersen difference is r*G. That is the identity when r = 0, or a
+// prime-order point otherwise. crypto_core_ed25519_is_valid_point()
+// rejects the identity and every other small-order point.
+bool differenceIsIdentityOrPrimeOrder(const unsigned char point[crypto_core_ed25519_BYTES]) {
+    if (isIdentityPoint(point)) {
+        return true;
+    }
+    return crypto_core_ed25519_is_valid_point(point) == 1;
+}
+
 } // namespace
 
 std::vector<uint8_t> ConfidentialTx::proveRange(uint64_t amount, const std::vector<uint8_t>& blinding) {
@@ -387,6 +405,8 @@ bool ConfidentialTx::verifyRange(const std::vector<uint8_t>& commitment, const s
 
     unsigned char D[crypto_core_ed25519_BYTES];
     if (crypto_core_ed25519_sub(D, commitment.data(), sum) != 0) return false;
+    // Same subgroup rule as the amount proof. Bit checks above are unchanged.
+    if (!differenceIsIdentityOrPrimeOrder(D)) return false;
 
     std::vector<uint8_t> cdata(commitment.begin(), commitment.end());
     cdata.insert(cdata.end(), R.begin(), R.end());
@@ -398,7 +418,8 @@ bool ConfidentialTx::verifyRange(const std::vector<uint8_t>& commitment, const s
     unsigned char cD[crypto_core_ed25519_BYTES];
     if (crypto_scalarmult_ed25519_base_noclamp(sG, s.data()) != 0) return false;
     if (crypto_scalarmult_ed25519_noclamp(cD, c.data(), D) != 0) {
-        // D may be identity if delta=0; treat as R == sG
+        // A failed multiply is c*D = 0 only when D is the identity (delta = 0).
+        if (!isIdentityPoint(D)) return false;
         return sodium_memcmp(sG, R.data(), crypto_core_ed25519_BYTES) == 0;
     }
     unsigned char rhs[crypto_core_ed25519_BYTES];
@@ -474,6 +495,8 @@ bool ConfidentialTx::verifyKnownAmount(
         if (crypto_scalarmult_ed25519_noclamp(vH, vScalar, H.data()) != 0) return false;
         if (crypto_core_ed25519_sub(D, commitment.data(), vH) != 0) return false;
     }
+    // Reject a small-order difference before the proof can be accepted.
+    if (!differenceIsIdentityOrPrimeOrder(D)) return false;
 
     std::vector<uint8_t> R(proof.begin(), proof.begin() + 32);
     std::vector<uint8_t> s(proof.begin() + 32, proof.begin() + 64);
@@ -492,6 +515,8 @@ bool ConfidentialTx::verifyKnownAmount(
     unsigned char cD[crypto_core_ed25519_BYTES];
     if (crypto_scalarmult_ed25519_base_noclamp(sG, s.data()) != 0) return false;
     if (crypto_scalarmult_ed25519_noclamp(cD, c.data(), D) != 0) {
+        // Shield and reward-claim use this proof. c*D = 0 only for the identity.
+        if (!isIdentityPoint(D)) return false;
         return sodium_memcmp(sG, R.data(), crypto_core_ed25519_BYTES) == 0;
     }
     unsigned char rhs[crypto_core_ed25519_BYTES];

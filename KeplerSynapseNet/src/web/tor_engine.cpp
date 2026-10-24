@@ -16,6 +16,27 @@
 #include <netdb.h>
 #endif
 
+namespace {
+
+bool ipv4LiteralIsLoopback(const std::string& host) {
+    in_addr parsed{};
+    if (inet_pton(AF_INET, host.c_str(), &parsed) != 1) return false;
+    const auto hostOrder = ntohl(parsed.s_addr);
+    return (hostOrder & 0xff000000u) == 0x7f000000u;
+}
+
+bool peerIsIpv4Loopback(int sock) {
+    if (sock < 0) return false;
+    sockaddr_in peer{};
+    socklen_t length = sizeof(peer);
+    if (getpeername(sock, reinterpret_cast<sockaddr*>(&peer), &length) != 0) return false;
+    if (peer.sin_family != AF_INET || length < static_cast<socklen_t>(sizeof(sockaddr_in))) return false;
+    const auto hostOrder = ntohl(peer.sin_addr.s_addr);
+    return (hostOrder & 0xff000000u) == 0x7f000000u;
+}
+
+}
+
 namespace synapse {
 namespace web {
 
@@ -39,7 +60,13 @@ struct TorEngine::Impl {
 };
 
 bool TorEngine::Impl::connectControl() {
-    if (controlSocket >= 0) return true;
+    if (controlSocket >= 0) {
+        if (peerIsIpv4Loopback(controlSocket)) return true;
+        disconnectControl();
+    }
+
+    // Control commands carry the control password. Connect only to an IPv4 loopback peer.
+    if (!ipv4LiteralIsLoopback(config.controlHost)) return false;
     
     controlSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (controlSocket < 0) return false;
@@ -55,6 +82,11 @@ bool TorEngine::Impl::connectControl() {
         controlSocket = -1;
         return false;
     }
+
+    if (!peerIsIpv4Loopback(controlSocket)) {
+        disconnectControl();
+        return false;
+    }
     
     return authenticate();
 }
@@ -67,9 +99,11 @@ void TorEngine::Impl::disconnectControl() {
 }
 
 bool TorEngine::Impl::sendControlCommand(const std::string& cmd, std::string& response) {
-    if (controlSocket < 0) return false;
+    // Tor control is a cleartext protocol. Send it only after the peer is confirmed loopback.
+    if (!peerIsIpv4Loopback(controlSocket)) return false;
     
     std::string fullCmd = cmd + "\r\n";
+    // codeql[cpp/cleartext-transmission] Loopback Tor control protocol.
     if (send(controlSocket, fullCmd.c_str(), fullCmd.size(), 0) < 0) {
         return false;
     }
@@ -85,6 +119,7 @@ bool TorEngine::Impl::sendControlCommand(const std::string& cmd, std::string& re
 }
 
 bool TorEngine::Impl::authenticate() {
+    if (!peerIsIpv4Loopback(controlSocket)) return false;
     std::string response;
     std::string authCmd = "AUTHENTICATE \"" + config.controlPassword + "\"";
     return sendControlCommand(authCmd, response);

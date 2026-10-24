@@ -19,6 +19,7 @@
 #include <condition_variable>
 #include <random>
 #include <filesystem>
+#include <system_error>
 #include <algorithm>
 #include <utility>
 #include <cmath>
@@ -32,10 +33,12 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <aclapi.h>
 #include <io.h>
 #include <direct.h>
 #include <sys/stat.h>
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "advapi32.lib")
 #else
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -163,6 +166,246 @@ static std::string makeTorSessionDisplayId() {
     for (auto& byte : bytes) byte = static_cast<uint8_t>(rd());
     return "tor:" + crypto::toHex(bytes.data(), bytes.size());
 }
+
+static bool pathComponentsEqual(const std::filesystem::path& left, const std::filesystem::path& right) {
+#ifdef _WIN32
+    const auto& a = left.native();
+    const auto& b = right.native();
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        wchar_t ca = a[i];
+        wchar_t cb = b[i];
+        if (ca >= L'A' && ca <= L'Z') ca = static_cast<wchar_t>(ca - L'A' + L'a');
+        if (cb >= L'A' && cb <= L'Z') cb = static_cast<wchar_t>(cb - L'A' + L'a');
+        if (ca != cb) return false;
+    }
+    return true;
+#else
+    return left == right;
+#endif
+}
+
+static bool pathIsInsideDirectory(const std::filesystem::path& root, const std::filesystem::path& candidate) {
+    const auto normalRoot = root.lexically_normal();
+    const auto normalCandidate = candidate.lexically_normal();
+    auto rootIt = normalRoot.begin();
+    auto candidateIt = normalCandidate.begin();
+    for (; rootIt != normalRoot.end(); ++rootIt, ++candidateIt) {
+        if (candidateIt == normalCandidate.end()) return false;
+        if (!pathComponentsEqual(*rootIt, *candidateIt)) return false;
+    }
+    return true;
+}
+
+static std::filesystem::path weaklyCanonicalOrThrow(const std::filesystem::path& path, const char* error) {
+    std::error_code ec;
+    auto canonical = std::filesystem::weakly_canonical(path, ec);
+    if (ec || canonical.empty()) {
+        throw std::runtime_error(error);
+    }
+    return canonical;
+}
+
+// Relative caller paths are resolved under dataDir. Absolute paths are kept
+// only when their canonical form is still inside that directory.
+static std::filesystem::path confineCallerPathToDataDir(const std::string& dataDir, const std::string& callerPath) {
+    if (callerPath.empty() || callerPath.find('\0') != std::string::npos) {
+        throw std::runtime_error("invalid path");
+    }
+    const std::filesystem::path base(dataDir);
+    const std::filesystem::path raw(callerPath);
+    const std::filesystem::path combined = raw.is_absolute() ? raw : (base / raw);
+    const auto canonicalBase = weaklyCanonicalOrThrow(base, "invalid data directory");
+    const auto canonicalTarget = weaklyCanonicalOrThrow(combined, "invalid path");
+    if (!pathIsInsideDirectory(canonicalBase, canonicalTarget)) {
+        throw std::runtime_error("path escapes data directory");
+    }
+    return canonicalTarget;
+}
+
+static bool modelCallerPathEscapes(const std::filesystem::path& raw) {
+    if (raw.empty() || raw.is_absolute() || raw.has_root_name() || raw.has_root_directory()) {
+        return true;
+    }
+    const auto hasDotDot = [](const std::filesystem::path& candidate) {
+        for (const auto& part : candidate) {
+            if (part == "..") return true;
+        }
+        return false;
+    };
+    return hasDotDot(raw) || hasDotDot(raw.lexically_normal());
+}
+
+static std::filesystem::path resolveModelCallerPath(const std::string& dataDir, const std::string& callerPath) {
+    if (callerPath.empty() || callerPath.find('\0') != std::string::npos) {
+        throw std::runtime_error("invalid path");
+    }
+    const std::filesystem::path raw(callerPath);
+    if (modelCallerPathEscapes(raw)) {
+        throw std::runtime_error("model path must stay under the models directory");
+    }
+    const std::filesystem::path models = std::filesystem::path(dataDir) / "models";
+    const auto canonicalModels = weaklyCanonicalOrThrow(models, "invalid models directory");
+    const auto canonicalTarget = weaklyCanonicalOrThrow(models / raw, "invalid path");
+    if (modelCallerPathEscapes(canonicalTarget.lexically_relative(canonicalModels)) ||
+        !pathIsInsideDirectory(canonicalModels, canonicalTarget)) {
+        throw std::runtime_error("model path must stay under the models directory");
+    }
+    return canonicalTarget;
+}
+
+#ifdef _WIN32
+static bool kernelObjectDaclIsCurrentUserOnly(HANDLE file) {
+    DWORD bytesNeeded = 0;
+    GetKernelObjectSecurity(file, DACL_SECURITY_INFORMATION, nullptr, 0, &bytesNeeded);
+    if (bytesNeeded == 0) return false;
+
+    std::vector<unsigned char> buffer(bytesNeeded);
+    if (!GetKernelObjectSecurity(
+            file,
+            DACL_SECURITY_INFORMATION,
+            buffer.data(),
+            bytesNeeded,
+            &bytesNeeded)) {
+        return false;
+    }
+
+    auto* descriptor = reinterpret_cast<PSECURITY_DESCRIPTOR>(buffer.data());
+    BOOL present = FALSE;
+    BOOL defaulted = FALSE;
+    PACL dacl = nullptr;
+    if (!GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted) || !present || !dacl) {
+        return false;
+    }
+
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    if (!GetSecurityDescriptorControl(descriptor, &control, &revision)) return false;
+    if ((control & SE_DACL_PROTECTED) == 0) return false;
+
+    ACL_SIZE_INFORMATION aclSize{};
+    if (!GetAclInformation(dacl, &aclSize, sizeof(aclSize), AclSizeInformation)) return false;
+    if (aclSize.AceCount != 1) return false;
+
+    void* ace = nullptr;
+    if (!GetAce(dacl, 0, &ace) || !ace) return false;
+    auto* header = static_cast<ACE_HEADER*>(ace);
+    if (header->AceType != ACCESS_ALLOWED_ACE_TYPE) return false;
+    auto* allow = static_cast<ACCESS_ALLOWED_ACE*>(ace);
+    const DWORD neededRights = FILE_READ_DATA | FILE_WRITE_DATA | DELETE;
+    if ((allow->Mask & neededRights) != neededRights) return false;
+
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    DWORD tokenBytes = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &tokenBytes);
+    if (tokenBytes == 0) {
+        CloseHandle(token);
+        return false;
+    }
+    std::vector<unsigned char> tokenBuffer(tokenBytes);
+    if (!GetTokenInformation(token, TokenUser, tokenBuffer.data(), tokenBytes, &tokenBytes)) {
+        CloseHandle(token);
+        return false;
+    }
+    CloseHandle(token);
+
+    auto* tokenUser = reinterpret_cast<TOKEN_USER*>(tokenBuffer.data());
+    return EqualSid(tokenUser->User.Sid, reinterpret_cast<PSID>(&allow->SidStart)) == TRUE;
+}
+
+static bool writeUserOnlyRpcCookie(const std::filesystem::path& path, const std::string& token) {
+    HANDLE tokenHandle = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tokenHandle)) return false;
+    DWORD tokenBytes = 0;
+    GetTokenInformation(tokenHandle, TokenUser, nullptr, 0, &tokenBytes);
+    if (tokenBytes == 0) {
+        CloseHandle(tokenHandle);
+        return false;
+    }
+    std::vector<unsigned char> tokenBuffer(tokenBytes);
+    if (!GetTokenInformation(tokenHandle, TokenUser, tokenBuffer.data(), tokenBytes, &tokenBytes)) {
+        CloseHandle(tokenHandle);
+        return false;
+    }
+    CloseHandle(tokenHandle);
+    auto* tokenUser = reinterpret_cast<TOKEN_USER*>(tokenBuffer.data());
+    if (!tokenUser->User.Sid) return false;
+
+    EXPLICIT_ACCESSW access{};
+    access.grfAccessPermissions = FILE_ALL_ACCESS;
+    access.grfAccessMode = SET_ACCESS;
+    access.grfInheritance = NO_INHERITANCE;
+    access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    access.Trustee.TrusteeType = TRUSTEE_IS_USER;
+    access.Trustee.ptstrName = static_cast<LPWSTR>(tokenUser->User.Sid);
+
+    PACL acl = nullptr;
+    if (SetEntriesInAclW(1, &access, nullptr, &acl) != ERROR_SUCCESS || !acl) return false;
+
+    SECURITY_DESCRIPTOR descriptor;
+    if (!InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION) ||
+        !SetSecurityDescriptorDacl(&descriptor, TRUE, acl, FALSE) ||
+        !SetSecurityDescriptorControl(&descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED)) {
+        LocalFree(acl);
+        return false;
+    }
+
+    SECURITY_ATTRIBUTES attributes{};
+    attributes.nLength = sizeof(attributes);
+    attributes.lpSecurityDescriptor = &descriptor;
+    attributes.bInheritHandle = FALSE;
+
+    const std::wstring widePath = path.wstring();
+    HANDLE file = CreateFileW(
+        widePath.c_str(),
+        GENERIC_READ | GENERIC_WRITE | WRITE_DAC,
+        0,
+        &attributes,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        LocalFree(acl);
+        return false;
+    }
+
+    const bool restricted = SetKernelObjectSecurity(
+                                file,
+                                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                                &descriptor) == TRUE;
+    if (!restricted || !kernelObjectDaclIsCurrentUserOnly(file)) {
+        CloseHandle(file);
+        LocalFree(acl);
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        return false;
+    }
+    LocalFree(acl);
+
+    const std::string contents = token + "\n";
+    if (contents.size() > static_cast<size_t>(std::numeric_limits<DWORD>::max())) {
+        CloseHandle(file);
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        return false;
+    }
+    DWORD written = 0;
+    const BOOL wrote = WriteFile(
+        file,
+        contents.data(),
+        static_cast<DWORD>(contents.size()),
+        &written,
+        nullptr);
+    CloseHandle(file);
+    if (!wrote || written != contents.size()) {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        return false;
+    }
+    return true;
+}
+#endif
 
 std::string formatUptime(uint64_t seconds);
 
@@ -1591,10 +1834,11 @@ std::string handleRpcPoeExport(const std::string& paramsJson) {
     if (pathStr.empty()) {
         throw std::runtime_error("path required");
     }
+    const auto target = confineCallerPathToDataDir(config_.dataDir, pathStr);
     return rpc::buildRpcPoeExportResponse(
         node::exportPoeDatabase(
             node::poeDbPath(config_.dataDir),
-            std::filesystem::path(pathStr)));
+            target));
 }
 
 std::string handleRpcPoeImport(const std::string& paramsJson) {
@@ -1607,13 +1851,14 @@ std::string handleRpcPoeImport(const std::string& paramsJson) {
         throw std::runtime_error("PoE not ready");
     }
 
+    const auto source = confineCallerPathToDataDir(config_.dataDir, pathStr);
     auto destDb = node::poeDbPath(config_.dataDir);
 
     auto cfg = poeV1_->getConfig();
     auto validators = poeV1_->getStaticValidators();
     poeV1_->close();
 
-    node::importPoeDatabase(std::filesystem::path(pathStr), destDb);
+    node::importPoeDatabase(source, destDb);
 
     if (!poeV1_->open(destDb.string())) {
         throw std::runtime_error("Failed to reopen PoE DB");
@@ -1704,9 +1949,11 @@ std::string handleRpcModelList(const std::string& paramsJson) {
         throw std::runtime_error("Model not ready");
     }
     std::string dir = params.value("dir", "");
-    if (dir.empty()) dir = config_.dataDir + "/models";
+    const std::filesystem::path modelDir = dir.empty()
+        ? weaklyCanonicalOrThrow(std::filesystem::path(config_.dataDir) / "models", "invalid models directory")
+        : resolveModelCallerPath(config_.dataDir, dir);
     std::lock_guard<std::mutex> lock(modelMtx_);
-    return rpc::buildRpcModelListResponse(modelLoader_->listModels(dir));
+    return rpc::buildRpcModelListResponse(modelLoader_->listModels(modelDir.string()));
 }
 
 std::string handleRpcModelLoad(const std::string& paramsJson) {
@@ -1714,12 +1961,14 @@ std::string handleRpcModelLoad(const std::string& paramsJson) {
     if (!modelLoader_) {
         throw std::runtime_error("Model not ready");
     }
-    std::string path = params.value("path", "");
-    std::string name = params.value("name", "");
-    if (path.empty() && !name.empty()) {
-        path = (std::filesystem::path(config_.dataDir) / "models" / name).string();
-    }
-    if (path.empty()) {
+    std::string callerPath = params.value("path", "");
+    std::string callerName = params.value("name", "");
+    std::string path;
+    if (!callerPath.empty()) {
+        path = resolveModelCallerPath(config_.dataDir, callerPath).string();
+    } else if (!callerName.empty()) {
+        path = resolveModelCallerPath(config_.dataDir, callerName).string();
+    } else {
         throw std::runtime_error("path required");
     }
     if (!std::filesystem::exists(path)) {
@@ -2907,6 +3156,16 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             rpcCookieFilePath_ = resolveRpcCookiePath(config_.dataDir, config_.rpcCookieFile);
             std::filesystem::create_directories(std::filesystem::path(rpcCookieFilePath_).parent_path());
             rpcCookieToken_ = crypto::toHex(crypto::randomBytes(32));
+#ifdef _WIN32
+            if (!writeUserOnlyRpcCookie(std::filesystem::path(rpcCookieFilePath_), rpcCookieToken_)) {
+                utils::Logger::error("Failed to create RPC cookie file at " + rpcCookieFilePath_);
+                std::error_code ec;
+                std::filesystem::remove(rpcCookieFilePath_, ec);
+                rpcCookieFilePath_.clear();
+                rpcCookieToken_.clear();
+                return false;
+            }
+#else
             std::ofstream cookieFile(rpcCookieFilePath_, std::ios::trunc);
             if (!cookieFile.is_open()) {
                 utils::Logger::error("Failed to create RPC cookie file at " + rpcCookieFilePath_);
@@ -2918,7 +3177,6 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                 utils::Logger::error("Failed to write RPC cookie file at " + rpcCookieFilePath_);
                 return false;
             }
-#ifndef _WIN32
             ::chmod(rpcCookieFilePath_.c_str(), S_IRUSR | S_IWUSR);
 #endif
 

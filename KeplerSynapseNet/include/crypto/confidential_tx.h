@@ -38,7 +38,9 @@ public:
     static bool rangeCheck(const PedersenCommitment& commitment);
     static std::vector<uint8_t> proveRange(uint64_t amount, const std::vector<uint8_t>& blinding);
     static bool verifyRange(const std::vector<uint8_t>& commitment, const std::vector<uint8_t>& proof);
-    // Schnorr: C - amount*H = blinding*G. Used when shielding a public amount.
+    // Schnorr: C - amount*H = blinding*G. Used when shielding a public amount
+    // and when claiming a reward. The difference must be the identity or a
+    // prime-order point; any other small-order difference is rejected.
     static std::vector<uint8_t> proveKnownAmount(
         const std::vector<uint8_t>& commitment,
         uint64_t amount,

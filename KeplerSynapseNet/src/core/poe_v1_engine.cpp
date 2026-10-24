@@ -754,6 +754,18 @@ PoeSubmitResult PoeV1Engine::submit(
     return res;
 }
 
+// Harvest text the usefulness gate does not pass is not stored and is not
+// written into the novelty index. Text the gate marks not_harvest is ordinary
+// text and stays on the other gates. A failed harvest assessment fails closed.
+static bool passesHarvestUsefulness(const poe_v1::KnowledgeEntryV1& entry, std::string* reason) {
+    if (entry.contentType != poe_v1::ContentType::TEXT) return true;
+    const TextUsefulness use = assessTextUsefulness(entry.title, entry.body);
+    if (!use.harvest || use.reason == "not_harvest") return true;
+    if (use.passed) return true;
+    if (reason) *reason = use.reason.empty() ? "not_useful" : use.reason;
+    return false;
+}
+
 bool PoeV1Engine::precheckEntry(const poe_v1::KnowledgeEntryV1& entry, std::string* reason) const {
     PoeV1Config cfg = getConfig();
     // Very small/invalid submissions should be rejected early
@@ -794,6 +806,7 @@ bool PoeV1Engine::precheckEntry(const poe_v1::KnowledgeEntryV1& entry, std::stri
             return false;
         }
     }
+    if (!passesHarvestUsefulness(entry, reason)) return false;
 
     crypto::Hash256 sid = entry.submitId();
     crypto::Hash256 cid = entry.contentId();
@@ -825,6 +838,7 @@ bool PoeV1Engine::importEntry(const poe_v1::KnowledgeEntryV1& entry, std::string
             return false;
         }
     }
+    if (!passesHarvestUsefulness(entry, reason)) return false;
 
     crypto::Hash256 sid = entry.submitId();
     crypto::Hash256 cid = entry.contentId();

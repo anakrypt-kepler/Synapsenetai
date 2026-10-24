@@ -359,6 +359,8 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// In-process BB84 is not a quantum channel. init does not report a link.
+// getKeyMaterial does not pad a short key.
 class QKDIntegration {
 public:
     QKDIntegration();

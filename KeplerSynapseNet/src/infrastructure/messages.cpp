@@ -59,20 +59,58 @@ static uint64_t readVarInt(const uint8_t* p, size_t& offset) {
     uint64_t v = readU64(p + offset); offset += 8; return v;
 }
 
+static constexpr uint64_t kMaxItemCount = 1000;
+static constexpr uint64_t kMaxStringBytes = 1024ull * 1024ull;
+static constexpr uint64_t kMaxScriptBytes = 1024ull * 1024ull;
+static constexpr size_t kInvItemBytes = 33;
+static constexpr uint64_t kMaxOnionHostBytes = 256;
+
+// Cursor-only deserializers publish the surrounding frame for this thread.
+// A script copy is refused when that frame is absent or the declared length
+// does not fit in the unread bytes.
+struct ActiveFrame {
+    const uint8_t* data;
+    size_t total;
+};
+
+static thread_local ActiveFrame g_activeFrame{nullptr, 0};
+
+class ActiveFrameScope {
+public:
+    explicit ActiveFrameScope(const uint8_t* data, size_t total)
+        : previous_(g_activeFrame) {
+        g_activeFrame = ActiveFrame{data, total};
+    }
+    ~ActiveFrameScope() { g_activeFrame = previous_; }
+    ActiveFrameScope(const ActiveFrameScope&) = delete;
+    ActiveFrameScope& operator=(const ActiveFrameScope&) = delete;
+private:
+    ActiveFrame previous_;
+};
+
+static bool fits(size_t offset, size_t total, size_t count) {
+    return offset <= total && count <= total - offset;
+}
+
+static bool frameLimit(const uint8_t* data, size_t& total) {
+    if (data == nullptr || g_activeFrame.data == nullptr || g_activeFrame.data != data) return false;
+    total = g_activeFrame.total;
+    return true;
+}
+
 static uint64_t safeReadVarInt(const uint8_t* p, size_t total, size_t& offset, bool& ok) {
-    if (offset >= total) { ok = false; return 0; }
-    uint8_t first = p[offset++];
+    if (!ok) return 0;
+    if (p == nullptr || offset >= total) { ok = false; return 0; }
+    const uint8_t first = p[offset++];
     if (first < 0xfd) return first;
-    if (first == 0xfd) {
-        if (offset + 2 > total) { ok = false; return 0; }
-        uint16_t v = readU16(p + offset); offset += 2; return v;
-    }
-    if (first == 0xfe) {
-        if (offset + 4 > total) { ok = false; return 0; }
-        uint32_t v = readU32(p + offset); offset += 4; return v;
-    }
-    if (offset + 8 > total) { ok = false; return 0; }
-    uint64_t v = readU64(p + offset); offset += 8; return v;
+    const size_t extra = (first == 0xfd) ? 2u : (first == 0xfe) ? 4u : 8u;
+    if (!fits(offset, total, extra)) { ok = false; return 0; }
+    uint64_t value = 0;
+    if (extra == 2) value = readU16(p + offset);
+    else if (extra == 4) value = readU32(p + offset);
+    else value = readU64(p + offset);
+    offset += extra;
+    return value;
 }
 
 static std::string readString(const uint8_t* p, size_t& offset) {
@@ -82,13 +120,96 @@ static std::string readString(const uint8_t* p, size_t& offset) {
     return s;
 }
 
-static std::string safeReadString(const uint8_t* p, size_t total, size_t& offset, bool& ok) {
-    uint64_t len = safeReadVarInt(p, total, offset, ok);
+static std::string safeReadString(const uint8_t* p, size_t total, size_t& offset, bool& ok,
+                                  uint64_t maxLen = 4ull * 1024ull * 1024ull) {
+    const uint64_t len = safeReadVarInt(p, total, offset, ok);
     if (!ok) return {};
-    if (len > 4 * 1024 * 1024 || offset + len > total) { ok = false; return {}; }
+    if (len > maxLen || offset > total || len > static_cast<uint64_t>(total - offset)) {
+        ok = false;
+        return {};
+    }
     std::string s(reinterpret_cast<const char*>(p + offset), static_cast<size_t>(len));
     offset += static_cast<size_t>(len);
     return s;
+}
+
+static bool readCheckedString(const uint8_t* p, size_t total, size_t& offset, std::string& out) {
+    bool ok = true;
+    out = safeReadString(p, total, offset, ok, kMaxStringBytes);
+    return ok;
+}
+
+static bool readU32Checked(const uint8_t* p, size_t total, size_t& offset, uint32_t& value) {
+    if (p == nullptr || !fits(offset, total, 4)) return false;
+    value = readU32(p + offset);
+    offset += 4;
+    return true;
+}
+
+static bool readU64Checked(const uint8_t* p, size_t total, size_t& offset, uint64_t& value) {
+    if (p == nullptr || !fits(offset, total, 8)) return false;
+    value = readU64(p + offset);
+    offset += 8;
+    return true;
+}
+
+static bool readCopy(const uint8_t* p, size_t total, size_t& offset, void* dest, size_t count) {
+    if (p == nullptr || dest == nullptr || !fits(offset, total, count)) return false;
+    std::memcpy(dest, p + offset, count);
+    offset += count;
+    return true;
+}
+
+static bool readTxInput(const uint8_t* data, size_t total, size_t& offset, TxInput& in) {
+    if (data == nullptr || !fits(offset, total, 36)) return false;
+    std::memcpy(in.prevTxHash.data(), data + offset, 32);
+    offset += 32;
+    in.outputIndex = readU32(data + offset);
+    offset += 4;
+    bool ok = true;
+    const uint64_t scriptLen = safeReadVarInt(data, total, offset, ok);
+    if (!ok || scriptLen > kMaxScriptBytes) return false;
+    const size_t scriptBytes = static_cast<size_t>(scriptLen);
+    if (!fits(offset, total, scriptBytes)) return false;
+    const size_t afterScript = offset + scriptBytes;
+    if (!fits(afterScript, total, 4)) return false;
+    in.scriptSig.assign(data + offset, data + offset + scriptBytes);
+    offset += scriptBytes;
+    in.sequence = readU32(data + offset);
+    offset += 4;
+    return true;
+}
+
+static bool readTxOutput(const uint8_t* data, size_t total, size_t& offset, TxOutput& out) {
+    if (data == nullptr || !fits(offset, total, 8)) return false;
+    out.amount = readU64(data + offset);
+    offset += 8;
+    bool ok = true;
+    const uint64_t scriptLen = safeReadVarInt(data, total, offset, ok);
+    if (!ok || scriptLen > kMaxScriptBytes) return false;
+    const size_t scriptBytes = static_cast<size_t>(scriptLen);
+    if (!fits(offset, total, scriptBytes)) return false;
+    out.scriptPubKey.assign(data + offset, data + offset + scriptBytes);
+    offset += scriptBytes;
+    return true;
+}
+
+template <typename Message>
+static Message readItemList(const std::vector<uint8_t>& data) {
+    Message message;
+    const size_t total = data.size();
+    const uint8_t* bytes = data.data();
+    size_t offset = 0;
+    bool ok = true;
+    const uint64_t count = safeReadVarInt(bytes, total, offset, ok);
+    if (!ok || count > kMaxItemCount) return {};
+    message.items.reserve(static_cast<size_t>(count));
+    for (uint64_t i = 0; i < count; ++i) {
+        if (!fits(offset, total, kInvItemBytes)) return {};
+        message.items.push_back(InvItem::deserialize(bytes + offset));
+        offset += kInvItemBytes;
+    }
+    return message;
 }
 
 static uint32_t floatToBits(float f) {
@@ -215,13 +336,15 @@ std::vector<uint8_t> OnionPeerAddress::serialize() const {
 
 OnionPeerAddress OnionPeerAddress::deserialize(const uint8_t* data, size_t len, size_t& consumed) {
     OnionPeerAddress a;
+    consumed = 0;
     size_t offset = 0;
-    if (offset >= len) { consumed = 0; return a; }
-    uint64_t hostLen = readVarInt(data, offset);
-    if (offset + hostLen > len || hostLen > 256) { consumed = 0; return a; }
+    bool ok = true;
+    const uint64_t hostLen = safeReadVarInt(data, len, offset, ok);
+    if (!ok || hostLen > kMaxOnionHostBytes || hostLen > kMaxStringBytes) return a;
+    if (offset > len || hostLen > static_cast<uint64_t>(len - offset)) return a;
     a.onionHost.assign(reinterpret_cast<const char*>(data + offset), static_cast<size_t>(hostLen));
     offset += static_cast<size_t>(hostLen);
-    if (offset + 18 > len) { consumed = 0; return a; }
+    if (!fits(offset, len, 18)) return a;
     a.port = readU16(data + offset); offset += 2;
     a.services = readU64(data + offset); offset += 8;
     a.timestamp = readU64(data + offset); offset += 8;
@@ -243,13 +366,16 @@ OnionPeersMessage OnionPeersMessage::deserialize(const std::vector<uint8_t>& dat
     OnionPeersMessage m;
     if (data.empty()) return m;
     size_t offset = 0;
-    uint64_t count = readVarInt(data.data(), offset);
-    if (count > 1000) return m;
-    for (uint64_t i = 0; i < count; i++) {
-        if (offset >= data.size()) break;
+    bool ok = true;
+    const uint64_t count = safeReadVarInt(data.data(), data.size(), offset, ok);
+    if (!ok || count > kMaxItemCount) return {};
+    m.peers.reserve(static_cast<size_t>(count));
+    for (uint64_t i = 0; i < count; ++i) {
+        if (offset > data.size()) return {};
         size_t consumed = 0;
-        auto peer = OnionPeerAddress::deserialize(data.data() + offset, data.size() - offset, consumed);
-        if (consumed == 0) break;
+        OnionPeerAddress peer = OnionPeerAddress::deserialize(
+            data.data() + offset, data.size() - offset, consumed);
+        if (consumed == 0 || consumed > data.size() - offset) return {};
         offset += consumed;
         m.peers.push_back(std::move(peer));
     }
@@ -281,14 +407,7 @@ std::vector<uint8_t> InvMessage::serialize() const {
 }
 
 InvMessage InvMessage::deserialize(const std::vector<uint8_t>& data) {
-    InvMessage m;
-    size_t offset = 0;
-    uint64_t count = readVarInt(data.data(), offset);
-    for (uint64_t i = 0; i < count; i++) {
-        m.items.push_back(InvItem::deserialize(data.data() + offset));
-        offset += 33;
-    }
-    return m;
+    return readItemList<InvMessage>(data);
 }
 
 std::vector<uint8_t> GetDataMessage::serialize() const {
@@ -302,14 +421,7 @@ std::vector<uint8_t> GetDataMessage::serialize() const {
 }
 
 GetDataMessage GetDataMessage::deserialize(const std::vector<uint8_t>& data) {
-    GetDataMessage m;
-    size_t offset = 0;
-    uint64_t count = readVarInt(data.data(), offset);
-    for (uint64_t i = 0; i < count; i++) {
-        m.items.push_back(InvItem::deserialize(data.data() + offset));
-        offset += 33;
-    }
-    return m;
+    return readItemList<GetDataMessage>(data);
 }
 
 std::vector<uint8_t> KnowledgeMessage::serialize() const {
@@ -373,13 +485,14 @@ std::vector<uint8_t> TxInput::serialize() const {
 }
 
 TxInput TxInput::deserialize(const uint8_t* data, size_t& offset) {
-    TxInput i;
-    std::memcpy(i.prevTxHash.data(), data + offset, 32); offset += 32;
-    i.outputIndex = readU32(data + offset); offset += 4;
-    uint64_t scriptLen = readVarInt(data, offset);
-    i.scriptSig.assign(data + offset, data + offset + scriptLen); offset += scriptLen;
-    i.sequence = readU32(data + offset); offset += 4;
-    return i;
+    const size_t mark = offset;
+    TxInput in;
+    size_t total = 0;
+    if (!frameLimit(data, total) || !readTxInput(data, total, offset, in)) {
+        offset = mark;
+        return {};
+    }
+    return in;
 }
 
 std::vector<uint8_t> TxOutput::serialize() const {
@@ -391,11 +504,14 @@ std::vector<uint8_t> TxOutput::serialize() const {
 }
 
 TxOutput TxOutput::deserialize(const uint8_t* data, size_t& offset) {
-    TxOutput o;
-    o.amount = readU64(data + offset); offset += 8;
-    uint64_t scriptLen = readVarInt(data, offset);
-    o.scriptPubKey.assign(data + offset, data + offset + scriptLen); offset += scriptLen;
-    return o;
+    const size_t mark = offset;
+    TxOutput out;
+    size_t total = 0;
+    if (!frameLimit(data, total) || !readTxOutput(data, total, offset, out)) {
+        offset = mark;
+        return {};
+    }
+    return out;
 }
 
 std::vector<uint8_t> TransferMessage::serialize() const {
@@ -421,24 +537,38 @@ TransferMessage TransferMessage::deserialize(const std::vector<uint8_t>& data) {
 }
 
 TransferMessage TransferMessage::deserialize(const uint8_t* data, size_t total, size_t& offset) {
+    const size_t start = offset;
+    auto fail = [&]() -> TransferMessage {
+        offset = start;
+        return {};
+    };
+    if (data == nullptr || !fits(offset, total, 4)) return fail();
+    [[maybe_unused]] ActiveFrameScope frameScope(data, total);
     TransferMessage m;
-    if (offset + 4 > total) return m;
-    m.version = readU32(data + offset); offset += 4;
+    m.version = readU32(data + offset);
+    offset += 4;
     bool ok = true;
-    uint64_t inputCount = safeReadVarInt(data, total, offset, ok);
-    if (!ok || inputCount > 10000) return m;
-    for (uint64_t i = 0; i < inputCount; i++) {
-        if (offset + 40 > total) return m;
-        m.inputs.push_back(TxInput::deserialize(data, offset));
+    const uint64_t inputCount = safeReadVarInt(data, total, offset, ok);
+    if (!ok || inputCount > 10000) return fail();
+    m.inputs.reserve(static_cast<size_t>(inputCount));
+    for (uint64_t i = 0; i < inputCount; ++i) {
+        const size_t mark = offset;
+        TxInput in = TxInput::deserialize(data, offset);
+        if (offset == mark) return fail();
+        m.inputs.push_back(std::move(in));
     }
-    uint64_t outputCount = safeReadVarInt(data, total, offset, ok);
-    if (!ok || outputCount > 10000) return m;
-    for (uint64_t i = 0; i < outputCount; i++) {
-        if (offset + 9 > total) return m;
-        m.outputs.push_back(TxOutput::deserialize(data, offset));
+    const uint64_t outputCount = safeReadVarInt(data, total, offset, ok);
+    if (!ok || outputCount > 10000) return fail();
+    m.outputs.reserve(static_cast<size_t>(outputCount));
+    for (uint64_t i = 0; i < outputCount; ++i) {
+        const size_t mark = offset;
+        TxOutput out = TxOutput::deserialize(data, offset);
+        if (offset == mark) return fail();
+        m.outputs.push_back(std::move(out));
     }
-    if (offset + 8 > total) return m;
-    m.lockTime = readU64(data + offset); offset += 8;
+    if (!fits(offset, total, 8)) return fail();
+    m.lockTime = readU64(data + offset);
+    offset += 8;
     return m;
 }
 
@@ -508,9 +638,12 @@ BlockMessage BlockMessage::deserialize(const std::vector<uint8_t>& data) {
     bool ok = true;
     uint64_t txCount = safeReadVarInt(data.data(), data.size(), offset, ok);
     if (!ok || txCount > 50000) return m;
-    for (uint64_t i = 0; i < txCount; i++) {
-        if (offset >= data.size()) break;
-        m.transactions.push_back(TransferMessage::deserialize(data.data(), data.size(), offset));
+    for (uint64_t i = 0; i < txCount; ++i) {
+        if (offset >= data.size()) return {};
+        const size_t before = offset;
+        TransferMessage tx = TransferMessage::deserialize(data.data(), data.size(), offset);
+        if (offset == before) return {};
+        m.transactions.push_back(std::move(tx));
     }
     return m;
 }
@@ -704,15 +837,16 @@ std::vector<uint8_t> RemoteModelOfferMessage::serialize() const {
 
 RemoteModelOfferMessage RemoteModelOfferMessage::deserialize(const std::vector<uint8_t>& data) {
     RemoteModelOfferMessage m;
-    size_t offset = 0;
+    const size_t total = data.size();
     const uint8_t* p = data.data();
-    m.offerId = readString(p, offset);
-    m.modelId = readString(p, offset);
-    m.providerAddress = readString(p, offset);
-    m.pricePerRequestAtoms = readU64(p + offset); offset += 8;
-    m.maxSlots = readU32(p + offset); offset += 4;
-    m.usedSlots = readU32(p + offset); offset += 4;
-    m.expiresAt = readU64(p + offset); offset += 8;
+    size_t offset = 0;
+    if (!readCheckedString(p, total, offset, m.offerId)) return {};
+    if (!readCheckedString(p, total, offset, m.modelId)) return {};
+    if (!readCheckedString(p, total, offset, m.providerAddress)) return {};
+    if (!readU64Checked(p, total, offset, m.pricePerRequestAtoms)) return {};
+    if (!readU32Checked(p, total, offset, m.maxSlots)) return {};
+    if (!readU32Checked(p, total, offset, m.usedSlots)) return {};
+    if (!readU64Checked(p, total, offset, m.expiresAt)) return {};
     return m;
 }
 
@@ -726,11 +860,12 @@ std::vector<uint8_t> RemoteModelRentMessage::serialize() const {
 
 RemoteModelRentMessage RemoteModelRentMessage::deserialize(const std::vector<uint8_t>& data) {
     RemoteModelRentMessage m;
-    size_t offset = 0;
+    const size_t total = data.size();
     const uint8_t* p = data.data();
-    m.offerId = readString(p, offset);
-    std::memcpy(m.renterPubKey.data(), p + offset, 33); offset += 33;
-    m.timestamp = readU64(p + offset); offset += 8;
+    size_t offset = 0;
+    if (!readCheckedString(p, total, offset, m.offerId)) return {};
+    if (!readCopy(p, total, offset, m.renterPubKey.data(), m.renterPubKey.size())) return {};
+    if (!readU64Checked(p, total, offset, m.timestamp)) return {};
     return m;
 }
 
@@ -746,13 +881,14 @@ std::vector<uint8_t> RemoteModelRentOkMessage::serialize() const {
 
 RemoteModelRentOkMessage RemoteModelRentOkMessage::deserialize(const std::vector<uint8_t>& data) {
     RemoteModelRentOkMessage m;
-    size_t offset = 0;
+    const size_t total = data.size();
     const uint8_t* p = data.data();
-    m.offerId = readString(p, offset);
-    m.sessionId = readString(p, offset);
-    m.providerAddress = readString(p, offset);
-    m.pricePerRequestAtoms = readU64(p + offset); offset += 8;
-    m.expiresAt = readU64(p + offset); offset += 8;
+    size_t offset = 0;
+    if (!readCheckedString(p, total, offset, m.offerId)) return {};
+    if (!readCheckedString(p, total, offset, m.sessionId)) return {};
+    if (!readCheckedString(p, total, offset, m.providerAddress)) return {};
+    if (!readU64Checked(p, total, offset, m.pricePerRequestAtoms)) return {};
+    if (!readU64Checked(p, total, offset, m.expiresAt)) return {};
     return m;
 }
 
@@ -773,18 +909,23 @@ std::vector<uint8_t> RemoteModelInferMessage::serialize() const {
 
 RemoteModelInferMessage RemoteModelInferMessage::deserialize(const std::vector<uint8_t>& data) {
     RemoteModelInferMessage m;
-    size_t offset = 0;
+    const size_t total = data.size();
     const uint8_t* p = data.data();
-    m.sessionId = readString(p, offset);
-    m.requestId = readString(p, offset);
-    m.prompt = readString(p, offset);
-    m.maxTokens = readU32(p + offset); offset += 4;
-    m.temperature = bitsToFloat(readU32(p + offset)); offset += 4;
-    m.topP = bitsToFloat(readU32(p + offset)); offset += 4;
-    m.topK = readU32(p + offset); offset += 4;
-    m.paymentTxidHex = readString(p, offset);
-    std::memcpy(m.renterPubKey.data(), p + offset, 33); offset += 33;
-    m.timestamp = readU64(p + offset); offset += 8;
+    size_t offset = 0;
+    if (!readCheckedString(p, total, offset, m.sessionId)) return {};
+    if (!readCheckedString(p, total, offset, m.requestId)) return {};
+    if (!readCheckedString(p, total, offset, m.prompt)) return {};
+    if (!readU32Checked(p, total, offset, m.maxTokens)) return {};
+    uint32_t temperatureBits = 0;
+    uint32_t topPBits = 0;
+    if (!readU32Checked(p, total, offset, temperatureBits)) return {};
+    if (!readU32Checked(p, total, offset, topPBits)) return {};
+    m.temperature = bitsToFloat(temperatureBits);
+    m.topP = bitsToFloat(topPBits);
+    if (!readU32Checked(p, total, offset, m.topK)) return {};
+    if (!readCheckedString(p, total, offset, m.paymentTxidHex)) return {};
+    if (!readCopy(p, total, offset, m.renterPubKey.data(), m.renterPubKey.size())) return {};
+    if (!readU64Checked(p, total, offset, m.timestamp)) return {};
     return m;
 }
 
@@ -799,12 +940,13 @@ std::vector<uint8_t> RemoteModelOutMessage::serialize() const {
 
 RemoteModelOutMessage RemoteModelOutMessage::deserialize(const std::vector<uint8_t>& data) {
     RemoteModelOutMessage m;
-    size_t offset = 0;
+    const size_t total = data.size();
     const uint8_t* p = data.data();
-    m.requestId = readString(p, offset);
-    m.text = readString(p, offset);
-    m.tokensUsed = readU32(p + offset); offset += 4;
-    m.latencyMs = readU64(p + offset); offset += 8;
+    size_t offset = 0;
+    if (!readCheckedString(p, total, offset, m.requestId)) return {};
+    if (!readCheckedString(p, total, offset, m.text)) return {};
+    if (!readU32Checked(p, total, offset, m.tokensUsed)) return {};
+    if (!readU64Checked(p, total, offset, m.latencyMs)) return {};
     return m;
 }
 

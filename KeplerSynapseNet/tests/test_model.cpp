@@ -11,6 +11,8 @@
 #include <iomanip>
 #include <functional>
 #include <memory>
+#include <limits>
+#include <stdexcept>
 
 namespace synapse {
 namespace test {
@@ -818,6 +820,18 @@ private:
     int numHeads;
     int headDim;
 
+    static size_t checkedMulSize(int left, int right) {
+        if (left < 0 || right < 0) {
+            throw std::overflow_error("size multiplication overflow");
+        }
+        const size_t a = static_cast<size_t>(left);
+        const size_t b = static_cast<size_t>(right);
+        if (a != 0 && b > std::numeric_limits<size_t>::max() / a) {
+            throw std::overflow_error("size multiplication overflow");
+        }
+        return a * b;
+    }
+
 public:
     AttentionLayer(int hidden, int heads) : hiddenSize(hidden), numHeads(heads) {
         headDim = hiddenSize / numHeads;
@@ -836,7 +850,7 @@ public:
         std::vector<float> v = matmul(input, wv, seqLen, hiddenSize, hiddenSize);
 
         for (int h = 0; h < numHeads; h++) {
-            std::vector<float> scores(seqLen * seqLen, 0.0f);
+            std::vector<float> scores(checkedMulSize(seqLen, seqLen), 0.0f);
 
             for (int i = 0; i < seqLen; i++) {
                 for (int j = 0; j <= i; j++) {
@@ -884,7 +898,7 @@ public:
 
     std::vector<float> matmul(const std::vector<float>& a, const std::vector<float>& b,
                               int m, int k, int n) {
-        std::vector<float> c(m * n, 0.0f);
+        std::vector<float> c(checkedMulSize(m, n), 0.0f);
         for (int i = 0; i < m; i++) {
             for (int j = 0; j < n; j++) {
                 float sum = 0.0f;

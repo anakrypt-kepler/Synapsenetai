@@ -27,10 +27,85 @@ std::filesystem::path shmSidecar(const std::filesystem::path& dbPath) {
     return path;
 }
 
-void ensureParentDirectory(const std::filesystem::path& filePath) {
-    const auto parent = filePath.parent_path();
-    if (!parent.empty()) {
-        std::filesystem::create_directories(parent);
+// The PoE database lives at <dataDir>/poe/poe.db. Caller paths are confined to
+// that data directory after canonicalization, including WAL and SHM sidecars.
+std::filesystem::path canonicalPath(const std::filesystem::path& path) {
+    std::error_code ec;
+    auto canonical = std::filesystem::weakly_canonical(path, ec);
+    if (ec || canonical.empty()) {
+        throw std::runtime_error("path escapes data directory");
+    }
+    canonical = canonical.lexically_normal();
+    if (canonical.empty() || !canonical.is_absolute()) {
+        throw std::runtime_error("path escapes data directory");
+    }
+    return canonical;
+}
+
+bool isInsideDataDirectory(
+    const std::filesystem::path& path,
+    const std::filesystem::path& dataDir) {
+    const auto relative = path.lexically_normal().lexically_relative(
+        dataDir.lexically_normal());
+    if (relative.empty()) {
+        return false;
+    }
+    for (const auto& part : relative) {
+        if (part == "..") {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::filesystem::path pathInsideDataDirectory(
+    const std::filesystem::path& path,
+    const std::filesystem::path& dataDir) {
+    const auto canonical = canonicalPath(path);
+    if (!isInsideDataDirectory(canonical, dataDir)) {
+        throw std::runtime_error("path escapes data directory");
+    }
+    return canonical;
+}
+
+std::filesystem::path dataDirectoryForDb(const std::filesystem::path& dbPath) {
+    const auto parent = dbPath.parent_path();
+    const auto filename = dbPath.filename();
+    if (parent.empty() || filename.empty() || filename == "." || filename == "..") {
+        throw std::runtime_error("path escapes data directory");
+    }
+    const auto canonicalParent = canonicalPath(parent);
+    const auto dataDir = canonicalParent.parent_path().lexically_normal();
+    if (dataDir.empty() || dataDir == canonicalParent ||
+        !isInsideDataDirectory(canonicalParent / filename, dataDir)) {
+        throw std::runtime_error("path escapes data directory");
+    }
+    return dataDir;
+}
+
+bool pathExists(const std::filesystem::path& path) {
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(path, ec);
+    if (ec && ec != std::errc::no_such_file_or_directory) {
+        throw std::runtime_error("path escapes data directory");
+    }
+    return exists && !ec;
+}
+
+void ensureParentDirectory(
+    const std::filesystem::path& filePath,
+    const std::filesystem::path& dataDir) {
+    const auto parent = canonicalPath(filePath.parent_path());
+    if (!isInsideDataDirectory(parent, dataDir)) {
+        throw std::runtime_error("path escapes data directory");
+    }
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dataDir, ec) || ec) {
+        throw std::runtime_error("path escapes data directory");
+    }
+    std::filesystem::create_directories(parent);
+    if (!isInsideDataDirectory(canonicalPath(parent), dataDir)) {
+        throw std::runtime_error("path escapes data directory");
     }
 }
 
@@ -47,6 +122,17 @@ void copyFileOrThrow(
     if (ec) {
         throw std::runtime_error(std::string(failurePrefix) + ec.message());
     }
+}
+
+std::filesystem::path copyInsideDataDirectory(
+    const std::filesystem::path& source,
+    const std::filesystem::path& destination,
+    const std::filesystem::path& dataDir,
+    const char* failurePrefix) {
+    const auto sourcePath = pathInsideDataDirectory(source, dataDir);
+    const auto destinationPath = pathInsideDataDirectory(destination, dataDir);
+    copyFileOrThrow(sourcePath, destinationPath, failurePrefix);
+    return destinationPath;
 }
 
 } // namespace
@@ -79,52 +165,88 @@ crypto::Hash256 rewardIdForEpoch(
 std::vector<std::string> exportPoeDatabase(
     const std::filesystem::path& sourceDb,
     const std::filesystem::path& exportTarget) {
-    const auto outputDb = resolvePoeDbFile(exportTarget);
-    ensureParentDirectory(outputDb);
-
-    copyFileOrThrow(sourceDb, outputDb, "copy DB failed: ");
-
-    std::vector<std::string> copiedPaths;
-    copiedPaths.push_back(outputDb.string());
+    const auto dataDir = dataDirectoryForDb(sourceDb);
+    const auto source = pathInsideDataDirectory(sourceDb, dataDir);
+    const auto resolvedOutput = resolvePoeDbFile(exportTarget);
+    const auto outputDb = pathInsideDataDirectory(resolvedOutput, dataDir);
 
     const auto sourceWal = walSidecar(sourceDb);
-    if (std::filesystem::exists(sourceWal)) {
-        const auto outputWal = walSidecar(outputDb);
-        copyFileOrThrow(sourceWal, outputWal, "copy WAL failed: ");
-        copiedPaths.push_back(outputWal.string());
-    }
-
     const auto sourceShm = shmSidecar(sourceDb);
-    if (std::filesystem::exists(sourceShm)) {
-        const auto outputShm = shmSidecar(outputDb);
-        copyFileOrThrow(sourceShm, outputShm, "copy SHM failed: ");
-        copiedPaths.push_back(outputShm.string());
+    const bool hasWal = pathExists(sourceWal);
+    const bool hasShm = pathExists(sourceShm);
+    std::filesystem::path resolvedSourceWal;
+    std::filesystem::path resolvedSourceShm;
+    std::filesystem::path outputWal;
+    std::filesystem::path outputShm;
+    if (hasWal) {
+        resolvedSourceWal = pathInsideDataDirectory(sourceWal, dataDir);
+        outputWal = pathInsideDataDirectory(walSidecar(resolvedOutput), dataDir);
+    }
+    if (hasShm) {
+        resolvedSourceShm = pathInsideDataDirectory(sourceShm, dataDir);
+        outputShm = pathInsideDataDirectory(shmSidecar(resolvedOutput), dataDir);
     }
 
+    ensureParentDirectory(outputDb, dataDir);
+
+    std::vector<std::string> copiedPaths;
+    copiedPaths.push_back(
+        copyInsideDataDirectory(source, outputDb, dataDir, "copy DB failed: ").string());
+    if (hasWal) {
+        copiedPaths.push_back(
+            copyInsideDataDirectory(
+                resolvedSourceWal,
+                outputWal,
+                dataDir,
+                "copy WAL failed: ").string());
+    }
+    if (hasShm) {
+        copiedPaths.push_back(
+            copyInsideDataDirectory(
+                resolvedSourceShm,
+                outputShm,
+                dataDir,
+                "copy SHM failed: ").string());
+    }
     return copiedPaths;
 }
 
 std::filesystem::path importPoeDatabase(
     const std::filesystem::path& importTarget,
     const std::filesystem::path& destinationDb) {
-    const auto inputDb = resolvePoeDbFile(importTarget);
+    const auto dataDir = dataDirectoryForDb(destinationDb);
+    const auto destination = pathInsideDataDirectory(destinationDb, dataDir);
+    const auto resolvedInput = resolvePoeDbFile(importTarget);
+    const auto inputDb = pathInsideDataDirectory(resolvedInput, dataDir);
     if (!std::filesystem::exists(inputDb)) {
         throw std::runtime_error("source DB not found");
     }
 
-    ensureParentDirectory(destinationDb);
-    copyFileOrThrow(inputDb, destinationDb, "copy DB failed: ");
-
-    const auto inputWal = walSidecar(inputDb);
-    if (std::filesystem::exists(inputWal)) {
-        copyFileOrThrow(inputWal, walSidecar(destinationDb), "copy WAL failed: ");
+    const auto inputWal = walSidecar(resolvedInput);
+    const auto inputShm = shmSidecar(resolvedInput);
+    const bool hasWal = pathExists(inputWal);
+    const bool hasShm = pathExists(inputShm);
+    std::filesystem::path resolvedInputWal;
+    std::filesystem::path resolvedInputShm;
+    std::filesystem::path outputWal;
+    std::filesystem::path outputShm;
+    if (hasWal) {
+        resolvedInputWal = pathInsideDataDirectory(inputWal, dataDir);
+        outputWal = pathInsideDataDirectory(walSidecar(destination), dataDir);
+    }
+    if (hasShm) {
+        resolvedInputShm = pathInsideDataDirectory(inputShm, dataDir);
+        outputShm = pathInsideDataDirectory(shmSidecar(destination), dataDir);
     }
 
-    const auto inputShm = shmSidecar(inputDb);
-    if (std::filesystem::exists(inputShm)) {
-        copyFileOrThrow(inputShm, shmSidecar(destinationDb), "copy SHM failed: ");
+    ensureParentDirectory(destination, dataDir);
+    copyInsideDataDirectory(inputDb, destination, dataDir, "copy DB failed: ");
+    if (hasWal) {
+        copyInsideDataDirectory(resolvedInputWal, outputWal, dataDir, "copy WAL failed: ");
     }
-
+    if (hasShm) {
+        copyInsideDataDirectory(resolvedInputShm, outputShm, dataDir, "copy SHM failed: ");
+    }
     return destinationDb;
 }
 

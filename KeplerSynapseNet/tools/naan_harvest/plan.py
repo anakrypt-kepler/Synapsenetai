@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 
 
 class LoopAction(str, Enum):
@@ -83,14 +83,16 @@ def pick_target(topic: str, tick: int) -> HarvestTarget:
         )
     idx = tick % len(CLEARNET_ENGINES)
     url = CLEARNET_ENGINES[idx] + q
+    parts = _urlsplit(url)
+    host = (parts.hostname or "").lower().rstrip(".") if parts is not None else ""
     name = "clearnet"
-    if "duckduckgo" in url:
+    if _host_is(host, "duckduckgo.com"):
         name = "duckduckgo"
-    elif "brave" in url:
+    elif _host_is(host, "search.brave.com"):
         name = "brave"
-    elif "wikipedia" in url:
+    elif _host_is(host, "wikipedia.org"):
         name = "wikipedia"
-    elif "arxiv" in url:
+    elif _host_is(host, "arxiv.org"):
         name = "arxiv"
     return HarvestTarget(url, name, onion=False)
 
@@ -102,22 +104,70 @@ def is_junk_html(html: str) -> bool:
     return any(n in h for n in JUNK_NEEDLES)
 
 
+def _urlsplit(url: str):
+    try:
+        return urlsplit(url)
+    except ValueError:
+        return None
+
+
+def _host_is(host: str, domain: str) -> bool:
+    """True when host is domain or a subdomain of domain."""
+    domain = domain.lower().rstrip(".")
+    if not host or not domain:
+        return False
+    return host == domain or host.endswith("." + domain)
+
+
+def _hosts_of(urls: tuple[str, ...]) -> tuple[str, ...]:
+    found: list[str] = []
+    for raw in urls:
+        parts = _urlsplit(raw)
+        if parts is None:
+            continue
+        host = (parts.hostname or "").lower().rstrip(".")
+        if host and host not in found:
+            found.append(host)
+    return tuple(found)
+
+
+_DARKNET_HOSTS = _hosts_of(DARKNET_ENGINES)
+
+
+def _ahmia_named_host(host: str) -> bool:
+    labels = [part for part in host.split(".") if part]
+    return any(part == "ahmia" and i < len(labels) - 1 for i, part in enumerate(labels))
+
+
+def _path_under(path: str, prefix: str) -> bool:
+    path = path.lower()
+    prefix = prefix.lower().rstrip("/")
+    if not prefix:
+        return False
+    return path == prefix or path.startswith(prefix + "/")
+
+
 def is_search_surface(url: str) -> bool:
-    u = url.lower()
-    return (
-        "duckduckgo.com" in u
-        or "duckduckgogg" in u
-        or "search.brave.com" in u
-        or "wikipedia.org/w/" in u
-        or "arxiv.org/search" in u
-        or "arxiv.org/list" in u
-        or "ahmia." in u
-        or "juhanurmihxlp77" in u
-        or "torchdeedp3i2" in u
-        or "darkzqtmbdeauw" in u
-        or "search7tdrcvri" in u
-        or "haystak5njsmn" in u
-    )
+    # Parsed host (and path, where the old rule was path-specific). A domain
+    # embedded in the userinfo, path, or query is not that host.
+    parts = _urlsplit(url)
+    if parts is None:
+        return False
+    host = (parts.hostname or "").lower().rstrip(".")
+    path = parts.path or ""
+    if _host_is(host, "duckduckgo.com"):
+        return True
+    if _host_is(host, "search.brave.com"):
+        return True
+    if _host_is(host, "wikipedia.org") and path.lower().startswith("/w/"):
+        return True
+    if _host_is(host, "arxiv.org") and (
+        _path_under(path, "/search") or _path_under(path, "/list")
+    ):
+        return True
+    if _ahmia_named_host(host):
+        return True
+    return any(_host_is(host, known) for known in _DARKNET_HOSTS)
 
 
 def _origin(base: str) -> str:

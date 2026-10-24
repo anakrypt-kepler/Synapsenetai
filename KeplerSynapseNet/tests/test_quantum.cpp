@@ -596,8 +596,8 @@ private:
         manager.setSecurityLevel(synapse::quantum::SecurityLevel::QUANTUM_READY);
         auto qReady = manager.getRuntimeStatus();
         assert(qReady.level == synapse::quantum::SecurityLevel::QUANTUM_READY);
-        assert(qReady.qkdConnected);
-        assert(qReady.qkdSessionActive);
+        assert(!qReady.qkdConnected);
+        assert(!qReady.qkdSessionActive);
 
         manager.shutdown();
         std::cout << "PASSED\n";

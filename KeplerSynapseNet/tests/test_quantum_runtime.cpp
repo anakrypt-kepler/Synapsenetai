@@ -156,8 +156,8 @@ static bool testQuantumRuntimeStatusAndDowngradeBoundary() {
     if (initial.pqc.kyberReal != pqc.kyberReal) return false;
     if (initial.pqc.dilithiumReal != pqc.dilithiumReal) return false;
     if (initial.pqc.sphincsReal != pqc.sphincsReal) return false;
-    if (!initial.qkdConnected) return false;
-    if (!initial.qkdSessionActive) return false;
+    if (initial.qkdConnected) return false;
+    if (initial.qkdSessionActive) return false;
     if (initial.selectedKEM != CryptoAlgorithm::QKD_BB84) return false;
     if (initial.selectedSignature != CryptoAlgorithm::HYBRID_SIG) return false;
 
@@ -174,8 +174,9 @@ static bool testQuantumRuntimeStatusAndDowngradeBoundary() {
     if (downgraded.selectedKEM != CryptoAlgorithm::LATTICE_KYBER768) return false;
     if (downgraded.selectedSignature != CryptoAlgorithm::LATTICE_DILITHIUM65) return false;
 
-    auto downgradedDecrypt = manager.decryptQuantumSafe(qkdEncrypted);
-    if (!downgradedDecrypt.empty()) return false;
+    if (manager.decryptQuantumSafe(qkdEncrypted) != message) return false;
+    const std::vector<uint8_t> qkdFrame = {0xA5, 0x01, 0x00, 0x00, 0x00, 0x00};
+    if (!manager.decryptQuantumSafe(qkdFrame).empty()) return false;
     auto afterBoundary = manager.getRuntimeStatus();
     if (afterBoundary.qkdFallbackDecryptOperations < 1) return false;
 
@@ -189,8 +190,8 @@ static bool testQuantumRuntimeStatusAndDowngradeBoundary() {
     manager.setSecurityLevel(SecurityLevel::QUANTUM_READY);
     auto upgraded = manager.getRuntimeStatus();
     if (upgraded.level != SecurityLevel::QUANTUM_READY) return false;
-    if (!upgraded.qkdConnected) return false;
-    if (!upgraded.qkdSessionActive) return false;
+    if (upgraded.qkdConnected) return false;
+    if (upgraded.qkdSessionActive) return false;
 
     manager.shutdown();
     return true;

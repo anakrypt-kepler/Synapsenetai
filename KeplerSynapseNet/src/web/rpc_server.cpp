@@ -12,6 +12,7 @@
 #include <queue>
 #include <condition_variable>
 #include <sstream>
+#include <stdexcept>
 #include <iomanip>
 #include <chrono>
 #include <cstring>
@@ -200,6 +201,70 @@ static const char* httpStatusText(int statusCode) {
         case 503: return "Service Unavailable";
         default: return "OK";
     }
+}
+
+// std::stoul throws invalid_argument or out_of_range for a malformed length.
+// Callers answer that with HTTP 400 instead of letting it leave the worker.
+static bool parseContentLength(const std::string& raw, size_t& contentLength) {
+    const std::string value = trimAscii(raw);
+    if (value.empty()) {
+        return false;
+    }
+    for (unsigned char c : value) {
+        if (std::isdigit(c) == 0) {
+            return false;
+        }
+    }
+    try {
+        std::size_t consumed = 0;
+        const unsigned long parsed = std::stoul(value, &consumed, 10);
+        if (consumed != value.size()) {
+            return false;
+        }
+        contentLength = static_cast<size_t>(parsed);
+        return true;
+    } catch (const std::invalid_argument&) {
+        return false;
+    } catch (const std::out_of_range&) {
+        return false;
+    }
+}
+
+static void sendEmptyHttpResponse(int clientSocket, int statusCode, const char* reason) {
+    const std::string httpResp = std::string("HTTP/1.1 ") + std::to_string(statusCode) + " " +
+        reason + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    const auto responseBytes = static_cast<int>(httpResp.size());
+    send(clientSocket, httpResp.c_str(), responseBytes, 0);
+}
+
+// json::dump recurses once per array or object. Keep normal params, and refuse
+// values nested deeper than this so serialization cannot overflow the stack.
+static constexpr int kMaxJsonNestingDepth = 64;
+
+static bool jsonNestingExceeds(const nlohmann::json& root, int maxDepth) {
+    struct Frame {
+        const nlohmann::json* node;
+        int depth;
+    };
+
+    std::vector<Frame> pending;
+    pending.push_back(Frame{&root, 1});
+    while (!pending.empty()) {
+        const Frame frame = pending.back();
+        pending.pop_back();
+        if (frame.depth > maxDepth) {
+            return true;
+        }
+        if (!frame.node->is_structured()) {
+            continue;
+        }
+        for (const auto& child : *frame.node) {
+            if (child.is_structured()) {
+                pending.push_back(Frame{&child, frame.depth + 1});
+            }
+        }
+    }
+    return false;
 }
 
 RpcServer::RpcServer() : impl_(std::make_unique<Impl>()) {
@@ -411,7 +476,13 @@ void RpcServer::Impl::workerLoop() {
         }
         
         if (clientSocket >= 0) {
-            handleConnection(clientSocket);
+            try {
+                handleConnection(clientSocket);
+            } catch (const std::exception&) {
+                sendEmptyHttpResponse(clientSocket, 400, "Bad Request");
+            } catch (...) {
+                sendEmptyHttpResponse(clientSocket, 400, "Bad Request");
+            }
             close(clientSocket);
         }
     }
@@ -455,14 +526,20 @@ void RpcServer::Impl::handleConnection(int clientSocket) {
         requestLineStream >> httpMethod >> httpPath >> httpVersion;
         
         size_t contentLength = 0;
-        size_t clPos = headers.find("Content-Length:");
+        const size_t clPos = headers.find("Content-Length:");
         if (clPos != std::string::npos) {
-            size_t clEnd = headers.find("\r\n", clPos);
-            std::string clStr = headers.substr(clPos + 15, clEnd - clPos - 15);
-            contentLength = std::stoul(clStr);
+            const size_t valueStart = clPos + 15;
+            size_t valueEnd = headers.find("\r\n", valueStart);
+            if (valueEnd == std::string::npos) {
+                valueEnd = headers.size();
+            }
+            if (valueStart > headers.size() || valueEnd < valueStart ||
+                !parseContentLength(headers.substr(valueStart, valueEnd - valueStart), contentLength)) {
+                sendEmptyHttpResponse(clientSocket, 400, "Bad Request");
+                return;
+            }
             if (contentLength > 4 * 1024 * 1024) {
-                std::string httpResp = "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-                send(clientSocket, httpResp.c_str(), httpResp.length(), 0);
+                sendEmptyHttpResponse(clientSocket, 413, "Payload Too Large");
                 return;
             }
         }
@@ -654,7 +731,14 @@ std::string RpcServer::Impl::parseJsonRpc(const std::string& data, RpcRequest& r
 
     auto paramsIt = parsed.find("params");
     if (paramsIt != parsed.end()) {
-        request.params = paramsIt->dump();
+        if (jsonNestingExceeds(*paramsIt, kMaxJsonNestingDepth)) {
+            return "JSON nesting limit exceeded";
+        }
+        try {
+            request.params = paramsIt->dump();
+        } catch (const std::exception&) {
+            return "Invalid JSON-RPC request";
+        }
     } else {
         request.params.clear();
     }

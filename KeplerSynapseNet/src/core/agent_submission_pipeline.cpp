@@ -12,8 +12,23 @@ namespace synapse::core {
 
 namespace {
 
+// SYNAPSE_WORK_V1 section layout: header, then patch, then tests.
+bool isWorkBundle(const std::string& body) {
+    const std::string header = "SYNAPSE_WORK_V1\n";
+    const std::string patchMark = "--- patch\n";
+    const std::string testMark = "--- tests\n";
+    if (body.compare(0, header.size(), header) != 0) return false;
+    const size_t patchAt = body.find(patchMark);
+    const size_t testsAt = body.find(testMark);
+    if (patchAt == std::string::npos || testsAt == std::string::npos || testsAt < patchAt) return false;
+    return patchAt + patchMark.size() <= testsAt;
+}
+
+// CODE wins before Q/A markers. A work bundle or a CODE: title stays code
+// even when the body also contains Q/A lines.
 poe_v1::ContentType inferContentType(const AgentDraftProposal& proposal) {
-    if (proposal.title.rfind("CODE:", 0) == 0 || proposal.title.rfind("code:", 0) == 0) {
+    const bool codeTitle = proposal.title.rfind("CODE:", 0) == 0 || proposal.title.rfind("code:", 0) == 0;
+    if (codeTitle || isWorkBundle(proposal.body)) {
         return poe_v1::ContentType::CODE;
     }
     if (proposal.body.find("\nQ:") != std::string::npos && proposal.body.find("\nA:") != std::string::npos) {

@@ -47,6 +47,225 @@ bool readManagedTorPidFile(int64_t* outPid = nullptr) const {
     return true;
 }
 
+bool isSafeTorSocksHost(const std::string& host) const {
+    // Written into torrc and passed as one SocksPort argument. Keep it a
+    // single hostname or IP literal.
+    if (host.empty() || host.size() > 253) return false;
+    for (unsigned char c : host) {
+        const bool digit = c >= '0' && c <= '9';
+        const bool upper = c >= 'A' && c <= 'Z';
+        const bool lower = c >= 'a' && c <= 'z';
+        if (digit || upper || lower) continue;
+        if (c == '.' || c == '-' || c == '_' || c == ':' || c == '[' || c == ']') continue;
+        return false;
+    }
+    return true;
+}
+
+bool torrcValueIsSingleToken(const std::string& value) const {
+    if (value.empty()) return false;
+    for (unsigned char c : value) {
+        if (c <= 0x20 || c == '"' || c == '#') return false;
+    }
+    return true;
+}
+
+std::string formatTorrcValue(std::string value) const {
+    if (torrcValueIsSingleToken(value)) return value;
+    // Quoted Windows paths with backslashes confuse Tor's escape parser.
+    // Forward slashes are the same path and stay literal inside quotes.
+    for (char& c : value) {
+        if (c == '\\') c = '/';
+    }
+    std::string out;
+    out.reserve(value.size() + 2);
+    out.push_back('"');
+    for (char c : value) {
+        if (c == '\\' || c == '"') out.push_back('\\');
+        out.push_back(c);
+    }
+    out.push_back('"');
+    return out;
+}
+
+bool argContainsControlChar(const std::string& value) const {
+    for (unsigned char c : value) {
+        if (c < 0x20) return true;
+    }
+    return false;
+}
+
+void restrictManagedTorDirPermissions(const std::filesystem::path& dir) const {
+#ifndef _WIN32
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec) || ec) return;
+    std::filesystem::permissions(
+        dir,
+        std::filesystem::perms::owner_all,
+        std::filesystem::perm_options::replace,
+        ec);
+    if (ec) {
+        utils::Logger::warn("Could not restrict permissions on managed Tor directory " + dir.string());
+    }
+#else
+    (void)dir;
+#endif
+}
+
+bool spawnWithoutShell(const std::vector<std::string>& argv) const {
+    if (argv.empty() || argv[0].empty()) return false;
+    for (const std::string& arg : argv) {
+        if (argContainsControlChar(arg)) {
+            utils::Logger::warn(
+                "Refusing to launch managed Tor because a command argument contains unsupported control characters");
+            return false;
+        }
+    }
+
+#ifndef _WIN32
+    std::vector<std::vector<char>> storage;
+    std::vector<char*> ptrs;
+    storage.reserve(argv.size());
+    ptrs.reserve(argv.size() + 1);
+    for (const std::string& arg : argv) {
+        storage.emplace_back(arg.begin(), arg.end());
+        storage.back().push_back('\0');
+        ptrs.push_back(storage.back().data());
+    }
+    ptrs.push_back(nullptr);
+
+    pid_t child = fork();
+    if (child < 0) return false;
+    if (child == 0) {
+        int nullfd = open("/dev/null", O_RDWR);
+        if (nullfd >= 0) {
+            (void)dup2(nullfd, STDIN_FILENO);
+            (void)dup2(nullfd, STDOUT_FILENO);
+            (void)dup2(nullfd, STDERR_FILENO);
+        }
+        long maxFd = sysconf(_SC_OPEN_MAX);
+        if (maxFd < 0) maxFd = 256;
+        for (int fd = 3; fd < maxFd; ++fd) {
+            if (fd == nullfd) continue;
+            close(fd);
+        }
+        if (nullfd > 2) close(nullfd);
+        execvp(ptrs[0], ptrs.data());
+        _exit(127);
+    }
+
+    int status = 0;
+    if (waitpid(child, &status, 0) < 0) return false;
+    if (!WIFEXITED(status)) return false;
+    return WEXITSTATUS(status) == 0;
+#else
+    for (const std::string& arg : argv) {
+        if (arg.find('"') != std::string::npos) {
+            utils::Logger::warn(
+                "Refusing to launch managed Tor because a command argument contains an unsupported quote");
+            return false;
+        }
+    }
+
+    auto appendArg = [](std::string& commandLine, const std::string& arg) {
+        const bool needsQuote = arg.empty() || arg.find_first_of(" \t") != std::string::npos;
+        if (!needsQuote) {
+            commandLine += arg;
+            return;
+        }
+        commandLine.push_back('"');
+        size_t i = 0;
+        while (true) {
+            size_t backslashes = 0;
+            while (i < arg.size() && arg[i] == '\\') {
+                ++i;
+                ++backslashes;
+            }
+            if (i == arg.size()) {
+                commandLine.append(backslashes * 2, '\\');
+                break;
+            }
+            if (backslashes > 0) commandLine.append(backslashes, '\\');
+            commandLine.push_back(arg[i]);
+            ++i;
+        }
+        commandLine.push_back('"');
+    };
+
+    std::string commandLine;
+    for (size_t i = 0; i < argv.size(); ++i) {
+        if (i != 0) commandLine.push_back(' ');
+        appendArg(commandLine, argv[i]);
+    }
+    std::vector<char> mutableCommand(commandLine.begin(), commandLine.end());
+    mutableCommand.push_back('\0');
+
+    STARTUPINFOA startupInfo{};
+    startupInfo.cb = sizeof(startupInfo);
+    startupInfo.dwFlags = STARTF_USESHOWWINDOW;
+    startupInfo.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION processInfo{};
+    if (!CreateProcessA(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, nullptr, nullptr,
+                        &startupInfo, &processInfo)) {
+        return false;
+    }
+    const DWORD waitRc = WaitForSingleObject(processInfo.hProcess, INFINITE);
+    DWORD exitCode = 1;
+    if (waitRc == WAIT_OBJECT_0) {
+        if (!GetExitCodeProcess(processInfo.hProcess, &exitCode)) exitCode = 1;
+    }
+    CloseHandle(processInfo.hThread);
+    CloseHandle(processInfo.hProcess);
+    return waitRc == WAIT_OBJECT_0 && exitCode == 0;
+#endif
+}
+
+bool spawnManagedTorProcess(const std::string& torBin,
+                            const std::string& socksHost,
+                            uint16_t socksPort,
+                            uint16_t controlPort,
+                            const std::filesystem::path& torDir,
+                            const std::filesystem::path& pidFile) {
+    if (!isSafeTorSocksHost(socksHost)) return false;
+
+    const std::filesystem::path torrcPath = torDir / "torrc";
+    std::error_code ec;
+    if (!std::filesystem::exists(torrcPath, ec) || ec) {
+        utils::Logger::warn("Refusing to start managed Tor because the generated torrc is missing");
+        return false;
+    }
+
+    // Tor rejects a world-readable DataDirectory or HiddenServiceDir. Tighten
+    // both before -f loads the hidden service from the generated torrc.
+    restrictManagedTorDirPermissions(torDir);
+    restrictManagedTorDirPermissions(torDir / "hidden_service");
+
+    const std::string socksSpec = socksHost + ":" + std::to_string(socksPort);
+    const std::string controlSpec = std::string("127.0.0.1:") + std::to_string(controlPort);
+    // -f loads CookieAuthentication from the generated torrc. The explicit
+    // flag keeps the control port authenticated if that file is stale.
+    // SOCKS and control ports stay the values the rest of the node already uses.
+    return spawnWithoutShell({
+        torBin,
+        "-f",
+        torrcPath.string(),
+        "--quiet",
+        "--SocksPort",
+        socksSpec,
+        "--ControlPort",
+        controlSpec,
+        "--CookieAuthentication",
+        "1",
+        "--DataDirectory",
+        torDir.string(),
+        "--PidFile",
+        pidFile.string(),
+        "--RunAsDaemon",
+        "1",
+    });
+}
+
 #ifndef _WIN32
 std::string readCommandOutput(const std::string& cmd, size_t maxBytes = 8192) const {
     FILE* fp = popen(cmd.c_str(), "r");
@@ -103,51 +322,6 @@ bool stopManagedTorPidAndWait(int64_t pid) {
         return false;
     }
     return true;
-}
-
-bool spawnManagedTorProcess(const std::string& torBin,
-                            const std::string& socksHost,
-                            uint16_t socksPort,
-                            uint16_t controlPort,
-                            const std::filesystem::path& torDir,
-                            const std::filesystem::path& pidFile) {
-    pid_t child = fork();
-    if (child < 0) return false;
-    if (child == 0) {
-        int nullfd = open("/dev/null", O_RDWR);
-        if (nullfd >= 0) {
-            (void)dup2(nullfd, STDIN_FILENO);
-            (void)dup2(nullfd, STDOUT_FILENO);
-            (void)dup2(nullfd, STDERR_FILENO);
-        }
-        long maxFd = sysconf(_SC_OPEN_MAX);
-        if (maxFd < 0) maxFd = 256;
-        for (int fd = 3; fd < maxFd; ++fd) {
-            if (fd == nullfd) continue;
-            close(fd);
-        }
-        if (nullfd > 2) close(nullfd);
-
-        const std::string socksSpec = socksHost + ":" + std::to_string(socksPort);
-        const std::string controlSpec = std::string("127.0.0.1:") + std::to_string(controlPort);
-        execlp(torBin.c_str(),
-               torBin.c_str(),
-               "--quiet",
-               "--SocksPort", socksSpec.c_str(),
-               "--ControlPort", controlSpec.c_str(),
-               "--DataDirectory", torDir.string().c_str(),
-               "--PidFile", pidFile.string().c_str(),
-               "--RunAsDaemon", "1",
-               static_cast<char*>(nullptr));
-        _exit(127);
-    }
-
-    int status = 0;
-    if (waitpid(child, &status, 0) < 0) {
-        return false;
-    }
-    if (!WIFEXITED(status)) return false;
-    return WEXITSTATUS(status) == 0;
 }
 
 bool stopManagedTorRuntimeIfOwned(bool logOnNoop = false) {
@@ -1148,14 +1322,18 @@ void ensureManagedTorrc(const std::filesystem::path& torDir,
                         const std::string& socksHost,
                         uint16_t socksPort,
                         uint16_t controlPort) {
-    const auto torrcPath = torDir / "torrc";
-    if (std::filesystem::exists(torrcPath)) return;
+    if (!isSafeTorSocksHost(socksHost)) return;
+    const auto hsDir = torDir / "hidden_service";
+    if (argContainsControlChar(torDir.string()) || argContainsControlChar(hsDir.string())) return;
 
+    const auto torrcPath = torDir / "torrc";
     std::error_code ec;
+    const bool pathsAreSingleTokens = torrcValueIsSingleToken(torDir.string())
+        && torrcValueIsSingleToken(hsDir.string());
+    if (pathsAreSingleTokens && std::filesystem::exists(torrcPath, ec) && !ec) return;
+
     std::filesystem::create_directories(torDir, ec);
     if (ec) return;
-
-    const auto hsDir = torDir / "hidden_service";
     std::filesystem::create_directories(hsDir, ec);
 
     const uint16_t nodePort = network_ ? network_->getPort() : config_.port;
@@ -1165,9 +1343,9 @@ void ensureManagedTorrc(const std::filesystem::path& torDir,
     out << "SocksPort " << socksHost << ":" << socksPort << "\n";
     out << "ControlPort 127.0.0.1:" << controlPort << "\n";
     out << "CookieAuthentication 1\n";
-    out << "DataDirectory " << torDir.string() << "\n";
+    out << "DataDirectory " << formatTorrcValue(torDir.string()) << "\n";
     out << "RunAsDaemon 1\n";
-    out << "HiddenServiceDir " << hsDir.string() << "\n";
+    out << "HiddenServiceDir " << formatTorrcValue(hsDir.string()) << "\n";
     out << "HiddenServicePort " << nodePort << " 127.0.0.1:" << nodePort << "\n";
     out << "HiddenServiceVersion 3\n";
     utils::Logger::info("Generated managed torrc at " + torrcPath.string());
@@ -1194,6 +1372,12 @@ bool startManagedTorRuntime() {
     std::filesystem::path torDir = managedTorDirPath();
     std::filesystem::path pidFile = managedTorPidFilePath();
 
+    if (!isSafeTorSocksHost(host)) {
+        utils::Logger::warn(
+            "Refusing to start managed Tor because the SOCKS host contains unsupported characters");
+        return false;
+    }
+
     ensureManagedTorrc(torDir, host, socksPort, controlPort);
 
     const auto startup = core::runManagedTorStartup(
@@ -1201,8 +1385,7 @@ bool startManagedTorRuntime() {
         40,
         [&]() { return probeTorSocks(); },
         [&]() {
-            const std::string checkCmd = torBin + " --version > /dev/null 2>&1";
-            if (std::system(checkCmd.c_str()) == 0) return true;
+            if (spawnWithoutShell({torBin, "--version"})) return true;
             if (tryBootstrapTorBinary(torDir)) {
                 auto bundled = torDir / "tor" / "tor";
                 if (std::filesystem::exists(bundled)) {
@@ -1223,20 +1406,7 @@ bool startManagedTorRuntime() {
             return !ec;
         },
         [&]() {
-#ifndef _WIN32
             return spawnManagedTorProcess(torBin, host, socksPort, controlPort, torDir, pidFile);
-#else
-            std::ostringstream cmd;
-            cmd << torBin
-                << " --quiet"
-                << " --SocksPort " << host << ":" << socksPort
-                << " --ControlPort 127.0.0.1:" << controlPort
-                << " --DataDirectory \"" << torDir.string() << "\""
-                << " --PidFile \"" << pidFile.string() << "\""
-                << " --RunAsDaemon 1"
-                << " > NUL 2>&1";
-            return std::system(cmd.str().c_str()) == 0;
-#endif
         },
         [&]() -> std::optional<int64_t> {
             int64_t pid = 0;

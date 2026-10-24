@@ -270,6 +270,7 @@ uint64_t Discovery::Impl::estimateNetworkSize() const {
 }
 
 std::vector<std::string> Discovery::Impl::resolveDNS(const std::string& hostname) {
+    // Discovery has no SOCKS proxy configured, so seed lookup stays on local DNS.
     std::vector<std::string> results;
     struct addrinfo hints{}, *res = nullptr, *p = nullptr;
     hints.ai_family = AF_UNSPEC;

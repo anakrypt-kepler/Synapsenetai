@@ -54,7 +54,8 @@ struct PrivateTx {
     std::vector<PrivateTxVin> vins;
     std::vector<PrivateTxOut> vouts;
     // Outer HybridSig (ed25519 + ML-DSA-65) over privateTxMessage||txid.
-    // Empty on v2 chain blobs; required on v3 when dilithiumReal.
+    // Empty envelopes stay valid on stealth MLSAG spends. A non-empty
+    // envelope must verify and fails closed when Dilithium is unavailable.
     std::vector<uint8_t> pqcSig;
     // JSON / engine version. Ledger reconstruction leaves this at 2 so
     // MLSAG-only verify still accepts wrapped ecdh without pqc_sig.

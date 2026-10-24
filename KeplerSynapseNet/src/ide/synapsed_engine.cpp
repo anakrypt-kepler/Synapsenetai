@@ -83,6 +83,8 @@ using std::max;
 #endif
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <spawn.h>
+extern "C" char** environ;
 #endif
 #include <filesystem>
 
@@ -146,7 +148,8 @@ struct HiddenCmd {
     bool started = false;
 };
 
-HiddenCmd runCmdHidden(const std::string& cmd) {
+// argv-style command line. No cmd.exe. Callers quote every argument.
+HiddenCmd runHiddenCommandLine(const std::string& line) {
     HiddenCmd result;
     SECURITY_ATTRIBUTES sa{};
     sa.nLength = sizeof(sa);
@@ -190,12 +193,6 @@ HiddenCmd runCmdHidden(const std::string& cmd) {
                      inherit, sizeof(inherit), nullptr, nullptr) != FALSE;
     }
 
-    char sysDir[MAX_PATH] = {};
-    const UINT ndir = GetSystemDirectoryA(sysDir, MAX_PATH);
-    std::string exe = (ndir > 0 && ndir < MAX_PATH)
-                          ? (std::string(sysDir) + "\\cmd.exe")
-                          : std::string("cmd.exe");
-    std::string line = "\"" + exe + "\" /d /c " + cmd;
     std::vector<char> mutableCmd(line.begin(), line.end());
     mutableCmd.push_back('\0');
 
@@ -237,6 +234,42 @@ HiddenCmd runCmdHidden(const std::string& cmd) {
     return result;
 }
 
+HiddenCmd runCmdHidden(const std::string& cmd) {
+    char sysDir[MAX_PATH] = {};
+    const UINT ndir = GetSystemDirectoryA(sysDir, MAX_PATH);
+    std::string exe = (ndir > 0 && ndir < MAX_PATH)
+                          ? (std::string(sysDir) + "\\cmd.exe")
+                          : std::string("cmd.exe");
+    return runHiddenCommandLine("\"" + exe + "\" /d /c " + cmd);
+}
+
+// Quote one argv element for CreateProcess. This is not a shell quote.
+std::string quoteWinArg(const std::string& arg) {
+    std::string o;
+    o.push_back('"');
+    size_t bs = 0;
+    for (char c : arg) {
+        if (c == '\\') {
+            ++bs;
+            continue;
+        }
+        if (c == '"') {
+            o.append(bs * 2 + 1, '\\');
+            o.push_back('"');
+            bs = 0;
+            continue;
+        }
+        if (bs) {
+            o.append(bs, '\\');
+            bs = 0;
+        }
+        o.push_back(c);
+    }
+    if (bs) o.append(bs * 2, '\\');
+    o.push_back('"');
+    return o;
+}
+
 int hiddenSystem(const char* cmd) {
     if (!cmd || !cmd[0]) return -1;
     const HiddenCmd ran = runCmdHidden(cmd);
@@ -245,7 +278,109 @@ int hiddenSystem(const char* cmd) {
 }
 #endif
 
+// True when cmd is one program plus arguments, with no shell syntax.
+// A trailing stderr redirect is dropped because execArgv discards stderr.
+bool splitArgsNoShell(const std::string& cmd, std::vector<std::string>& args) {
+    if (cmd.find('\0') != std::string::npos) return false;
+    std::string s = cmd;
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r')) s.pop_back();
+    auto endsWith = [&](const char* suf) {
+        const size_t n = std::strlen(suf);
+        return s.size() >= n && s.compare(s.size() - n, n, suf) == 0;
+    };
+    if (endsWith("2>/dev/null")) s.erase(s.size() - std::strlen("2>/dev/null"));
+    else if (endsWith("2>NUL")) s.erase(s.size() - 5);
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.pop_back();
+
+    args.clear();
+    std::string cur;
+    char quote = 0;
+    bool tok = false;
+    for (size_t i = 0; i < s.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        if (c == '\\') return false;
+        if (quote) {
+            if (c == static_cast<unsigned char>(quote)) quote = 0;
+            else cur.push_back(static_cast<char>(c));
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            quote = static_cast<char>(c);
+            tok = true;
+            continue;
+        }
+        if (c == ' ' || c == '\t') {
+            if (tok) {
+                args.push_back(cur);
+                cur.clear();
+                tok = false;
+            }
+            continue;
+        }
+        if (c <= 0x20 || c == '|' || c == '&' || c == ';' || c == '<' || c == '>' ||
+            c == '`' || c == '$' || c == '(' || c == ')' || c == '*' || c == '?' ||
+            c == '[' || c == ']' || c == '{' || c == '}' || c == '~' || c == '!' ||
+            c == '#')
+            return false;
+        cur.push_back(static_cast<char>(c));
+        tok = true;
+    }
+    if (quote) return false;
+    if (tok) args.push_back(cur);
+    return !args.empty() && !args[0].empty();
+}
+
+// Run a program with an argument vector. The shell is not involved.
+std::string execArgv(const std::vector<std::string>& args) {
+    if (args.empty() || args[0].empty()) return "";
+#ifdef _WIN32
+    std::string line;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (i) line.push_back(' ');
+        line += quoteWinArg(args[i]);
+    }
+    return runHiddenCommandLine(line).output;
+#else
+    int fds[2];
+    if (pipe(fds) != 0) return "";
+    posix_spawn_file_actions_t actions;
+    if (posix_spawn_file_actions_init(&actions) != 0) {
+        close(fds[0]);
+        close(fds[1]);
+        return "";
+    }
+    posix_spawn_file_actions_adddup2(&actions, fds[1], STDOUT_FILENO);
+    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addclose(&actions, fds[0]);
+    posix_spawn_file_actions_addclose(&actions, fds[1]);
+    std::vector<char*> av;
+    av.reserve(args.size() + 1);
+    for (const auto& a : args) av.push_back(const_cast<char*>(a.c_str()));
+    av.push_back(nullptr);
+    pid_t pid = 0;
+    const int rc = posix_spawnp(&pid, av[0], &actions, nullptr, av.data(), environ);
+    posix_spawn_file_actions_destroy(&actions);
+    close(fds[1]);
+    if (rc != 0) {
+        close(fds[0]);
+        return "";
+    }
+    std::string out;
+    char buf[4096];
+    ssize_t n = 0;
+    while ((n = read(fds[0], buf, sizeof(buf))) > 0) out.append(buf, buf + n);
+    close(fds[0]);
+    int st = 0;
+    while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+    return out;
+#endif
+}
+
 std::string execCmd(const std::string& cmd) {
+    std::vector<std::string> args;
+    // Quoted arguments take the argv path. Pipelines still need a shell.
+    if (splitArgsNoShell(cmd, args)) return execArgv(args);
 #ifdef _WIN32
     return runCmdHidden(cmd).output;
 #else
@@ -257,6 +392,97 @@ std::string execCmd(const std::string& cmd) {
     PCLOSE(p);
     return out;
 #endif
+}
+
+std::string normalizeListenerCred(std::string s) {
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ' || s.back() == '\t'))
+        s.pop_back();
+    size_t a = 0;
+    while (a < s.size() && (s[a] == ' ' || s[a] == '\t')) ++a;
+    if (a) s.erase(0, a);
+    if (s.size() < 16 || s.size() > 128) return "";
+    for (unsigned char c : s) {
+        if (c <= 0x20 || c >= 0x7f) return "";
+    }
+    return s;
+}
+
+std::string randomListenerCred() {
+    static const char* hexd = "0123456789abcdef";
+    std::random_device rd;
+    std::string out;
+    out.reserve(64);
+    for (int i = 0; i < 32; ++i) {
+        const unsigned v = rd();
+        out.push_back(hexd[(v >> 4) & 0xf]);
+        out.push_back(hexd[v & 0xf]);
+    }
+    return out;
+}
+
+// Local file secret. Empty means the listener must not be published.
+std::string ensureListenerCredential(const std::string& dataDir) {
+    static std::mutex mu;
+    std::lock_guard<std::mutex> lock(mu);
+    const std::string path = dataDir + "/listener.cred";
+    {
+        std::ifstream in(path);
+        if (in.good()) {
+            std::string line;
+            std::getline(in, line);
+            return normalizeListenerCred(line);
+        }
+    }
+    const std::string cred = randomListenerCred();
+    std::ofstream out(path, std::ios::trunc);
+    if (!out.good()) return "";
+    out << cred << "\n";
+    out.close();
+#ifndef _WIN32
+    chmod(path.c_str(), 0600);
+#endif
+    return cred;
+}
+
+bool listenerCredEqual(const std::string& a, const std::string& b) {
+    if (a.empty() || a.size() != b.size()) return false;
+    unsigned char diff = 0;
+    for (size_t i = 0; i < a.size(); ++i)
+        diff |= static_cast<unsigned char>(a[i]) ^ static_cast<unsigned char>(b[i]);
+    return diff == 0;
+}
+
+// First line must be "AUTH <credential>". rest is the record that follows.
+bool takeListenerAuth(const std::string& msg, const std::string& cred, std::string& rest) {
+    static const char kPfx[] = "AUTH ";
+    const size_t pfx = sizeof(kPfx) - 1;
+    if (cred.empty() || msg.size() < pfx || msg.compare(0, pfx, kPfx) != 0) return false;
+    const size_t nl = msg.find('\n');
+    if (nl == std::string::npos) return false;
+    std::string tok = msg.substr(pfx, nl - pfx);
+    if (!tok.empty() && tok.back() == '\r') tok.pop_back();
+    if (!listenerCredEqual(tok, cred)) return false;
+    rest = msg.substr(nl + 1);
+    return true;
+}
+
+bool hexMessageId(const std::string& id) {
+    if (id.size() < 8 || id.size() > 64) return false;
+    for (unsigned char c : id) {
+        if (!std::isxdigit(c)) return false;
+    }
+    return true;
+}
+
+bool messageIdStored(const std::string& path, const std::string& id) {
+    std::ifstream in(path);
+    if (!in.good()) return false;
+    const std::string needle = "\"id\":\"" + id + "\"";
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.find(needle) != std::string::npos) return true;
+    }
+    return false;
 }
 
 std::string trim(const std::string& s) {
@@ -2123,6 +2349,12 @@ void SynapsedEngine::startOnionService() const {
             return;
         }
     }
+    // No credential, no listen, and no onion publish. Bind stays loopback.
+    if (ensureListenerCredential(dataDir_).empty()) {
+        CLOSESOCK(listenFd_);
+        listenFd_ = -1;
+        return;
+    }
     listen(listenFd_, 16);
 
     uint16_t localPort = ntohs(la.sin_port);
@@ -2244,6 +2476,10 @@ void SynapsedEngine::p2pListenerLoop() const {
         socklen_t plen = sizeof(peer);
         int cfd = accept(listenFd_, (struct sockaddr*)&peer, &plen);
         if (cfd < 0) continue;
+        if (peer.sin_family != AF_INET || peer.sin_addr.s_addr != htonl(INADDR_LOOPBACK)) {
+            CLOSESOCK(cfd);
+            continue;
+        }
 
         std::string msg;
         char buf[4096];
@@ -2251,8 +2487,18 @@ void SynapsedEngine::p2pListenerLoop() const {
             ssize_t n = recv(cfd, buf, sizeof(buf), 0);
             if (n <= 0) break;
             msg.append(buf, buf + n);
-            if (msg.find('\n') != std::string::npos) break;
+            const size_t firstNl = msg.find('\n');
+            if (firstNl == std::string::npos) continue;
+            if (msg.compare(0, 5, "AUTH ") != 0) break;
+            if (msg.find('\n', firstNl + 1) != std::string::npos) break;
         }
+        std::string authed;
+        const std::string cred = ensureListenerCredential(dataDir_);
+        if (cred.empty() || !takeListenerAuth(msg, cred, authed) || trim(authed).empty()) {
+            CLOSESOCK(cfd);
+            continue;
+        }
+        msg.swap(authed);
         if (!msg.empty()) {
             if (msg.find("GET_PEERS") == 0) {
 
@@ -2351,12 +2597,16 @@ void SynapsedEngine::p2pListenerLoop() const {
                         }
                     }
                     // v1 plaintext body is dropped. Never write it to disk.
-                    if (sealedOk && !ownOnion_.empty() &&
+                    // A missing id cannot be remembered, so it is rejected too.
+                    const std::string msgPath = dataDir_ + "/messages.jsonl";
+                    const bool replay = !hexMessageId(id) || messageIdStored(msgPath, id);
+                    if (!replay && sealedOk && !ownOnion_.empty() &&
                         (to.empty() || to == onionHostOnly(ownOnion_))) {
                         std::string peer = from;
-                        std::ofstream mf(dataDir_ + "/messages.jsonl", std::ios::app);
+                        std::ofstream mf(msgPath, std::ios::app);
                         if (mf.good()) {
-                            mf << "{\"peer\":\"" << jsonEscape(peer)
+                            mf << "{\"id\":\"" << id
+                               << "\",\"peer\":\"" << jsonEscape(peer)
                                << "\",\"from\":\"" << jsonEscape(peer)
                                << "\",\"to\":\"" << jsonEscape(ownOnion_)
                                << "\",\"dir\":\"in\""
@@ -2978,6 +3228,7 @@ void SynapsedEngine::pushLocalProfile(const std::string& onion) const {
 std::vector<std::string> SynapsedEngine::dialPeer(const std::string& onion) {
     std::vector<std::string> learned;
     if (onion.empty() || onion == ownOnion_ || onion.find(".onion") == std::string::npos) return learned;
+    if (!isValidV3Onion(onionHostOnly(onion))) return learned;
 
     auto t0 = std::chrono::steady_clock::now();
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -3812,7 +4063,6 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             if (recv.empty()) recv = walletAddress_;
             nlohmann::json existing;
             existing["address"] = recv;
-            existing["seed"] = walletMnemonic_;
             existing["ok"] = true;
             existing["existing"] = true;
             return existing.dump();
@@ -5377,17 +5627,16 @@ std::string SynapsedEngine::fetchViaTor(const std::string& url, const std::strin
     const std::string cookieFile = tag.empty()
         ? (dataDir_ + "/tor_cookies.txt")
         : (dataDir_ + "/tor_cookies_" + tag + ".txt");
-    std::string cmd = "curl -s -k --compressed --max-time " + std::to_string(timeout) +
-        " --socks5-hostname 127.0.0.1:" + std::to_string(socksPort) + " -L "
-        "-H \"User-Agent: " + ua + "\" "
-        "-c " + cookieFile + " -b " + cookieFile + " "
-        "\"" + url + "\""
-#ifdef _WIN32
-        " 2>NUL";
-#else
-        " 2>/dev/null";
-#endif
-    return execCmd(cmd);
+    return execArgv({
+        "curl", "-s", "-k", "--compressed",
+        "--max-time", std::to_string(timeout),
+        "--socks5-hostname", "127.0.0.1:" + std::to_string(socksPort),
+        "-L",
+        "-H", "User-Agent: " + ua,
+        "-c", cookieFile,
+        "-b", cookieFile,
+        url
+    });
 }
 
 SynapsedEngine::CaptchaResult SynapsedEngine::detectCaptcha(const std::string& html) const {
@@ -5687,10 +5936,15 @@ std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
     } else {
         if (imgUrl[0] == '/') return "";
         if (!isUrlSafe(imgUrl)) return "";
-        std::string dlCmd = "curl -s --max-time 15 " + socks5Arg() + " -L "
-            "-c " + dataDir_ + "/tor_cookies.txt -b " + dataDir_ + "/tor_cookies.txt "
-            "-o " + tmpImg + " \"" + imgUrl + "\" 2>/dev/null";
-        SYSTEM_IGNORE(dlCmd.c_str());
+        execArgv({
+            "curl", "-s", "--max-time", "15",
+            "--socks5-hostname", "127.0.0.1:" + std::to_string(gSocksPort.load()),
+            "-L",
+            "-c", dataDir_ + "/tor_cookies.txt",
+            "-b", dataDir_ + "/tor_cookies.txt",
+            "-o", tmpImg,
+            imgUrl
+        });
     }
 
     std::string cnnModel = dataDir_ + "/captcha_cnn_model.pt";
@@ -5879,9 +6133,12 @@ std::string SynapsedEngine::submitCaptchaAndRefetch(const std::string& url,
 std::string SynapsedEngine::downloadCaptchaImage(const std::string& imgUrl) const {
     if (imgUrl.empty() || !isUrlSafe(imgUrl)) return "";
     std::string tmpImg = "" + dataDir_ + "/cap_" + std::to_string(nowMillis()) + ".png";
-    std::string cmd = "curl -s --max-time 15 " + socks5Arg() + " -L -o " +
-                      tmpImg + " \"" + imgUrl + "\" 2>/dev/null";
-    SYSTEM_IGNORE(cmd.c_str());
+    execArgv({
+        "curl", "-s", "--max-time", "15",
+        "--socks5-hostname", "127.0.0.1:" + std::to_string(gSocksPort.load()),
+        "-L", "-o", tmpImg,
+        imgUrl
+    });
     std::ifstream check(tmpImg);
     if (!check.good()) return "";
     return tmpImg;
@@ -7027,24 +7284,24 @@ SynapsedEngine::EndGameV3Challenge SynapsedEngine::detectEndGameV3(
 
 std::string SynapsedEngine::solveEndGamePoW(const std::string& challenge,
     int difficulty) const {
-    if (challenge.empty() || difficulty <= 0) return "";
-
-    std::string script = "python3 -c \""
-        "import hashlib,sys\\n"
-        "c='" + challenge + "'\\n"
-        "d=" + std::to_string(difficulty) + "\\n"
-        "target=d\\n"
-        "for n in range(100000000):\\n"
-        "  h=hashlib.sha256((c+str(n)).encode()).hexdigest()\\n"
-        "  val=int(h[:8],16)\\n"
-        "  bits=32-val.bit_length() if val>0 else 32\\n"
-        "  if bits>=target:\\n"
-        "    print(n)\\n"
-        "    sys.exit()\\n"
-        "print('')\\n"
-        "\" 2>/dev/null";
-    std::string result = trim(execCmd(script));
-    return result;
+    if (challenge.empty() || difficulty <= 0 || difficulty > 32) return "";
+    // Hash the challenge as data. It is not interpolated into a shell or python -c.
+    auto leadingZeros = [](uint32_t val) {
+        int bits = 0;
+        if (val == 0) return 32;
+        while ((val & 0x80000000u) == 0) {
+            ++bits;
+            val <<= 1;
+        }
+        return bits;
+    };
+    for (uint64_t n = 0; n < 100000000ull; ++n) {
+        const std::string h = sha256Hex(challenge + std::to_string(n));
+        if (h.size() < 8) continue;
+        const uint32_t val = static_cast<uint32_t>(std::strtoul(h.substr(0, 8).c_str(), nullptr, 16));
+        if (leadingZeros(val) >= difficulty) return std::to_string(n);
+    }
+    return "";
 }
 
 std::string SynapsedEngine::submitEndGamePoW(const EndGameV3Challenge& ch,
@@ -7224,12 +7481,10 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
             std::this_thread::sleep_for(std::chrono::seconds(waitSec));
 
             if (isEndGameQueue && attempt == 0) {
-                SYSTEM_IGNORE("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
-                       "nc 127.0.0.1 9051 2>/dev/null");
+                signalSessionNewnym();
                 std::this_thread::sleep_for(std::chrono::seconds(8));
             } else if (attempt > 0 && attempt % 2 == 0) {
-                SYSTEM_IGNORE("(echo AUTHENTICATE \"\" && echo SIGNAL NEWNYM && echo QUIT) | "
-                       "nc 127.0.0.1 9051 2>/dev/null");
+                signalSessionNewnym();
                 std::this_thread::sleep_for(std::chrono::seconds(5));
             }
             continue;
@@ -7947,8 +8202,8 @@ std::string SynapsedEngine::exploitCVE0009_CookieConfusion(
     if (url.find(".onion") == std::string::npos) return "";
 
     std::string permissiveOnions[] = {
-        "http://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/",
-        "http://torchdeedp3i2jigzjdmfpn5ttjhthh5wbmda2rr3jvqjg5p77c54dqd.onion/",
+        "http://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/", // codeql[cpp/non-https-url]
+        "http://torchdeedp3i2jigzjdmfpn5ttjhthh5wbmda2rr3jvqjg5p77c54dqd.onion/", // codeql[cpp/non-https-url]
         "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/",
     };
 
@@ -8396,7 +8651,7 @@ std::string SynapsedEngine::topicToUrl(const std::string& topic) const {
     if (topic.find("whistleblower") != std::string::npos ||
         topic.find("leak") != std::string::npos) {
         static const char* urls[] = {
-            "http://secrdrop5wyphb5x.onion/",
+            "http://secrdrop5wyphb5x.onion/", // codeql[cpp/non-https-url]
             "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/",
         };
         std::mt19937 g(std::random_device{}());
@@ -8420,20 +8675,20 @@ std::string SynapsedEngine::topicToUrl(const std::string& topic) const {
         std::string q = topic;
         for (auto& c : q) if (c == ' ') c = '+';
         static const std::string engines[] = {
-            "http://torchdeedp3i2jigzjdmfpn5ttjhthh5wbmda2rr3jvqjg5p77c54dqd.onion/search?query=",
-            "http://xmh57jrknzkhv6y3ls3ubitzfqnkrwxhopf5aygthi7d6rplyvk3noyd.onion/cgi-bin/omega/omega?P=",
-            "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/search/?q=",
-            "http://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/?q=",
-            "http://tordexpmg4xy32rfp4ovnz7zq5ujoejwq2u26uxxtkscgo5u3losmeid.onion/search?query=",
-            "http://tor66sewebgixwhcqfnp5inzp5x5uohhdy3kvtnyfxc2e5mxiuh34iid.onion/search?q=",
-            "http://darkzqtmbdeauwq5mzcmgeeuhet42fhfjj4p5wbak3ofx2yqgecoeqyd.onion/search?query=",
-            "http://3bbad7fauom4d6sgppalyqddsqbf5u5p56b5k5uk2zxsy3d6ey2jobad.onion/search?q=",
-            "http://search7tdrcvri22rieiwgi5g46qnwsesvnubqav2xakhezv4hjzkkad.onion/result.php?search=",
-            "http://dreadytofatroptsdj6io7l3xptbet6onoyno2yv7jicoxknyazubrad.onion/d/DarkSearch",
-            "http://zqktlwiuavvvqqt4ybvgvi7tyo4hjl5xgfuvpdf6otjiycgwqbym2qad.onion/",
-            "http://piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion/search.php?q=",
+            "http://torchdeedp3i2jigzjdmfpn5ttjhthh5wbmda2rr3jvqjg5p77c54dqd.onion/search?query=", // codeql[cpp/non-https-url]
+            "http://xmh57jrknzkhv6y3ls3ubitzfqnkrwxhopf5aygthi7d6rplyvk3noyd.onion/cgi-bin/omega/omega?P=", // codeql[cpp/non-https-url]
+            "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/search/?q=", // codeql[cpp/non-https-url]
+            "http://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/?q=", // codeql[cpp/non-https-url]
+            "http://tordexpmg4xy32rfp4ovnz7zq5ujoejwq2u26uxxtkscgo5u3losmeid.onion/search?query=", // codeql[cpp/non-https-url]
+            "http://tor66sewebgixwhcqfnp5inzp5x5uohhdy3kvtnyfxc2e5mxiuh34iid.onion/search?q=", // codeql[cpp/non-https-url]
+            "http://darkzqtmbdeauwq5mzcmgeeuhet42fhfjj4p5wbak3ofx2yqgecoeqyd.onion/search?query=", // codeql[cpp/non-https-url]
+            "http://3bbad7fauom4d6sgppalyqddsqbf5u5p56b5k5uk2zxsy3d6ey2jobad.onion/search?q=", // codeql[cpp/non-https-url]
+            "http://search7tdrcvri22rieiwgi5g46qnwsesvnubqav2xakhezv4hjzkkad.onion/result.php?search=", // codeql[cpp/non-https-url]
+            "http://dreadytofatroptsdj6io7l3xptbet6onoyno2yv7jicoxknyazubrad.onion/d/DarkSearch", // codeql[cpp/non-https-url]
+            "http://zqktlwiuavvvqqt4ybvgvi7tyo4hjl5xgfuvpdf6otjiycgwqbym2qad.onion/", // codeql[cpp/non-https-url]
+            "http://piratebayo3klnzokct3wt5yyxb2vpebbuyjl7m623iaxmqhsd52coid.onion/search.php?q=", // codeql[cpp/non-https-url]
             "https://www.bbcnewsd73hkzno2ini43t4gblxvycyac5aw4gnv7t2rccijh7745uqd.onion/search?q=",
-            "http://haystak5njsmn2hqkewecpaxetahtwhsbsa64jom2k22z5afxhnpxfid.onion/?q=",
+            "http://haystak5njsmn2hqkewecpaxetahtwhsbsa64jom2k22z5afxhnpxfid.onion/?q=", // codeql[cpp/non-https-url]
         };
         std::mt19937 g(std::random_device{}());
         const size_t count = sizeof(engines) / sizeof(engines[0]);
@@ -8887,11 +9142,13 @@ std::string SynapsedEngine::downloadAsset(const std::string& url, bool isOnion,
     }
 
     std::string tmpPath = assetsDir + "/dl_" + std::to_string(nowMillis()) + ext;
-    std::string cmd = "curl -s -k --max-time 30 --max-filesize 10485760 "
-        + socks5Arg() + " -L -o \"" + tmpPath + "\" "
-        "-H \"User-Agent: " + randomUserAgent() + "\" "
-        "\"" + url + "\" 2>/dev/null";
-    SYSTEM_IGNORE(cmd.c_str());
+    execArgv({
+        "curl", "-s", "-k", "--max-time", "30", "--max-filesize", "10485760",
+        "--socks5-hostname", "127.0.0.1:" + std::to_string(gSocksPort.load()),
+        "-L", "-o", tmpPath,
+        "-H", std::string("User-Agent: ") + randomUserAgent(),
+        url
+    });
 
     std::ifstream check(tmpPath, std::ios::binary | std::ios::ate);
     if (!check.good() || check.tellg() == 0) {
@@ -9946,23 +10203,74 @@ static std::string buildNaanPoeTitle(const std::string& topic) {
     return t;
 }
 
+static std::string harvestSingleLine(const std::string& in) {
+    std::string o;
+    o.reserve(in.size());
+    for (char c : in) {
+        if (c == '\n' || c == '\r') o.push_back(' ');
+        else o.push_back(c);
+    }
+    return o;
+}
+
+// The gate uses the first "\ntopic: " line. Page text must not supply one.
+static std::string hideHarvestTrailerKeys(const std::string& in) {
+    std::string out;
+    out.reserve(in.size() + 8);
+    size_t i = 0;
+    while (i < in.size()) {
+        size_t nl = in.find('\n', i);
+        if (nl == std::string::npos) nl = in.size();
+        const size_t len = nl - i;
+        auto starts = [&](const char* key) {
+            const size_t n = std::strlen(key);
+            return len >= n && in.compare(i, n, key) == 0;
+        };
+        if (starts("topic: ") || starts("url: ") || starts("title: ") ||
+            starts("via: ") || starts("sha256: ")) {
+            out += "field ";
+        }
+        out.append(in, i, len);
+        if (nl < in.size()) out.push_back('\n');
+        i = (nl < in.size()) ? nl + 1 : in.size();
+    }
+    return out;
+}
+
 static std::string buildNaanPoeBody(const std::string& topic, const std::string& url,
                                    const std::string& chosenTitle, const std::string& hash,
                                    const std::string& via, const std::string& text) {
     // Lead with page text so SimHash is the article, not shared boilerplate.
     // Filing the same search UI used to trip too_similar / near_duplicate.
-    std::ostringstream o;
+    std::string excerpt;
     if (!text.empty()) {
         // Menus sit in front of the article. The cells score this excerpt,
         // so it has to be the paragraph, not the language list.
-        o << synapse::core::harvestKnowledgeExcerpt(text, 1800) << "\n\n";
+        excerpt = hideHarvestTrailerKeys(synapse::core::harvestKnowledgeExcerpt(text, 1800));
     }
-    o << "topic: " << topic << "\n";
-    o << "url: " << url << "\n";
-    o << "title: " << chosenTitle << "\n";
-    o << "via: " << via << "\n";
-    o << "sha256: " << hash << "\n";
-    std::string body = o.str();
+    const std::string agentTopic = harvestSingleLine(topic);
+    std::string urlField = harvestSingleLine(url);
+    const std::string viaField = harvestSingleLine(via);
+    const std::string hashField = harvestSingleLine(hash);
+    std::string title = harvestSingleLine(chosenTitle);
+    const std::string head = excerpt.empty() ? std::string() : excerpt + "\n";
+    // topic: is the agent topic. Title sits before via and is capped so the
+    // 8000-byte cut cannot drop the via line the gate requires.
+    const std::string beforeUrl = head + "\ntopic: " + agentTopic + "\nurl: ";
+    const std::string between = "\ntitle: ";
+    const std::string suffix = "\nvia: " + viaField + "\nsha256: " + hashField + "\n";
+    const size_t fixedWithoutValues = beforeUrl.size() + between.size() + suffix.size();
+    const size_t budget = fixedWithoutValues < 8000 ? 8000 - fixedWithoutValues : 0;
+    size_t titleRoom = budget > 240 ? 240 : budget;
+    size_t urlRoom = budget - titleRoom;
+    if (urlField.size() < urlRoom) {
+        urlRoom = urlField.size();
+        titleRoom = budget - urlRoom;
+        if (titleRoom > 240) titleRoom = 240;
+    }
+    if (urlField.size() > urlRoom) urlField.resize(urlRoom);
+    if (title.size() > titleRoom) title.resize(titleRoom);
+    std::string body = beforeUrl + urlField + between + title + suffix;
     if (body.size() < 50)
         body += "Source fetched over Tor. Local draft is not a wallet credit.\n";
     if (body.size() > 8000) body.resize(8000);
@@ -10175,7 +10483,7 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
             const std::string body = buildNaanPoeBody(topic, pageUrl, pageUrl, "pending", via,
                                                      stripHtmlToText(pageHtml));
             const core::TextUsefulness use =
-                core::assessTextUsefulness(buildNaanPoeTitle(topic), body);
+                core::assessTextUsefulness(buildNaanPoeTitle(topic), body, topic);
             if (why) *why = use.reason.empty() ? "not_useful" : use.reason;
             return use.passed;
         };
@@ -10355,7 +10663,7 @@ void SynapsedEngine::naanLoopFor(const std::string& agentId) {
             const std::string poeTitle = buildNaanPoeTitle(topic);
             const std::string poeBody = buildNaanPoeBody(topic, url, chosenTitle, hash,
                                                         fetchedVia, harvest.text);
-            const core::TextUsefulness use = core::assessTextUsefulness(poeTitle, poeBody);
+            const core::TextUsefulness use = core::assessTextUsefulness(poeTitle, poeBody, topic);
             const std::string poeRes = use.passed
                 ? submitPoeKnowledge(poeTitle, poeBody, synapse::core::poe_v1::ContentType::TEXT)
                 : std::string();

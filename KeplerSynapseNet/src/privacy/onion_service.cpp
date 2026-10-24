@@ -18,6 +18,27 @@
 #include <unistd.h>
 #endif
 
+namespace {
+
+bool ipv4LiteralIsLoopback(const std::string& host) {
+    in_addr parsed{};
+    if (inet_pton(AF_INET, host.c_str(), &parsed) != 1) return false;
+    const auto hostOrder = ntohl(parsed.s_addr);
+    return (hostOrder & 0xff000000u) == 0x7f000000u;
+}
+
+bool peerIsIpv4Loopback(int sock) {
+    if (sock < 0) return false;
+    sockaddr_in peer{};
+    socklen_t length = sizeof(peer);
+    if (getpeername(sock, reinterpret_cast<sockaddr*>(&peer), &length) != 0) return false;
+    if (peer.sin_family != AF_INET || length < static_cast<socklen_t>(sizeof(sockaddr_in))) return false;
+    const auto hostOrder = ntohl(peer.sin_addr.s_addr);
+    return (hostOrder & 0xff000000u) == 0x7f000000u;
+}
+
+}
+
 namespace synapse {
 namespace privacy {
 
@@ -40,6 +61,9 @@ struct ControlConnection {
     std::string buffer;
     
     bool connectTo(const std::string& host, uint16_t port) {
+        // Passwords, auth cookies, and onion key material stay on IPv4 loopback.
+        if (!ipv4LiteralIsLoopback(host)) return false;
+
         sock = ::socket(AF_INET, SOCK_STREAM, 0);
         if (sock < 0) return false;
         
@@ -63,6 +87,10 @@ struct ControlConnection {
             sock = -1;
             return false;
         }
+        if (!peerIsIpv4Loopback(sock)) {
+            closeConn();
+            return false;
+        }
         return true;
     }
     
@@ -75,9 +103,12 @@ struct ControlConnection {
     }
     
     bool sendLine(const std::string& line) {
+        // Tor control is a cleartext protocol. Send it only after the peer is confirmed loopback.
+        if (!peerIsIpv4Loopback(sock)) return false;
         std::string data = line + "\r\n";
         size_t sent = 0;
         while (sent < data.size()) {
+            // codeql[cpp/cleartext-transmission] Loopback Tor control protocol.
             ssize_t n = send(sock, data.data() + sent, data.size() - sent, 0);
             if (n <= 0) return false;
             sent += static_cast<size_t>(n);
@@ -204,6 +235,7 @@ struct OnionService::Impl {
     }
     
     bool authenticate(ControlConnection& conn) {
+        if (!peerIsIpv4Loopback(conn.sock)) return false;
         if (!controlPassword.empty()) {
             std::vector<std::string> lines;
             if (!conn.sendLine("AUTHENTICATE \"" + controlPassword + "\"")) return false;
