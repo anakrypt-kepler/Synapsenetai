@@ -147,6 +147,27 @@ function sanitizeText(raw: unknown, maxLen = 10000): string {
   return s.trim();
 }
 
+// Unlink only when the joined path remains inside root.
+function unlinkInside(root: string, unsafePath: string): void {
+  if (typeof unsafePath !== "string" || unsafePath.length === 0 || unsafePath.includes("\0")) {
+    return;
+  }
+  const rootResolved = path.resolve(root);
+  const candidate = path.resolve(path.join(rootResolved, unsafePath));
+  const relative = path.relative(rootResolved, candidate);
+  if (
+    relative === "" ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    return;
+  }
+  try {
+    fs.unlinkSync(candidate);
+  } catch {}
+}
+
 function getStartOfCurrentLocalDayIso(): string {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
@@ -1598,10 +1619,7 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Not authorized" });
     }
     if (msg.file_url) {
-      const fs = require("fs");
-      const path = require("path");
-      const filePath = path.join(process.cwd(), "dist/public", msg.file_url);
-      try { fs.unlinkSync(filePath); } catch {}
+      unlinkInside(path.join(process.cwd(), "dist/public"), msg.file_url);
     }
     raw.prepare("DELETE FROM messages WHERE id = ?").run(msgId);
     raw.close();
@@ -1620,11 +1638,9 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Not authorized" });
     }
     const msgs = raw.prepare("SELECT file_url FROM messages WHERE conversation_id = ? AND file_url IS NOT NULL").all(convId) as any[];
-    const fs = require("fs");
-    const path = require("path");
     for (const m of msgs) {
       if (m.file_url) {
-        try { fs.unlinkSync(path.join(process.cwd(), "dist/public", m.file_url)); } catch {}
+        unlinkInside(path.join(process.cwd(), "dist/public"), m.file_url);
       }
     }
     raw.prepare("DELETE FROM messages WHERE conversation_id = ?").run(convId);
@@ -1769,6 +1785,29 @@ export async function registerRoutes(
   });
 
 
+  // Hostname only. A scheme is added for the parser when the peer value is
+  // bare; the stored value is that hostname, never an https rewrite.
+  function onionPeerHost(raw: string): string {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.length > 300 || /[\s\u0000]/.test(trimmed)) {
+      return "";
+    }
+    const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+      ? trimmed
+      : `http://${trimmed}`;
+    let host = "";
+    try {
+      host = new URL(candidate).hostname.toLowerCase().replace(/\.$/, "");
+    } catch {
+      return "";
+    }
+    const labels = host.split(".").filter((part) => part.length > 0);
+    if (labels.length < 2 || labels[labels.length - 1] !== "onion") {
+      return "";
+    }
+    return host;
+  }
+
   // Active mining peers endpoint - queries synapsed RPC on both VPS nodes
   app.get("/api/mining/peers", async (_req, res) => {
     const RPC_ENDPOINTS = [
@@ -1817,12 +1856,13 @@ export async function registerRoutes(
         const peerResult = results[i];
         if (peerResult && Array.isArray(peerResult.peers)) {
           for (const p of peerResult.peers) {
-            if (p.onion && typeof p.onion === "string" && p.onion.endsWith(".onion")) {
-              const existing = peerMap.get(p.onion);
+            const onion = typeof p.onion === "string" ? onionPeerHost(p.onion) : "";
+            if (onion) {
+              const existing = peerMap.get(onion);
               const seen = typeof p.last_seen === "number" ? p.last_seen : 0;
-              const isSeed = SEED_NODES.includes(p.onion);
+              const isSeed = SEED_NODES.includes(onion);
               if (!existing || seen < existing.lastSeen) {
-                peerMap.set(p.onion, { lastSeen: seen, type: isSeed ? "SEED" : "PEER" });
+                peerMap.set(onion, { lastSeen: seen, type: isSeed ? "SEED" : "PEER" });
               }
             }
           }
@@ -1887,10 +1927,9 @@ export async function registerRoutes(
 
       // Delete files from disk
       for (const url of fileUrls) {
-        const filename = url.split("/").pop();
+        const filename = url.split(/[/\\]/).filter((part) => part.length > 0).pop();
         if (filename) {
-          const filePath = path.join(process.cwd(), "uploads", filename);
-          try { fs.unlinkSync(filePath); } catch {}
+          unlinkInside(uploadsDir, filename);
         }
       }
 

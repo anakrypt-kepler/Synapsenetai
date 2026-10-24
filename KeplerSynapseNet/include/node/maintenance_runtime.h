@@ -11,6 +11,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -38,6 +39,9 @@ struct ProviderSession {
     std::string renterId;
     uint64_t expiresAt = 0;
     uint64_t pricePerRequestAtoms = 0;
+    // Request ids already served, and normalized payment txids accepted once.
+    std::unordered_set<std::string> seenRequestIds;
+    std::unordered_set<std::string> spentPaymentTxids;
 };
 
 namespace node {

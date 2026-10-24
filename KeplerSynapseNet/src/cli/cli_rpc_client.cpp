@@ -130,7 +130,9 @@ static bool rpcHttpPost(uint16_t port,
         }
 
         size_t bodyStart = headerEnd + 4;
-        if (resp.size() >= bodyStart + contentLength) {
+        // Same wrap guard as the LSP decoder: a length that does not fit in
+        // the unread bytes is incomplete, not a finished body.
+        if (bodyStart <= resp.size() && contentLength <= resp.size() - bodyStart) {
             responseBodyOut = resp.substr(bodyStart, contentLength);
             ::close(sock);
             return true;

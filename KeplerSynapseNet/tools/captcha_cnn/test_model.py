@@ -90,7 +90,7 @@ def test_save_load_infer():
         "img_w": IMG_W,
     }, model_path)
 
-    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
     loaded = CaptchaCNN()
     loaded.load_state_dict(checkpoint["model_state_dict"])
     loaded.eval()

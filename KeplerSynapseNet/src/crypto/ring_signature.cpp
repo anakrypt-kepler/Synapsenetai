@@ -26,6 +26,7 @@ constexpr size_t kHashSize = crypto_core_ed25519_HASHBYTES;
 constexpr uint32_t kMaxCountedFields = 4096;
 
 void requireSodium() {
+    containForeignCryptoModules();
     static bool initialized = false;
     if (!initialized) {
         if (sodium_init() < 0) {
@@ -38,6 +39,16 @@ void requireSodium() {
 void appendBytes(std::vector<uint8_t>& buffer, const std::vector<uint8_t>& data) {
     buffer.insert(buffer.end(), data.begin(), data.end());
 }
+
+struct WipeVec {
+    std::vector<uint8_t>& bytes;
+    explicit WipeVec(std::vector<uint8_t>& held) : bytes(held) {}
+    ~WipeVec() {
+        if (!bytes.empty()) secureZero(bytes.data(), bytes.size());
+    }
+    WipeVec(const WipeVec&) = delete;
+    WipeVec& operator=(const WipeVec&) = delete;
+};
 
 void appendU32(std::vector<uint8_t>& buffer, uint32_t value) {
     buffer.push_back(static_cast<uint8_t>(value & 0xFF));
@@ -278,8 +289,10 @@ RingSignature RingSign::sign(
     }
 
     std::vector<uint8_t> secret(kScalarSize);
+    WipeVec holdSecret(secret);
     {
         std::vector<uint8_t> padded(crypto_core_ed25519_NONREDUCEDSCALARBYTES, 0);
+        WipeVec holdPadded(padded);
         std::memcpy(padded.data(), privateKey.data(), kScalarSize);
         crypto_core_ed25519_scalar_reduce(secret.data(), padded.data());
     }
@@ -291,6 +304,7 @@ RingSignature RingSign::sign(
     std::vector<std::vector<uint8_t>> challenges(n);
 
     std::vector<uint8_t> alpha = randomScalar();
+    WipeVec holdAlpha(alpha);
 
     std::vector<uint8_t> lInit = scalarMultBase(alpha);
     std::vector<uint8_t> rInit = scalarMultPoint(alpha, keyImagePoint);
@@ -496,8 +510,11 @@ MlsagSignature RingSign::signMlsag(
 
     std::vector<uint8_t> x(kScalarSize);
     std::vector<uint8_t> z(kScalarSize);
+    WipeVec holdX(x);
+    WipeVec holdZ(z);
     {
         std::vector<uint8_t> padded(crypto_core_ed25519_NONREDUCEDSCALARBYTES, 0);
+        WipeVec holdPadded(padded);
         std::memcpy(padded.data(), privP.data(), kScalarSize);
         crypto_core_ed25519_scalar_reduce(x.data(), padded.data());
         std::memcpy(padded.data(), privC.data(), kScalarSize);
@@ -513,6 +530,8 @@ MlsagSignature RingSign::signMlsag(
 
     std::vector<uint8_t> alpha0 = randomScalar();
     std::vector<uint8_t> alpha1 = randomScalar();
+    WipeVec holdAlpha0(alpha0);
+    WipeVec holdAlpha1(alpha1);
     std::vector<uint8_t> l0Init = scalarMultBase(alpha0);
     std::vector<uint8_t> r0Init = scalarMultPoint(alpha0, hpSigner);
     std::vector<uint8_t> l1Init = scalarMultBase(alpha1);

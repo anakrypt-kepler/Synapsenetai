@@ -911,6 +911,9 @@ public:
             if (buffer.readUint8() != 0x14) return false;
             
             uint64_t count = buffer.readVarInt();
+            // Same bound as PeersMessage. The unread bytes must cover the
+            // count before reserve; each entry consumes at least one byte.
+            if (count > 1000 || count > buffer.remaining()) return false;
             peers.clear();
             peers.reserve(count);
             
@@ -946,6 +949,9 @@ public:
             if (buffer.readUint8() != 0x16) return false;
             
             uint64_t count = buffer.readVarInt();
+            // Same counted-table bound as deserializeBlock in this file.
+            // Refuse a count the unread bytes cannot hold before reserve.
+            if (count > 100000 || count > buffer.remaining()) return false;
             blocks.clear();
             blocks.reserve(count);
             

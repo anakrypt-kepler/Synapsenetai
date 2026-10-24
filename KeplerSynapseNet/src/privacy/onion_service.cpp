@@ -1,5 +1,6 @@
 #include "privacy/privacy.h"
 #include "utils/logger.h"
+#include "utils/secret_file.h"
 #include <mutex>
 #include <fstream>
 #include <string>
@@ -167,11 +168,13 @@ struct OnionService::Impl {
     
     bool loadState() {
         if (serviceDir.empty()) return false;
-        std::ifstream keyFile(serviceDir + "/private_key");
-        if (keyFile.good()) {
-            std::getline(keyFile, privateKey);
+        const std::string keyPath = serviceDir + "/private_key";
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(keyPath, ec) && !ec &&
+            utils::lockFileToCurrentUser(keyPath)) {
+            std::ifstream keyFile(keyPath);
+            if (keyFile.good()) std::getline(keyFile, privateKey);
         }
-        keyFile.close();
         
         std::ifstream hostFile(serviceDir + "/hostname");
         if (hostFile.good()) {
@@ -187,11 +190,11 @@ struct OnionService::Impl {
     bool saveState() {
         if (serviceDir.empty() || serviceId.empty()) return false;
         std::filesystem::create_directories(serviceDir);
-        std::ofstream keyFile(serviceDir + "/private_key", std::ios::trunc);
         if (!privateKey.empty()) {
-            keyFile << privateKey;
+            if (!utils::writeFileForCurrentUser(serviceDir + "/private_key", privateKey)) return false;
+        } else if (!utils::writeFileForCurrentUser(serviceDir + "/private_key", "")) {
+            return false;
         }
-        keyFile.close();
         
         std::ofstream hostFile(serviceDir + "/hostname", std::ios::trunc);
         hostFile << (serviceId + ".onion");
@@ -226,6 +229,12 @@ struct OnionService::Impl {
         }
         
         for (const auto& path : paths) {
+            const bool systemCookie =
+                path == "/run/tor/control.authcookie" ||
+                path == "/var/run/tor/control.authcookie" ||
+                path == "/var/lib/tor/control.authcookie" ||
+                path == "/var/lib/tor/control_auth_cookie";
+            if (!systemCookie && !utils::lockFileToCurrentUser(path)) continue;
             std::ifstream f(path, std::ios::binary);
             if (!f.good()) continue;
             std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -242,13 +251,9 @@ struct OnionService::Impl {
             return conn.readResponse(lines);
         }
         std::string cookieHex = loadCookieHex();
-        if (!cookieHex.empty()) {
-            std::vector<std::string> lines;
-            if (!conn.sendLine("AUTHENTICATE " + cookieHex)) return false;
-            return conn.readResponse(lines);
-        }
+        if (cookieHex.empty()) return false;
         std::vector<std::string> lines;
-        if (!conn.sendLine("AUTHENTICATE")) return false;
+        if (!conn.sendLine("AUTHENTICATE " + cookieHex)) return false;
         return conn.readResponse(lines);
     }
     
@@ -311,9 +316,7 @@ struct OnionService::Impl {
             privateKey = newPrivateKey;
         }
         // Ephemeral session onions are not written to disk.
-        if (!ephemeral) {
-            saveState();
-        }
+        if (!ephemeral && !saveState()) return false;
         return true;
     }
     

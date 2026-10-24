@@ -46,6 +46,9 @@ private:
     mutable std::unordered_map<std::string, std::string> bindings_;
     std::string storagePath_;
     mutable bool loaded_ = false;
+    // Set when identities.json exists but cannot be read or does not parse.
+    // Trust-on-first-use stays available only for a missing file.
+    mutable bool loadFailed_ = false;
 };
 
 }

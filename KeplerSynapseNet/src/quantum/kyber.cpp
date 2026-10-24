@@ -25,21 +25,16 @@ KyberKeyPair Kyber::generateKeyPair() {
     KyberKeyPair kp;
 #ifdef USE_LIBOQS
     OQS_KEM* kem = detail::newPreferredKyberKem();
-    if (!kem) {
+    if (!detail::kyberKemPinned(kem)) {
+        if (kem) OQS_KEM_free(kem);
         std::fprintf(stderr, "FATAL: Kyber/ML-KEM-768 algorithm unavailable in liboqs\n");
         std::abort();
     }
-    std::vector<uint8_t> pub(kem->length_public_key);
-    std::vector<uint8_t> priv(kem->length_secret_key);
-    if (OQS_KEM_keypair(kem, pub.data(), priv.data()) != OQS_SUCCESS) {
+    if (OQS_KEM_keypair(kem, kp.publicKey.data(), kp.secretKey.data()) != OQS_SUCCESS) {
         OQS_KEM_free(kem);
         std::fprintf(stderr, "FATAL: Kyber key generation failed\n");
         std::abort();
     }
-    size_t copyPub = std::min(pub.size(), kp.publicKey.size());
-    size_t copyPriv = std::min(priv.size(), kp.secretKey.size());
-    std::memcpy(kp.publicKey.data(), pub.data(), copyPub);
-    std::memcpy(kp.secretKey.data(), priv.data(), copyPriv);
     OQS_KEM_free(kem);
 #endif
     return kp;
@@ -51,24 +46,23 @@ EncapsulationResult Kyber::encapsulate(const KyberPublicKey& publicKey) {
     EncapsulationResult result;
 #ifdef USE_LIBOQS
     OQS_KEM* kem = detail::newPreferredKyberKem();
-    if (!kem) {
+    if (!detail::kyberKemPinned(kem)) {
+        if (kem) OQS_KEM_free(kem);
         std::fprintf(stderr, "FATAL: Kyber/ML-KEM-768 algorithm unavailable in liboqs\n");
         std::abort();
     }
-    if (publicKey.size() < kem->length_public_key) {
+    if (publicKey.size() < KYBER_PUBLIC_KEY_SIZE) {
         OQS_KEM_free(kem);
         result.success = false;
         return result;
     }
-    std::vector<uint8_t> ct(kem->length_ciphertext);
-    std::vector<uint8_t> ss(kem->length_shared_secret);
-    if (OQS_KEM_encaps(kem, ct.data(), ss.data(), publicKey.data()) != OQS_SUCCESS) {
+    result.ciphertext.assign(KYBER_CIPHERTEXT_SIZE, 0);
+    result.sharedSecret.assign(KYBER_SHARED_SECRET_SIZE, 0);
+    if (OQS_KEM_encaps(kem, result.ciphertext.data(), result.sharedSecret.data(), publicKey.data()) != OQS_SUCCESS) {
         OQS_KEM_free(kem);
         std::fprintf(stderr, "FATAL: Kyber encapsulation failed\n");
         std::abort();
     }
-    result.ciphertext = std::move(ct);
-    result.sharedSecret = std::move(ss);
     result.success = true;
     OQS_KEM_free(kem);
 #else
@@ -83,15 +77,16 @@ std::vector<uint8_t> Kyber::decapsulate(const KyberCiphertext& ciphertext,
     std::lock_guard<std::mutex> lock(impl_->mtx);
 #ifdef USE_LIBOQS
     OQS_KEM* kem = detail::newPreferredKyberKem();
-    if (!kem) {
+    if (!detail::kyberKemPinned(kem)) {
+        if (kem) OQS_KEM_free(kem);
         std::fprintf(stderr, "FATAL: Kyber/ML-KEM-768 algorithm unavailable in liboqs\n");
         std::abort();
     }
-    if (ciphertext.size() < kem->length_ciphertext || secretKey.size() < kem->length_secret_key) {
+    if (ciphertext.size() < KYBER_CIPHERTEXT_SIZE || secretKey.size() < KYBER_SECRET_KEY_SIZE) {
         OQS_KEM_free(kem);
         return {};
     }
-    std::vector<uint8_t> ss(kem->length_shared_secret);
+    std::vector<uint8_t> ss(KYBER_SHARED_SECRET_SIZE);
     if (OQS_KEM_decaps(kem, ss.data(), ciphertext.data(), secretKey.data()) != OQS_SUCCESS) {
         OQS_KEM_free(kem);
         return {};

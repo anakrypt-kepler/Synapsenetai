@@ -2,6 +2,7 @@
 import argparse
 import csv
 import os
+import subprocess
 import sys
 
 try:
@@ -20,9 +21,17 @@ def show_image_terminal(path):
         print(f"  {os.path.basename(path)}")
 
     if sys.platform == "darwin":
-        os.system(f'open -g "{path}" 2>/dev/null &')
+        subprocess.Popen(
+            ["open", "-g", path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     elif sys.platform == "linux":
-        os.system(f'xdg-open "{path}" 2>/dev/null &')
+        subprocess.Popen(
+            ["xdg-open", path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
 
 def main():

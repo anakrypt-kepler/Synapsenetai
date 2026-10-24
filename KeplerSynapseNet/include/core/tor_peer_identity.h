@@ -30,6 +30,10 @@ std::vector<uint8_t> serializePeerHelloPayload(const PeerHelloInfo& info);
 
 std::optional<PeerHelloInfo> parsePeerHelloPayload(const std::vector<uint8_t>& payload);
 
+// True when this hello belongs to the live socket. A different onion, or a
+// Tor label on a public address, does not.
+bool peerHelloMatchesSocket(const std::string& socketAddress, const PeerHelloInfo& hello);
+
 PeerDisplayInfo selectPeerDisplayInfo(const std::string& rawAddress,
                                       uint16_t rawPort,
                                       const std::optional<PeerHelloInfo>& peerHello);

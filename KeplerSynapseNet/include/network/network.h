@@ -35,6 +35,8 @@ struct Peer {
     uint16_t port;
     uint64_t connectedAt;
     uint64_t lastSeen;
+    // One value per accepted socket. A later connection does not reuse it.
+    uint64_t sessionSerial = 0;
     uint64_t bytesRecv;
     uint64_t bytesSent;
     uint32_t version;

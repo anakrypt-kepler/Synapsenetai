@@ -2,6 +2,7 @@
 
 #include "web/rpc_server.h"
 #include "web/web.h"
+#include "crypto/crypto.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -31,8 +32,10 @@
 #include <poll.h>
 #endif
 #include <cctype>
+#include <openssl/crypto.h>
 #include <openssl/rand.h>
 #include "../../third_party/llama.cpp/vendor/nlohmann/json.hpp"
+#include "utils/json_secret_fields.h"
 
 namespace synapse {
 namespace web {
@@ -241,6 +244,12 @@ static void sendEmptyHttpResponse(int clientSocket, int statusCode, const char* 
 // values nested deeper than this so serialization cannot overflow the stack.
 static constexpr int kMaxJsonNestingDepth = 64;
 
+// Header bytes are buffered before the 4 MB body check below can run. A peer
+// that never sends the header terminator would otherwise grow this buffer for
+// as long as bytes keep arriving. Normal RPC headers, including the cookie,
+// are a few hundred bytes.
+static constexpr size_t kMaxRpcHeaderBytes = 64 * 1024;
+
 static bool jsonNestingExceeds(const nlohmann::json& root, int maxDepth) {
     struct Frame {
         const nlohmann::json* node;
@@ -448,12 +457,24 @@ void RpcServer::Impl::acceptLoop() {
                                    &clientLen);
         
         if (clientSocket < 0) continue;
-        
+
+        bool queued = false;
         {
             std::lock_guard<std::mutex> lock(mtx);
-            connectionQueue.push(clientSocket);
+            // maxConnections is already the listen backlog. Use that same
+            // ceiling for sockets waiting on a worker, then close the rest.
+            const bool capped = maxConnections > 0 &&
+                connectionQueue.size() >= static_cast<size_t>(maxConnections);
+            if (!capped) {
+                connectionQueue.push(clientSocket);
+                queued = true;
+            }
         }
-        cv.notify_one();
+        if (queued) {
+            cv.notify_one();
+        } else {
+            close(clientSocket);
+        }
     }
 }
 
@@ -496,6 +517,7 @@ void RpcServer::Impl::handleConnection(int clientSocket) {
     
     char buffer[65536];
     std::string requestData;
+    size_t pendingHeaderBytes = 0;
     
     sockaddr_in peerAddr{};
     socklen_t peerLen = sizeof(peerAddr);
@@ -513,9 +535,21 @@ void RpcServer::Impl::handleConnection(int clientSocket) {
         
         buffer[bytesRead] = '\0';
         requestData += buffer;
-        
+
         size_t headerEnd = requestData.find("\r\n\r\n");
-        if (headerEnd == std::string::npos) continue;
+        if (headerEnd == std::string::npos) {
+            pendingHeaderBytes += static_cast<size_t>(bytesRead);
+            if (pendingHeaderBytes > kMaxRpcHeaderBytes || requestData.size() > kMaxRpcHeaderBytes) {
+                sendEmptyHttpResponse(clientSocket, 431, "Request Header Fields Too Large");
+                return;
+            }
+            continue;
+        }
+        pendingHeaderBytes = 0;
+        if (headerEnd > kMaxRpcHeaderBytes) {
+            sendEmptyHttpResponse(clientSocket, 431, "Request Header Fields Too Large");
+            return;
+        }
         std::string headers = requestData.substr(0, headerEnd);
         size_t requestLineEnd = headers.find("\r\n");
         std::string requestLine = requestLineEnd == std::string::npos ? headers : headers.substr(0, requestLineEnd);
@@ -705,7 +739,14 @@ std::string RpcServer::Impl::parseJsonRpc(const std::string& data, RpcRequest& r
     request.timestamp = std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
 
-    nlohmann::json parsed = nlohmann::json::parse(data, nullptr, false);
+    // The RPC cookie is accepted from the Authorization header only. A JSON
+    // authToken or wallet seed is removed before nlohmann parses. The saved
+    // Tor control password is not one of those fields.
+    std::string body = data;
+    if (!synapse::json_containment::blankJsonSecretStrings(body)) {
+        return "Invalid JSON-RPC request";
+    }
+    nlohmann::json parsed = nlohmann::json::parse(body, nullptr, false);
     if (parsed.is_discarded() || !parsed.is_object()) {
         return "Invalid JSON-RPC request";
     }
@@ -741,11 +782,6 @@ std::string RpcServer::Impl::parseJsonRpc(const std::string& data, RpcRequest& r
         }
     } else {
         request.params.clear();
-    }
-
-    auto authIt = parsed.find("authToken");
-    if (authIt != parsed.end() && authIt->is_string()) {
-        request.authToken = authIt->get<std::string>();
     }
 
     return "";
@@ -823,14 +859,11 @@ bool RpcServer::Impl::checkIpConnectionLimit(const std::string& clientIp) {
 }
 
 std::string RpcServer::Impl::generateSessionId() {
+    crypto::containForeignCryptoModules();
     uint8_t randomBytes[16];
     if (RAND_bytes(randomBytes, sizeof(randomBytes)) != 1) {
-        // Fallback to timestamp if CSPRNG fails (should not happen)
-        std::stringstream ss;
-        uint64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
-        ss << std::hex << now;
-        return ss.str();
+        OPENSSL_cleanse(randomBytes, sizeof(randomBytes));
+        return {};
     }
     std::stringstream ss;
     for (int i = 0; i < 16; i++) {

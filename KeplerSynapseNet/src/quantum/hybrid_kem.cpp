@@ -40,6 +40,7 @@ struct HybridKEM::Impl {
     bool sodiumReady = false;
 
     Impl() {
+        crypto::containForeignCryptoModules();
         sodiumReady = (sodium_init() >= 0);
     }
 };
@@ -56,7 +57,13 @@ HybridKeyPair HybridKEM::generateKeyPair() {
 
     kp.classicSecretKey.resize(crypto_scalarmult_curve25519_SCALARBYTES);
     kp.classicPublicKey.resize(crypto_scalarmult_curve25519_BYTES);
-    crypto_box_keypair(kp.classicPublicKey.data(), kp.classicSecretKey.data());
+    if (crypto_box_keypair(kp.classicPublicKey.data(), kp.classicSecretKey.data()) != 0) {
+        sodium_memzero(kp.classicPublicKey.data(), kp.classicPublicKey.size());
+        sodium_memzero(kp.classicSecretKey.data(), kp.classicSecretKey.size());
+        kp.classicPublicKey.clear();
+        kp.classicSecretKey.clear();
+        return kp;
+    }
 
     auto kyberKp = impl_->kyber.generateKeyPair();
     kp.pqcPublicKey.assign(kyberKp.publicKey.begin(), kyberKp.publicKey.end());
@@ -73,7 +80,11 @@ EncapsulationResult HybridKEM::encapsulate(const HybridKeyPair& recipientPublicK
 
     uint8_t ephemeralSk[crypto_scalarmult_curve25519_SCALARBYTES];
     uint8_t ephemeralPk[crypto_scalarmult_curve25519_BYTES];
-    crypto_box_keypair(ephemeralPk, ephemeralSk);
+    if (crypto_box_keypair(ephemeralPk, ephemeralSk) != 0) {
+        sodium_memzero(ephemeralSk, sizeof(ephemeralSk));
+        sodium_memzero(ephemeralPk, sizeof(ephemeralPk));
+        return result;
+    }
 
     uint8_t classicShared[crypto_scalarmult_curve25519_BYTES];
     if (crypto_scalarmult(classicShared, ephemeralSk, recipientPublicKey.classicPublicKey.data()) != 0) {
@@ -86,16 +97,26 @@ EncapsulationResult HybridKEM::encapsulate(const HybridKeyPair& recipientPublicK
     sodium_memzero(ephemeralSk, sizeof(ephemeralSk));
     sodium_memzero(classicShared, sizeof(classicShared));
 
-    KyberPublicKey kyberPk{};
-    size_t copyLen = std::min(recipientPublicKey.pqcPublicKey.size(), kyberPk.size());
-    std::memcpy(kyberPk.data(), recipientPublicKey.pqcPublicKey.data(), copyLen);
-
-    auto kyberResult = impl_->kyber.encapsulate(kyberPk);
-
-    // The caller asked for the Kyber half, and liboqs produced no ML-KEM share.
-    // Fail closed. Do not publish a hash of the X25519 share alone.
+    // The caller asked for the Kyber half. A short public key must not be
+    // zero-padded into an ML-KEM-768 encapsulate that still returns 32 and 1088.
     const bool kyberRequested = kyberHalfRequested(
         impl_->pqcAlgo, recipientPublicKey.pqcAlgo, recipientPublicKey.pqcPublicKey.size());
+    if (kyberRequested &&
+        recipientPublicKey.pqcPublicKey.size() != KYBER_PUBLIC_KEY_SIZE) {
+        wipeBytes(classicSecret);
+        return result;
+    }
+
+    EncapsulationResult kyberResult;
+    kyberResult.success = false;
+    if (recipientPublicKey.pqcPublicKey.size() == KYBER_PUBLIC_KEY_SIZE) {
+        KyberPublicKey kyberPk{};
+        std::memcpy(kyberPk.data(), recipientPublicKey.pqcPublicKey.data(), kyberPk.size());
+        kyberResult = impl_->kyber.encapsulate(kyberPk);
+    }
+
+    // liboqs produced no ML-KEM share. Fail closed. Do not publish a hash of
+    // the X25519 share alone.
     if (kyberRequested && !mlKemSharePresent(kyberResult)) {
         wipeBytes(classicSecret);
         wipeBytes(kyberResult.sharedSecret);
@@ -118,6 +139,15 @@ std::vector<uint8_t> HybridKEM::decapsulate(const std::vector<uint8_t>& cipherte
                                              const HybridKeyPair& secretKey) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
 
+    // Same rule as encapsulate: a requested Kyber half needs a full secret key.
+    // A shorter key must not be zero-padded and then accepted because decaps
+    // still returned 32 bytes.
+    const bool kyberRequested = kyberHalfRequested(
+        impl_->pqcAlgo, secretKey.pqcAlgo, secretKey.pqcSecretKey.size());
+    if (kyberRequested && secretKey.pqcSecretKey.size() != KYBER_SECRET_KEY_SIZE) {
+        return {};
+    }
+
     if (ciphertext.size() < crypto_scalarmult_curve25519_BYTES + KYBER_CIPHERTEXT_SIZE) {
         return {};
     }
@@ -125,25 +155,25 @@ std::vector<uint8_t> HybridKEM::decapsulate(const std::vector<uint8_t>& cipherte
     const uint8_t* ephemeralPk = ciphertext.data();
     uint8_t classicShared[crypto_scalarmult_curve25519_BYTES];
     if (crypto_scalarmult(classicShared, secretKey.classicSecretKey.data(), ephemeralPk) != 0) {
+        sodium_memzero(classicShared, sizeof(classicShared));
         return {};
     }
 
     std::vector<uint8_t> classicSecret(classicShared, classicShared + crypto_scalarmult_curve25519_BYTES);
     sodium_memzero(classicShared, sizeof(classicShared));
 
-    KyberCiphertext kyberCt{};
-    std::memcpy(kyberCt.data(), ciphertext.data() + crypto_scalarmult_curve25519_BYTES, KYBER_CIPHERTEXT_SIZE);
+    std::vector<uint8_t> pqcSecret;
+    if (secretKey.pqcSecretKey.size() == KYBER_SECRET_KEY_SIZE) {
+        KyberCiphertext kyberCt{};
+        std::memcpy(kyberCt.data(), ciphertext.data() + crypto_scalarmult_curve25519_BYTES, KYBER_CIPHERTEXT_SIZE);
+        KyberSecretKey kyberSk{};
+        std::memcpy(kyberSk.data(), secretKey.pqcSecretKey.data(), kyberSk.size());
+        pqcSecret = impl_->kyber.decapsulate(kyberCt, kyberSk);
+        sodium_memzero(kyberSk.data(), kyberSk.size());
+    }
 
-    KyberSecretKey kyberSk{};
-    size_t copyLen = std::min(secretKey.pqcSecretKey.size(), kyberSk.size());
-    std::memcpy(kyberSk.data(), secretKey.pqcSecretKey.data(), copyLen);
-
-    auto pqcSecret = impl_->kyber.decapsulate(kyberCt, kyberSk);
-
-    // Same rule as encapsulate: a requested Kyber half with no liboqs share
-    // must not collapse to a hash of the X25519 share.
-    const bool kyberRequested = kyberHalfRequested(
-        impl_->pqcAlgo, secretKey.pqcAlgo, secretKey.pqcSecretKey.size());
+    // A requested Kyber half with no liboqs share must not collapse to a
+    // hash of the X25519 share.
     if (kyberRequested && pqcSecret.size() != KYBER_SHARED_SECRET_SIZE) {
         wipeBytes(classicSecret);
         wipeBytes(pqcSecret);

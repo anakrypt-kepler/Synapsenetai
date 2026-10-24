@@ -1,7 +1,9 @@
 #include "database/database.h"
 #include "crypto/crypto.h"
 #include "crypto/keys.h"
+#include "utils/secret_file.h"
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <map>
@@ -111,106 +113,135 @@ std::string WalletDB::Impl::generateTxId() {
 }
 
 bool WalletDB::Impl::saveToFile() {
-    std::ofstream file(dbPath, std::ios::binary);
-    if (!file) return false;
-    
-    uint32_t walletCount = wallets.size();
-    file.write(reinterpret_cast<char*>(&walletCount), sizeof(walletCount));
-    
+    auto append = [](std::string& out, const void* data, size_t size) {
+        if (size == 0 || data == nullptr) return;
+        out.append(reinterpret_cast<const char*>(data), size);
+    };
+
+    std::string bytes;
+    uint32_t walletCount = static_cast<uint32_t>(wallets.size());
+    append(bytes, &walletCount, sizeof(walletCount));
+
     for (const auto& pair : wallets) {
         const WalletRecord& w = pair.second;
-        
-        uint32_t addrLen = w.address.length();
-        file.write(reinterpret_cast<char*>(&addrLen), sizeof(addrLen));
-        file.write(w.address.c_str(), addrLen);
-        
-        uint32_t encKeyLen = w.encryptedPrivateKey.size();
-        file.write(reinterpret_cast<char*>(&encKeyLen), sizeof(encKeyLen));
-        file.write(reinterpret_cast<const char*>(w.encryptedPrivateKey.data()), encKeyLen);
-        
-        uint32_t pubKeyLen = w.publicKey.size();
-        file.write(reinterpret_cast<char*>(&pubKeyLen), sizeof(pubKeyLen));
-        file.write(reinterpret_cast<const char*>(w.publicKey.data()), pubKeyLen);
-        
-        uint32_t saltLen = w.salt.size();
-        file.write(reinterpret_cast<char*>(&saltLen), sizeof(saltLen));
-        file.write(reinterpret_cast<const char*>(w.salt.data()), saltLen);
-        
-        uint32_t ivLen = w.iv.size();
-        file.write(reinterpret_cast<char*>(&ivLen), sizeof(ivLen));
-        file.write(reinterpret_cast<const char*>(w.iv.data()), ivLen);
-        
-        file.write(reinterpret_cast<const char*>(&w.balance), sizeof(w.balance));
-        file.write(reinterpret_cast<const char*>(&w.stakedBalance), sizeof(w.stakedBalance));
-        file.write(reinterpret_cast<const char*>(&w.pendingBalance), sizeof(w.pendingBalance));
-        file.write(reinterpret_cast<const char*>(&w.createdAt), sizeof(w.createdAt));
-        file.write(reinterpret_cast<const char*>(&w.lastActivity), sizeof(w.lastActivity));
-        
-        uint32_t labelLen = w.label.length();
-        file.write(reinterpret_cast<char*>(&labelLen), sizeof(labelLen));
-        file.write(w.label.c_str(), labelLen);
-        
-        file.write(reinterpret_cast<const char*>(&w.isDefault), sizeof(w.isDefault));
-        file.write(reinterpret_cast<const char*>(&w.isWatchOnly), sizeof(w.isWatchOnly));
-        file.write(reinterpret_cast<const char*>(&w.keyDerivationIterations), sizeof(w.keyDerivationIterations));
+
+        uint32_t addrLen = static_cast<uint32_t>(w.address.length());
+        append(bytes, &addrLen, sizeof(addrLen));
+        append(bytes, w.address.data(), addrLen);
+
+        uint32_t encKeyLen = static_cast<uint32_t>(w.encryptedPrivateKey.size());
+        append(bytes, &encKeyLen, sizeof(encKeyLen));
+        append(bytes, w.encryptedPrivateKey.data(), encKeyLen);
+
+        uint32_t pubKeyLen = static_cast<uint32_t>(w.publicKey.size());
+        append(bytes, &pubKeyLen, sizeof(pubKeyLen));
+        append(bytes, w.publicKey.data(), pubKeyLen);
+
+        uint32_t saltLen = static_cast<uint32_t>(w.salt.size());
+        append(bytes, &saltLen, sizeof(saltLen));
+        append(bytes, w.salt.data(), saltLen);
+
+        uint32_t ivLen = static_cast<uint32_t>(w.iv.size());
+        append(bytes, &ivLen, sizeof(ivLen));
+        append(bytes, w.iv.data(), ivLen);
+
+        append(bytes, &w.balance, sizeof(w.balance));
+        append(bytes, &w.stakedBalance, sizeof(w.stakedBalance));
+        append(bytes, &w.pendingBalance, sizeof(w.pendingBalance));
+        append(bytes, &w.createdAt, sizeof(w.createdAt));
+        append(bytes, &w.lastActivity, sizeof(w.lastActivity));
+
+        uint32_t labelLen = static_cast<uint32_t>(w.label.length());
+        append(bytes, &labelLen, sizeof(labelLen));
+        append(bytes, w.label.data(), labelLen);
+
+        append(bytes, &w.isDefault, sizeof(w.isDefault));
+        append(bytes, &w.isWatchOnly, sizeof(w.isWatchOnly));
+        append(bytes, &w.keyDerivationIterations, sizeof(w.keyDerivationIterations));
     }
-    
-    return true;
+
+    return utils::writeFileForCurrentUser(dbPath, bytes);
 }
 
 bool WalletDB::Impl::loadFromFile() {
+    std::error_code ec;
+    if (std::filesystem::exists(dbPath, ec) && !ec && !utils::lockFileToCurrentUser(dbPath)) {
+        return false;
+    }
     std::ifstream file(dbPath, std::ios::binary);
     if (!file) return true;
-    
+
+    file.seekg(0, std::ios::end);
+    const std::streamoff endOff = file.tellg();
+    file.seekg(0, std::ios::beg);
+    if (!file || endOff < 0) {
+        wallets.clear();
+        return false;
+    }
+    if (endOff == 0) return true;
+
+    // Length prefixes are file-controlled. A field is at most 64 KiB, and
+    // that many unread bytes must already be present, before resize.
+    constexpr uint32_t kMaxWalletRecords = 4096;
+    constexpr uint32_t kMaxWalletFieldBytes = 65536;
+
+    auto bytesLeft = [&]() -> uint64_t {
+        const std::streamoff pos = file.tellg();
+        if (!file || pos < 0 || endOff < pos) return 0;
+        return static_cast<uint64_t>(endOff - pos);
+    };
+    auto fail = [&]() -> bool {
+        wallets.clear();
+        return false;
+    };
+    auto readCounted = [&](auto& out) -> bool {
+        if (bytesLeft() < sizeof(uint32_t)) return false;
+        uint32_t len = 0;
+        file.read(reinterpret_cast<char*>(&len), sizeof(len));
+        if (file.gcount() != static_cast<std::streamsize>(sizeof(len))) return false;
+        if (len > kMaxWalletFieldBytes || bytesLeft() < len) return false;
+        out.resize(len);
+        if (len == 0) return true;
+        file.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(len));
+        return file.gcount() == static_cast<std::streamsize>(len);
+    };
+
+    if (bytesLeft() < sizeof(uint32_t)) return fail();
     uint32_t walletCount = 0;
     file.read(reinterpret_cast<char*>(&walletCount), sizeof(walletCount));
-    
+    if (file.gcount() != static_cast<std::streamsize>(sizeof(walletCount))) return fail();
+    if (walletCount > kMaxWalletRecords) return fail();
+
     for (uint32_t i = 0; i < walletCount; i++) {
         WalletRecord w;
-        
-        uint32_t addrLen = 0;
-        file.read(reinterpret_cast<char*>(&addrLen), sizeof(addrLen));
-        w.address.resize(addrLen);
-        file.read(&w.address[0], addrLen);
-        
-        uint32_t encKeyLen = 0;
-        file.read(reinterpret_cast<char*>(&encKeyLen), sizeof(encKeyLen));
-        w.encryptedPrivateKey.resize(encKeyLen);
-        file.read(reinterpret_cast<char*>(w.encryptedPrivateKey.data()), encKeyLen);
-        
-        uint32_t pubKeyLen = 0;
-        file.read(reinterpret_cast<char*>(&pubKeyLen), sizeof(pubKeyLen));
-        w.publicKey.resize(pubKeyLen);
-        file.read(reinterpret_cast<char*>(w.publicKey.data()), pubKeyLen);
-        
-        uint32_t saltLen = 0;
-        file.read(reinterpret_cast<char*>(&saltLen), sizeof(saltLen));
-        w.salt.resize(saltLen);
-        file.read(reinterpret_cast<char*>(w.salt.data()), saltLen);
-        
-        uint32_t ivLen = 0;
-        file.read(reinterpret_cast<char*>(&ivLen), sizeof(ivLen));
-        w.iv.resize(ivLen);
-        file.read(reinterpret_cast<char*>(w.iv.data()), ivLen);
-        
+        if (!readCounted(w.address)) return fail();
+        if (!readCounted(w.encryptedPrivateKey)) return fail();
+        if (!readCounted(w.publicKey)) return fail();
+        if (!readCounted(w.salt)) return fail();
+        if (!readCounted(w.iv)) return fail();
+
+        constexpr uint64_t kMidBytes = sizeof(uint64_t) * 5;
+        if (bytesLeft() < kMidBytes) return fail();
         file.read(reinterpret_cast<char*>(&w.balance), sizeof(w.balance));
         file.read(reinterpret_cast<char*>(&w.stakedBalance), sizeof(w.stakedBalance));
         file.read(reinterpret_cast<char*>(&w.pendingBalance), sizeof(w.pendingBalance));
         file.read(reinterpret_cast<char*>(&w.createdAt), sizeof(w.createdAt));
         file.read(reinterpret_cast<char*>(&w.lastActivity), sizeof(w.lastActivity));
-        
-        uint32_t labelLen = 0;
-        file.read(reinterpret_cast<char*>(&labelLen), sizeof(labelLen));
-        w.label.resize(labelLen);
-        file.read(&w.label[0], labelLen);
-        
+        if (!file) return fail();
+
+        if (!readCounted(w.label)) return fail();
+
+        const uint64_t tailBytes = sizeof(w.isDefault) + sizeof(w.isWatchOnly) +
+                                   sizeof(w.keyDerivationIterations);
+        if (bytesLeft() < tailBytes) return fail();
         file.read(reinterpret_cast<char*>(&w.isDefault), sizeof(w.isDefault));
         file.read(reinterpret_cast<char*>(&w.isWatchOnly), sizeof(w.isWatchOnly));
         file.read(reinterpret_cast<char*>(&w.keyDerivationIterations), sizeof(w.keyDerivationIterations));
-        
+        if (!file) return fail();
+
         wallets[w.address] = w;
     }
-    
+
     return true;
 }
 
@@ -255,6 +286,7 @@ bool WalletDB::close() {
 bool WalletDB::unlock(const std::string& password) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     auto salt = crypto::randomBytes(16);
+    if (salt.size() != 16) return false;
     auto derived = crypto::deriveKey(password, salt);
     impl_->masterKey.assign(derived.begin(), derived.end());
     impl_->isLocked = false;
@@ -291,12 +323,12 @@ bool WalletDB::createWallet(const std::string& address, const std::vector<uint8_
     record.address = address;
     record.publicKey = publicKey;
     record.salt = crypto::randomBytes(16);
-    record.iv = crypto::randomBytes(12);
+    if (record.salt.size() != 16) return false;
     record.keyDerivationIterations = 100000;
     
     std::vector<uint8_t> key;
     impl_->deriveKey(password, record.salt, key, record.keyDerivationIterations);
-    impl_->encryptData(privateKey, key, record.iv, record.encryptedPrivateKey);
+    if (!impl_->encryptData(privateKey, key, record.iv, record.encryptedPrivateKey)) return false;
     
     record.balance = 0;
     record.stakedBalance = 0;
@@ -526,12 +558,23 @@ bool WalletDB::changePassword(const std::string& address, const std::string& old
     std::vector<uint8_t> oldKey, privateKey;
     impl_->deriveKey(oldPassword, record.salt, oldKey, record.keyDerivationIterations);
     if (!impl_->decryptData(record.encryptedPrivateKey, oldKey, record.iv, privateKey)) return false;
-    
-    record.salt = crypto::randomBytes(16);
-    record.iv = crypto::randomBytes(12);
+
+    auto salt = crypto::randomBytes(16);
+    if (salt.size() != 16) {
+        crypto::secureZero(privateKey.data(), privateKey.size());
+        return false;
+    }
     std::vector<uint8_t> newKey;
-    impl_->deriveKey(newPassword, record.salt, newKey, record.keyDerivationIterations);
-    impl_->encryptData(privateKey, newKey, record.iv, record.encryptedPrivateKey);
+    impl_->deriveKey(newPassword, salt, newKey, record.keyDerivationIterations);
+    std::vector<uint8_t> iv;
+    std::vector<uint8_t> encrypted;
+    if (!impl_->encryptData(privateKey, newKey, iv, encrypted)) {
+        crypto::secureZero(privateKey.data(), privateKey.size());
+        return false;
+    }
+    record.salt = std::move(salt);
+    record.iv = std::move(iv);
+    record.encryptedPrivateKey = std::move(encrypted);
     crypto::secureZero(privateKey.data(), privateKey.size());
     
     return impl_->saveToFile();
@@ -539,28 +582,31 @@ bool WalletDB::changePassword(const std::string& address, const std::string& old
 
 bool WalletDB::backup(const std::string& path, const std::string& password) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
+    if (!utils::lockFileToCurrentUser(impl_->dbPath)) return false;
     std::ifstream src(impl_->dbPath, std::ios::binary);
     if (!src) return false;
     std::vector<uint8_t> data((std::istreambuf_iterator<char>(src)), std::istreambuf_iterator<char>());
     src.close();
     
     auto salt = crypto::randomBytes(16);
+    if (salt.size() != 16) return false;
     auto key = crypto::deriveKey(password, salt);
     std::array<uint8_t, crypto::AES_KEY_SIZE> keyArr;
     std::memcpy(keyArr.data(), key.data(), keyArr.size());
     auto encrypted = crypto::encryptAES(data, keyArr);
+    if (encrypted.empty()) return false;
     
-    std::ofstream dst(path, std::ios::binary);
-    if (!dst) return false;
-    dst.write(reinterpret_cast<char*>(salt.data()), salt.size());
-    uint32_t encLen = encrypted.size();
-    dst.write(reinterpret_cast<char*>(&encLen), sizeof(encLen));
-    dst.write(reinterpret_cast<char*>(encrypted.data()), encrypted.size());
-    return true;
+    std::string bytes;
+    bytes.append(reinterpret_cast<const char*>(salt.data()), salt.size());
+    uint32_t encLen = static_cast<uint32_t>(encrypted.size());
+    bytes.append(reinterpret_cast<const char*>(&encLen), sizeof(encLen));
+    bytes.append(reinterpret_cast<const char*>(encrypted.data()), encrypted.size());
+    return utils::writeFileForCurrentUser(path, bytes);
 }
 
 bool WalletDB::restore(const std::string& path, const std::string& password) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
+    if (!utils::lockFileToCurrentUser(path)) return false;
     std::ifstream src(path, std::ios::binary);
     if (!src) return false;
     
@@ -578,11 +624,9 @@ bool WalletDB::restore(const std::string& path, const std::string& password) {
     auto decrypted = crypto::decryptAES(encrypted, keyArr);
     if (decrypted.empty()) return false; // authentication failed or corrupt
 
-    std::ofstream dst(impl_->dbPath, std::ios::binary);
-    if (!dst) return false;
-    dst.write(reinterpret_cast<char*>(decrypted.data()), decrypted.size());
-    dst.close();
-    
+    const std::string bytes(reinterpret_cast<const char*>(decrypted.data()), decrypted.size());
+    if (!utils::writeFileForCurrentUser(impl_->dbPath, bytes)) return false;
+
     return impl_->loadFromFile();
 }
 

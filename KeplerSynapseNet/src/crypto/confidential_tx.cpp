@@ -18,6 +18,7 @@ static void amountToScalar(uint64_t amount, unsigned char out[crypto_core_ed2551
 }
 
 std::vector<uint8_t> ConfidentialTx::getH() {
+    containForeignCryptoModules();
     const std::string seed = "SynapseNet_pedersen_H_v1";
     unsigned char hash[crypto_hash_sha512_BYTES];
     crypto_hash_sha512(hash, reinterpret_cast<const unsigned char*>(seed.data()), seed.size());
@@ -27,6 +28,7 @@ std::vector<uint8_t> ConfidentialTx::getH() {
 }
 
 std::vector<uint8_t> ConfidentialTx::generateBlindingFactor() {
+    containForeignCryptoModules();
     std::vector<uint8_t> r(crypto_core_ed25519_SCALARBYTES);
     crypto_core_ed25519_scalar_random(r.data());
     return r;
@@ -151,23 +153,28 @@ std::vector<uint8_t> ConfidentialTx::blindingSum(
     const std::vector<std::vector<uint8_t>>& blindingFactors,
     bool negate
 ) {
+    containForeignCryptoModules();
     unsigned char acc[crypto_core_ed25519_SCALARBYTES];
     std::memset(acc, 0, crypto_core_ed25519_SCALARBYTES);
 
     for (const auto& bf : blindingFactors) {
         if (bf.size() != crypto_core_ed25519_SCALARBYTES) {
+            sodium_memzero(acc, sizeof(acc));
             return std::vector<uint8_t>();
         }
         if (negate) {
             unsigned char neg[crypto_core_ed25519_SCALARBYTES];
             crypto_core_ed25519_scalar_negate(neg, bf.data());
             crypto_core_ed25519_scalar_add(acc, acc, neg);
+            sodium_memzero(neg, sizeof(neg));
         } else {
             crypto_core_ed25519_scalar_add(acc, acc, bf.data());
         }
     }
 
-    return std::vector<uint8_t>(acc, acc + crypto_core_ed25519_SCALARBYTES);
+    std::vector<uint8_t> sum(acc, acc + crypto_core_ed25519_SCALARBYTES);
+    sodium_memzero(acc, sizeof(acc));
+    return sum;
 }
 
 bool ConfidentialTx::rangeCheck(const PedersenCommitment& commitment) {
@@ -270,6 +277,16 @@ bool differenceIsIdentityOrPrimeOrder(const unsigned char point[crypto_core_ed25
     return crypto_core_ed25519_is_valid_point(point) == 1;
 }
 
+struct WipeBuf {
+    std::vector<uint8_t>& bytes;
+    explicit WipeBuf(std::vector<uint8_t>& held) : bytes(held) {}
+    ~WipeBuf() {
+        if (!bytes.empty()) sodium_memzero(bytes.data(), bytes.size());
+    }
+    WipeBuf(const WipeBuf&) = delete;
+    WipeBuf& operator=(const WipeBuf&) = delete;
+};
+
 } // namespace
 
 std::vector<uint8_t> ConfidentialTx::proveRange(uint64_t amount, const std::vector<uint8_t>& blinding) {
@@ -277,6 +294,7 @@ std::vector<uint8_t> ConfidentialTx::proveRange(uint64_t amount, const std::vect
     if (blinding.size() != crypto_core_ed25519_SCALARBYTES) {
         return {};
     }
+    containForeignCryptoModules();
     if (sodium_init() < 0) return {};
 
     std::vector<uint8_t> H = getH();
@@ -285,6 +303,7 @@ std::vector<uint8_t> ConfidentialTx::proveRange(uint64_t amount, const std::vect
 
     std::vector<std::vector<uint8_t>> bitC(64);
     std::vector<uint8_t> accR(crypto_core_ed25519_SCALARBYTES, 0);
+    WipeBuf holdAccR(accR);
     std::vector<uint8_t> twoPowR(crypto_core_ed25519_SCALARBYTES);
 
     std::vector<uint8_t> out;
@@ -293,11 +312,13 @@ std::vector<uint8_t> ConfidentialTx::proveRange(uint64_t amount, const std::vect
     for (int i = 0; i < 64; ++i) {
         uint64_t bit = (amount >> i) & 1ULL;
         std::vector<uint8_t> ri = generateBlindingFactor();
+        WipeBuf holdRi(ri);
         bitC[i] = commit(bit, ri).commitment;
         if (bitC[i].size() != crypto_core_ed25519_BYTES) return {};
 
         pow2Scalar(i, twoPowR.data());
         std::vector<uint8_t> weighted(crypto_core_ed25519_SCALARBYTES);
+        WipeBuf holdWeighted(weighted);
         crypto_core_ed25519_scalar_mul(weighted.data(), twoPowR.data(), ri.data());
         crypto_core_ed25519_scalar_add(accR.data(), accR.data(), weighted.data());
 
@@ -320,9 +341,11 @@ std::vector<uint8_t> ConfidentialTx::proveRange(uint64_t amount, const std::vect
     }
 
     std::vector<uint8_t> delta(crypto_core_ed25519_SCALARBYTES);
+    WipeBuf holdDelta(delta);
     crypto_core_ed25519_scalar_sub(delta.data(), blinding.data(), accR.data());
 
     std::vector<uint8_t> k = generateBlindingFactor();
+    WipeBuf holdK(k);
     std::vector<uint8_t> R(crypto_core_ed25519_BYTES);
     if (crypto_scalarmult_ed25519_base_noclamp(R.data(), k.data()) != 0) return {};
 
@@ -350,6 +373,7 @@ bool ConfidentialTx::verifyRange(const std::vector<uint8_t>& commitment, const s
     try {
     if (commitment.size() != crypto_core_ed25519_BYTES) return false;
     if (proof.size() < 4) return false;
+    containForeignCryptoModules();
     if (sodium_init() < 0) return false;
     const uint8_t* p = proof.data();
     const uint8_t* end = proof.data() + proof.size();
@@ -437,6 +461,7 @@ std::vector<uint8_t> ConfidentialTx::proveKnownAmount(
 ) {
     if (commitment.size() != crypto_core_ed25519_BYTES) return {};
     if (blinding.size() != crypto_core_ed25519_SCALARBYTES) return {};
+    containForeignCryptoModules();
     if (sodium_init() < 0) return {};
 
     unsigned char D[crypto_core_ed25519_BYTES];
@@ -452,6 +477,7 @@ std::vector<uint8_t> ConfidentialTx::proveKnownAmount(
     }
 
     std::vector<uint8_t> k = generateBlindingFactor();
+    WipeBuf holdK(k);
     std::vector<uint8_t> R(crypto_core_ed25519_BYTES);
     if (crypto_scalarmult_ed25519_base_noclamp(R.data(), k.data()) != 0) return {};
 
@@ -464,6 +490,7 @@ std::vector<uint8_t> ConfidentialTx::proveKnownAmount(
     }
     std::vector<uint8_t> c = hashToScalarLocal(cdata);
     std::vector<uint8_t> cr(crypto_core_ed25519_SCALARBYTES);
+    WipeBuf holdCr(cr);
     crypto_core_ed25519_scalar_mul(cr.data(), c.data(), blinding.data());
     std::vector<uint8_t> s(crypto_core_ed25519_SCALARBYTES);
     crypto_core_ed25519_scalar_sub(s.data(), k.data(), cr.data());
@@ -482,6 +509,7 @@ bool ConfidentialTx::verifyKnownAmount(
 ) {
     if (commitment.size() != crypto_core_ed25519_BYTES) return false;
     if (proof.size() != 64) return false;
+    containForeignCryptoModules();
     if (sodium_init() < 0) return false;
 
     unsigned char D[crypto_core_ed25519_BYTES];

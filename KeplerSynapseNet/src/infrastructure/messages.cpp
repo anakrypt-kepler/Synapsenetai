@@ -51,14 +51,6 @@ static uint16_t readU16(const uint8_t* p) {
     return p[0] | (p[1] << 8);
 }
 
-static uint64_t readVarInt(const uint8_t* p, size_t& offset) {
-    uint8_t first = p[offset++];
-    if (first < 0xfd) return first;
-    if (first == 0xfd) { uint16_t v = readU16(p + offset); offset += 2; return v; }
-    if (first == 0xfe) { uint32_t v = readU32(p + offset); offset += 4; return v; }
-    uint64_t v = readU64(p + offset); offset += 8; return v;
-}
-
 static constexpr uint64_t kMaxItemCount = 1000;
 static constexpr uint64_t kMaxStringBytes = 1024ull * 1024ull;
 static constexpr uint64_t kMaxScriptBytes = 1024ull * 1024ull;
@@ -111,13 +103,6 @@ static uint64_t safeReadVarInt(const uint8_t* p, size_t total, size_t& offset, b
     else value = readU64(p + offset);
     offset += extra;
     return value;
-}
-
-static std::string readString(const uint8_t* p, size_t& offset) {
-    uint64_t len = readVarInt(p, offset);
-    std::string s(reinterpret_cast<const char*>(p + offset), len);
-    offset += len;
-    return s;
 }
 
 static std::string safeReadString(const uint8_t* p, size_t total, size_t& offset, bool& ok,
@@ -971,22 +956,36 @@ std::vector<uint8_t> AlertMessage::serialize() const {
 
 AlertMessage AlertMessage::deserialize(const std::vector<uint8_t>& data) {
     AlertMessage m;
-    size_t offset = 0;
+    const size_t total = data.size();
     const uint8_t* p = data.data();
+    size_t offset = 0;
+    // version, relayUntil, expiration, id, cancel. A short header is refused
+    // before any cursor read.
+    if (p == nullptr || !fits(offset, total, 4 + 8 + 8 + 4 + 4)) return {};
     m.version = readU32(p + offset); offset += 4;
     m.relayUntil = readU64(p + offset); offset += 8;
     m.expiration = readU64(p + offset); offset += 8;
     m.id = readU32(p + offset); offset += 4;
     m.cancel = readU32(p + offset); offset += 4;
-    uint64_t cancelCount = readVarInt(p, offset);
-    for (uint64_t i = 0; i < cancelCount; i++) {
-        m.setCancel.push_back(readU32(p + offset)); offset += 4;
+    bool ok = true;
+    const uint64_t cancelCount = safeReadVarInt(p, total, offset, ok);
+    // Count is a run of u32 ids. Refuse it when that run does not fit, which
+    // also covers a count whose byte length would wrap.
+    if (!ok || offset > total || cancelCount > (total - offset) / 4) return {};
+    m.setCancel.reserve(static_cast<size_t>(cancelCount));
+    for (uint64_t i = 0; i < cancelCount; ++i) {
+        uint32_t cancelId = 0;
+        if (!readU32Checked(p, total, offset, cancelId)) return {};
+        m.setCancel.push_back(cancelId);
     }
-    m.minVer = readU32(p + offset); offset += 4;
-    m.maxVer = readU32(p + offset); offset += 4;
-    m.comment = readString(p, offset);
-    m.statusBar = readString(p, offset);
-    std::memcpy(m.signature.data(), p + offset, 64);
+    if (!readU32Checked(p, total, offset, m.minVer)) return {};
+    if (!readU32Checked(p, total, offset, m.maxVer)) return {};
+    // Same 1 MiB string cap as the other messages, and the unread remainder.
+    m.comment = safeReadString(p, total, offset, ok, kMaxStringBytes);
+    if (!ok) return {};
+    m.statusBar = safeReadString(p, total, offset, ok, kMaxStringBytes);
+    if (!ok) return {};
+    if (!readCopy(p, total, offset, m.signature.data(), m.signature.size())) return {};
     return m;
 }
 

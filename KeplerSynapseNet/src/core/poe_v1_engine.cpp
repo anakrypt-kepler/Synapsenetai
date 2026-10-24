@@ -585,7 +585,11 @@ PoeSubmitResult PoeV1Engine::submit(
             auto it = impl_->authorLastSubmit_.find(authorHex);
             if (it != impl_->authorLastSubmit_.end()) {
                 uint64_t last = it->second;
-                if (now > last && (now - last) < cfg.minSubmitIntervalSeconds) {
+                // Zero elapsed seconds is still inside the interval. A clock
+                // at or behind the last submit stays limited until time moves
+                // forward. Unsigned wrap would otherwise look already elapsed.
+                const uint64_t interval = cfg.minSubmitIntervalSeconds;
+                if (interval > 0 && (now <= last || (now - last) < interval)) {
                     res.ok = false;
                     res.error = "rate_limited";
                     return res;
@@ -629,7 +633,18 @@ PoeSubmitResult PoeV1Engine::submit(
         res.error = "pow_failed";
         return res;
     }
-    poe_v1::signKnowledgeEntryV1(entry, authorKey);
+    if (!poe_v1::signKnowledgeEntryV1(entry, authorKey)) {
+        try {
+            std::lock_guard<std::mutex> lock(impl_->mtx);
+            auto cur = impl_->db.get(ckeyPre);
+            if (!cur.empty() && cur.size() == 1 && cur[0] == 0x52) {
+                impl_->db.del(ckeyPre);
+            }
+        } catch (...) {}
+        res.ok = false;
+        res.error = "sign_failed";
+        return res;
+    }
     if (!entry.verifyAll(cfg.limits, &res.error)) {
         res.ok = false;
         return res;

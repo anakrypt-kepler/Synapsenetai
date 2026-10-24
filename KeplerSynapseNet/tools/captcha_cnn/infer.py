@@ -11,7 +11,7 @@ from model import IMG_H, IMG_W, CaptchaCRNN, decode_prediction
 
 
 def load_model(model_path):
-    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
     model = CaptchaCRNN()
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()

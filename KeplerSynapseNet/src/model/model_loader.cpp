@@ -15,6 +15,8 @@
 #include <sstream>
 #include <iomanip>
 #include <cctype>
+#include <cstdint>
+#include <limits>
 #include <sys/resource.h>
 #include <cstdlib>
 #include <mutex>
@@ -31,6 +33,56 @@ static constexpr size_t FALLBACK_DIM = 256;
 namespace {
 
 std::once_flag gLlamaLogOnce;
+
+// llama_tokenize takes int32 lengths. A size that does not fit is narrowed
+// to a negative length, and the vocab builder then copies that many bytes.
+bool fillLlamaTokens(const llama_vocab* vocab, const std::string& text,
+                     bool addSpecial, bool parseSpecial,
+                     std::vector<llama_token>& tokens) {
+    constexpr int32_t kIntMax = std::numeric_limits<int32_t>::max();
+    if (!vocab || text.size() > static_cast<size_t>(kIntMax)) {
+        tokens.clear();
+        return false;
+    }
+    const int32_t textLen = static_cast<int32_t>(text.size());
+    const size_t guess = text.size() + 16;
+    tokens.assign(guess, 0);
+    const int32_t cap = guess > static_cast<size_t>(kIntMax)
+        ? kIntMax
+        : static_cast<int32_t>(guess);
+    int32_t nTokens = llama_tokenize(vocab, text.c_str(), textLen,
+                                     tokens.data(), cap, addSpecial, parseSpecial);
+    if (nTokens == std::numeric_limits<int32_t>::min()) {
+        tokens.clear();
+        return false;
+    }
+    if (nTokens < 0) {
+        const int64_t need64 = -static_cast<int64_t>(nTokens);
+        if (need64 <= 0 || need64 > static_cast<int64_t>(kIntMax)) {
+            tokens.clear();
+            return false;
+        }
+        const int32_t need = static_cast<int32_t>(need64);
+        tokens.assign(static_cast<size_t>(need), 0);
+        nTokens = llama_tokenize(vocab, text.c_str(), textLen,
+                                 tokens.data(), need, addSpecial, parseSpecial);
+        if (nTokens < 0 || nTokens > need) {
+            tokens.clear();
+            return false;
+        }
+    } else if (nTokens > cap) {
+        tokens.clear();
+        return false;
+    }
+    tokens.resize(static_cast<size_t>(nTokens));
+    return true;
+}
+
+int32_t batchCountForLlama(size_t n) {
+    constexpr size_t kMax = static_cast<size_t>(std::numeric_limits<int32_t>::max());
+    if (n > kMax) n = kMax;
+    return static_cast<int32_t>(n);
+}
 
 void llamaLogCallback(ggml_log_level level, const char* text, void* user_data) {
     (void)user_data;
@@ -211,17 +263,112 @@ static std::string modelUrlForName(const std::string& name) {
     return {};
 }
 
+static bool directoryNameIsModels(const std::filesystem::path& part) {
+#ifdef _WIN32
+    const std::wstring wide = part.native();
+    if (wide.size() != 6) return false;
+    const wchar_t expect[] = L"models";
+    for (size_t i = 0; i < 6; ++i) {
+        wchar_t c = wide[i];
+        if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c - L'A' + L'a');
+        if (c != expect[i]) return false;
+    }
+    return true;
+#else
+    return part == "models";
+#endif
+}
+
+// llama opens every "<prefix>-%05d-of-%05d.gguf" sibling when metadata asks.
+static bool isLlamaSplitShardName(std::string name) {
+    for (char& c : name) {
+        const unsigned char u = static_cast<unsigned char>(c);
+        if (u >= 'A' && u <= 'Z') c = static_cast<char>(u - 'A' + 'a');
+    }
+    const std::string mark = "-of-";
+    const size_t of = name.rfind(mark);
+    if (of == std::string::npos || of < 6) return false;
+    if (name.size() < 5 || name.compare(name.size() - 5, 5, ".gguf") != 0) return false;
+    if (name[of - 6] != '-') return false;
+    for (size_t i = of - 5; i < of; ++i) {
+        if (name[i] < '0' || name[i] > '9') return false;
+    }
+    const size_t after = of + mark.size();
+    if (after + 5 + 5 != name.size()) return false;
+    for (size_t i = 0; i < 5; ++i) {
+        if (name[after + i] < '0' || name[after + i] > '9') return false;
+    }
+    return true;
+}
+
+std::string canonicalModelFileForLlama(const std::string& path) {
+    if (path.empty() || path.find('\0') != std::string::npos) return {};
+    try {
+        const std::filesystem::path raw(path);
+        std::error_code linkEc;
+        if (std::filesystem::is_symlink(raw, linkEc) && !linkEc) return {};
+        std::string filename = raw.filename().string();
+        if (isLlamaSplitShardName(filename)) return {};
+
+        std::error_code ec;
+        const std::filesystem::path canonical = std::filesystem::weakly_canonical(raw, ec);
+        if (ec || canonical.empty()) return {};
+        if (!std::filesystem::is_regular_file(canonical, ec) || ec) return {};
+        filename = canonical.filename().string();
+        if (isLlamaSplitShardName(filename)) return {};
+
+        std::filesystem::path modelsRoot;
+        for (std::filesystem::path walk = canonical.parent_path(); !walk.empty();) {
+            ec.clear();
+            if (directoryNameIsModels(walk.filename()) &&
+                std::filesystem::is_directory(walk, ec) && !ec) {
+                modelsRoot = walk;
+                break;
+            }
+            const std::filesystem::path parent = walk.parent_path();
+            if (parent.empty() || parent == walk) break;
+            walk = parent;
+        }
+        if (modelsRoot.empty()) return {};
+
+        const std::filesystem::path rel = canonical.lexically_relative(modelsRoot);
+        if (rel.empty() || rel == "." || rel == "..") return {};
+        for (const auto& part : rel) {
+            if (part == "..") return {};
+        }
+
+        std::ifstream in(canonical, std::ios::binary);
+        char magic[4] = {};
+        in.read(magic, 4);
+        if (!in || in.gcount() != 4 ||
+            magic[0] != 'G' || magic[1] != 'G' || magic[2] != 'U' || magic[3] != 'F') {
+            return {};
+        }
+        return canonical.string();
+    } catch (...) {
+        return {};
+    }
+}
+
 ModelLoader::ModelLoader() : impl_(std::make_unique<Impl>()) {}
 
 ModelLoader::~ModelLoader() { unload(); }
 
-bool ModelLoader::load(const std::string& path) {
+bool ModelLoader::load(const std::string& pathIn) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     
     if (impl_->state == ModelState::READY) unload();
     
     impl_->state = ModelState::LOADING;
     impl_->error.clear();
+
+    const std::string path = canonicalModelFileForLlama(pathIn);
+    if (path.empty()) {
+        impl_->error = "Refusing to map a file that is not a single GGUF inside the models directory";
+        impl_->state = ModelState::ERROR;
+        utils::Logger::error(impl_->error);
+        return false;
+    }
     
     // Check file existence
     if (!std::filesystem::exists(path)) {
@@ -278,6 +425,16 @@ bool ModelLoader::load(const std::string& path) {
     llama_backend_init();
     
     llama_model_params modelParams = llama_model_default_params();
+    modelParams.devices = nullptr;
+    modelParams.tensor_buft_overrides = nullptr;
+    modelParams.tensor_split = nullptr;
+    modelParams.progress_callback = nullptr;
+    modelParams.progress_callback_user_data = nullptr;
+    modelParams.kv_overrides = nullptr;
+    modelParams.use_mmap = true;
+    modelParams.use_direct_io = false;
+    // Default params use -1, which offloads every layer. Stay on the CPU.
+    modelParams.n_gpu_layers = 0;
     impl_->llamaModel = llama_model_load_from_file(path.c_str(), modelParams);
     if (!impl_->llamaModel) {
         std::ostringstream oss;
@@ -437,7 +594,7 @@ std::string ModelLoader::generate(const std::string& prompt, const GenerationPar
         return err;
     }
     
-    utils::Logger::debug("Generating text from prompt: " + prompt.substr(0, 50) + "...");
+    utils::Logger::debug("Generating text (" + std::to_string(prompt.size()) + " characters)");
     
     std::string response;
     generateStream(prompt, [&response](const std::string& token) {
@@ -484,18 +641,12 @@ void ModelLoader::generateStream(const std::string& prompt,
         if (mdl && ctx) {
             const llama_vocab* vocab = llama_model_get_vocab(mdl);
 
-            std::vector<llama_token> tokens(prompt.size() + 16);
-            int nTokens = llama_tokenize(vocab, prompt.c_str(), prompt.size(), tokens.data(), tokens.size(), true, true);
-            if (nTokens < 0) {
-                tokens.resize(static_cast<size_t>(-nTokens));
-                nTokens = llama_tokenize(vocab, prompt.c_str(), prompt.size(), tokens.data(), tokens.size(), true, true);
-            }
-            if (nTokens < 0) {
+            std::vector<llama_token> tokens;
+            if (!fillLlamaTokens(vocab, prompt, true, true, tokens)) {
                 callback("[Tokenization failed]");
                 impl_->generating = false;
                 return;
             }
-            tokens.resize(static_cast<size_t>(nTokens));
 
             llama_memory_t mem = llama_get_memory(ctx);
             if (mem) llama_memory_clear(mem, true);
@@ -505,8 +656,9 @@ void ModelLoader::generateStream(const std::string& prompt,
             if (nBatch == 0) nBatch = 512;
             uint32_t maxPromptTokens = nCtx;
             uint32_t minPromptTokens = std::min<uint32_t>(256, nCtx > 1 ? (nCtx - 1) : 0);
-            if (nCtx > params.maxTokens + 1) {
-                maxPromptTokens = nCtx - params.maxTokens - 1;
+            const uint64_t reserve = static_cast<uint64_t>(params.maxTokens) + 1;
+            if (static_cast<uint64_t>(nCtx) > reserve) {
+                maxPromptTokens = static_cast<uint32_t>(static_cast<uint64_t>(nCtx) - reserve);
             }
             if (maxPromptTokens < minPromptTokens) maxPromptTokens = minPromptTokens;
             if (maxPromptTokens > 0 && tokens.size() > maxPromptTokens) {
@@ -515,7 +667,9 @@ void ModelLoader::generateStream(const std::string& prompt,
 
             for (size_t i = 0; i < tokens.size();) {
                 size_t n = std::min<size_t>(static_cast<size_t>(nBatch), tokens.size() - i);
-                llama_batch batch = llama_batch_get_one(tokens.data() + i, static_cast<int32_t>(n));
+                const int32_t nPass = batchCountForLlama(n);
+                n = static_cast<size_t>(nPass);
+                llama_batch batch = llama_batch_get_one(tokens.data() + i, nPass);
                 int32_t rc = llama_decode(ctx, batch);
                 if (rc != 0) {
                     callback("[Decode failed]");
@@ -535,8 +689,8 @@ void ModelLoader::generateStream(const std::string& prompt,
                 llama_sampler_accept(sampler, newToken);
 
                 char buf[256];
-                int len = llama_token_to_piece(vocab, newToken, buf, sizeof(buf), 0, true);
-                if (len > 0) {
+                const int len = llama_token_to_piece(vocab, newToken, buf, static_cast<int32_t>(sizeof(buf)), 0, true);
+                if (len > 0 && static_cast<size_t>(len) <= sizeof(buf)) {
                     std::string tokenStr(buf, static_cast<size_t>(len));
                     callback(tokenStr);
                 }
@@ -570,18 +724,10 @@ std::vector<float> ModelLoader::getEmbedding(const std::string& text) {
     if (impl_->llamaModel && impl_->llamaCtx) {
         const llama_vocab* vocab = llama_model_get_vocab(impl_->llamaModel);
         
-        std::vector<llama_token> tokens(text.size() + 16);
-        int nTokens = llama_tokenize(vocab, text.c_str(), text.size(),
-                                      tokens.data(), tokens.size(), true, true);
-        if (nTokens < 0) {
-            tokens.resize(-nTokens);
-            nTokens = llama_tokenize(vocab, text.c_str(), text.size(),
-                                      tokens.data(), tokens.size(), true, true);
-        }
-        if (nTokens <= 0) {
+        std::vector<llama_token> tokens;
+        if (!fillLlamaTokens(vocab, text, true, true, tokens) || tokens.empty()) {
             return std::vector<float>(impl_->info.embeddingSize, 0.0f);
         }
-        tokens.resize(nTokens);
         
         llama_memory_t mem = llama_get_memory(impl_->llamaCtx);
         if (mem) {
@@ -597,7 +743,9 @@ std::vector<float> ModelLoader::getEmbedding(const std::string& text) {
 
         for (size_t i = 0; i < tokens.size();) {
             size_t n = std::min<size_t>(static_cast<size_t>(nBatch), tokens.size() - i);
-            llama_batch batch = llama_batch_get_one(tokens.data() + i, static_cast<int32_t>(n));
+            const int32_t nPass = batchCountForLlama(n);
+            n = static_cast<size_t>(nPass);
+            llama_batch batch = llama_batch_get_one(tokens.data() + i, nPass);
             if (llama_decode(impl_->llamaCtx, batch) != 0) {
                 return std::vector<float>(impl_->info.embeddingSize, 0.0f);
             }
@@ -605,8 +753,10 @@ std::vector<float> ModelLoader::getEmbedding(const std::string& text) {
         }
         
         float* emb = llama_get_embeddings(impl_->llamaCtx);
-        if (emb) {
-            int embSize = llama_model_n_embd(impl_->llamaModel);
+        const int32_t embIn = llama_model_n_embd(impl_->llamaModel);
+        const int32_t embOut = llama_model_n_embd_out(impl_->llamaModel);
+        const int32_t embSize = (embIn > 0 && embOut > 0) ? std::min(embIn, embOut) : 0;
+        if (emb && embSize > 0) {
             std::vector<float> embedding(emb, emb + embSize);
             
             float norm = 0.0f;
@@ -671,16 +821,8 @@ std::vector<uint32_t> ModelLoader::tokenize(const std::string& text) {
     if (impl_->llamaModel) {
         const llama_vocab* vocab = llama_model_get_vocab(impl_->llamaModel);
         
-        std::vector<llama_token> tokens(text.size() + 16);
-        int nTokens = llama_tokenize(vocab, text.c_str(), text.size(),
-                                      tokens.data(), tokens.size(), false, false);
-        if (nTokens < 0) {
-            tokens.resize(-nTokens);
-            nTokens = llama_tokenize(vocab, text.c_str(), text.size(),
-                                      tokens.data(), tokens.size(), false, false);
-        }
-        if (nTokens > 0) {
-            tokens.resize(nTokens);
+        std::vector<llama_token> tokens;
+        if (fillLlamaTokens(vocab, text, false, false, tokens) && !tokens.empty()) {
             std::vector<uint32_t> result(tokens.begin(), tokens.end());
             return result;
         }
@@ -724,10 +866,10 @@ std::string ModelLoader::detokenize(const std::vector<uint32_t>& tokens) {
         std::string result;
         char buf[128];
         for (uint32_t token : tokens) {
-            int len = llama_token_to_piece(vocab, static_cast<llama_token>(token), 
-                                            buf, sizeof(buf), 0, true);
-            if (len > 0) {
-                result.append(buf, len);
+            const int len = llama_token_to_piece(vocab, static_cast<llama_token>(token),
+                                            buf, static_cast<int32_t>(sizeof(buf)), 0, true);
+            if (len > 0 && static_cast<size_t>(len) <= sizeof(buf)) {
+                result.append(buf, static_cast<size_t>(len));
             }
         }
         return result;
@@ -745,13 +887,17 @@ uint32_t ModelLoader::tokenCount(const std::string& text) const {
     if (impl_->llamaModel) {
         const llama_vocab* vocab = llama_model_get_vocab(impl_->llamaModel);
         
-        std::vector<llama_token> tokens(text.size() + 16);
-        int nTokens = llama_tokenize(vocab, text.c_str(), text.size(),
-                                      tokens.data(), tokens.size(), false, false);
-        if (nTokens < 0) {
-            return static_cast<uint32_t>(-nTokens);
+        std::vector<llama_token> tokens;
+        if (!fillLlamaTokens(vocab, text, false, false, tokens)) {
+            const uint64_t approx = static_cast<uint64_t>(text.size() / 4) + 1;
+            return approx > std::numeric_limits<uint32_t>::max()
+                ? std::numeric_limits<uint32_t>::max()
+                : static_cast<uint32_t>(approx);
         }
-        return static_cast<uint32_t>(nTokens);
+        if (tokens.size() > std::numeric_limits<uint32_t>::max()) {
+            return std::numeric_limits<uint32_t>::max();
+        }
+        return static_cast<uint32_t>(tokens.size());
     }
 #endif
     return text.size() / 4 + 1;
@@ -904,9 +1050,9 @@ void ModelLoader::onError(std::function<void(const std::string&)> callback) {
 bool ModelLoader::validateModel(const std::string& path) {
     if (!std::filesystem::exists(path)) return false;
     std::ifstream f(path, std::ios::binary);
-    char magic[4];
+    char magic[4] = {};
     f.read(magic, 4);
-    return magic[0] == 'G' && magic[1] == 'G' && magic[2] == 'U' && magic[3] == 'F';
+    return f.gcount() == 4 && magic[0] == 'G' && magic[1] == 'G' && magic[2] == 'U' && magic[3] == 'F';
 }
 
 ModelFormat ModelLoader::detectFormat(const std::string& path) {

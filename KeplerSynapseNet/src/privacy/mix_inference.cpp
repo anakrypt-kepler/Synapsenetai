@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstring>
 #include <openssl/hmac.h>
+#include <openssl/crypto.h>
 
 namespace synapse {
 namespace privacy {
@@ -62,8 +63,9 @@ struct MixInference::Impl {
 
         unsigned int hlen = 0;
         unsigned char hmacOut[EVP_MAX_MD_SIZE];
+        crypto::containForeignCryptoModules();
         if (!HMAC(EVP_sha256(), key.data(), static_cast<int>(key.size()), result.data(), static_cast<int>(result.size()), hmacOut, &hlen)) {
-            // If HMAC fails, return unauthenticated ciphertext
+            OPENSSL_cleanse(hash.data(), hash.size());
             return result;
         }
         // Append 32-byte HMAC tag

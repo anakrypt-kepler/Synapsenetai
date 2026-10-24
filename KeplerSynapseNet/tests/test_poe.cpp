@@ -511,6 +511,7 @@ static void testStakeIdentityDeterministicValidators() {
     cfg.validatorsM = 1;
     cfg.validatorMode = "stake";
     cfg.validatorMinStakeAtoms = 100;
+    cfg.minSubmitIntervalSeconds = 0;
     engine.setConfig(cfg);
 
     auto skAuthor = makeSk(81);

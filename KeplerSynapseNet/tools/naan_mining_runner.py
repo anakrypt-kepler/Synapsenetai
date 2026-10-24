@@ -26,6 +26,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -34,6 +35,35 @@ from urllib3.exceptions import InsecureRequestWarning
 import warnings
 
 warnings.filterwarnings("ignore", category=InsecureRequestWarning)
+
+_ONION_ALPHABET = frozenset("abcdefghijklmnopqrstuvwxyz234567")
+
+
+def http_hostname(url: str) -> str:
+    """Hostname from the URL authority. Userinfo, path, and query do not count."""
+    try:
+        parts = urlsplit((url or "").strip())
+    except ValueError:
+        return ""
+    if parts.scheme not in ("http", "https"):
+        return ""
+    return (parts.hostname or "").lower().rstrip(".")
+
+
+def is_onion_http_url(url: str) -> bool:
+    """True only when the hostname's last label is onion.
+
+    The original URL is left unchanged, including an http onion address.
+    """
+    host = http_hostname(url)
+    labels = [part for part in host.split(".") if part]
+    if len(labels) < 2 or labels[-1] != "onion":
+        return False
+    address = labels[-2]
+    if not 1 <= len(address) <= 63:
+        return False
+    return all(ch in _ONION_ALPHABET for ch in address)
+
 
 DEFAULT_DATA_DIR = Path.home() / ".synapsenet_runner"
 TOR_SOCKS = "socks5h://127.0.0.1:9050"
@@ -224,7 +254,7 @@ class MiningEngine:
 
     def _detect_vulnerability(self, html: str, url: str, http_code: int,
                               ttfb_ms: float) -> tuple:
-        is_onion = ".onion" in url
+        is_onion = is_onion_http_url(url)
         body = html.lower()
 
         if 0 < ttfb_ms < 60 and len(html) < 15000 and (
@@ -254,7 +284,7 @@ class MiningEngine:
         return ("", "", "", 0.0)
 
     def _fetch(self, url: str, attempt: int) -> tuple:
-        is_onion = ".onion" in url
+        is_onion = is_onion_http_url(url)
         proxies = {"http": TOR_SOCKS, "https": TOR_SOCKS} if is_onion else None
         try:
             s = self._new_session()
@@ -269,7 +299,7 @@ class MiningEngine:
             return (0, "", 0.0, {})
 
     def fetch_with_retry(self, url: str, max_retries: int = 3) -> tuple:
-        is_onion = ".onion" in url
+        is_onion = is_onion_http_url(url)
         eff_retries = max(max_retries, 6) if is_onion else max_retries
         transport = "tor" if is_onion else "clearnet"
         self.last_bypass = BypassReport()
@@ -348,7 +378,7 @@ class MiningEngine:
 
         html, http_code = self.fetch_with_retry(url, 3)
         br = self.last_bypass
-        is_onion = ".onion" in url
+        is_onion = is_onion_http_url(url)
 
         if not html:
             via = "failed"

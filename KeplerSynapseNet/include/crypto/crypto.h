@@ -55,6 +55,11 @@ std::vector<uint8_t> decryptAES(const std::vector<uint8_t>& data, const std::arr
 std::vector<uint8_t> randomBytes(size_t count);
 void secureZero(void* ptr, size_t len);
 
+// Keep the built-in OpenSSL library. Do not load an ENGINE, and do not take
+// OPENSSL_CONF or a module path from the environment or the working directory.
+// libsodium randombytes stays the library default.
+void containForeignCryptoModules();
+
 std::string toHex(const uint8_t* data, size_t len);
 std::string toHex(const std::vector<uint8_t>& data);
 template<size_t N>

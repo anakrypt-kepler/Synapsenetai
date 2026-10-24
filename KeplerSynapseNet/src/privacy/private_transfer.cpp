@@ -33,11 +33,34 @@ std::string toHex(const std::vector<uint8_t>& v) {
     return crypto::toHex(v);
 }
 
+struct HoldBlind {
+    std::vector<uint8_t>& bytes;
+    explicit HoldBlind(std::vector<uint8_t>& held) : bytes(held) {}
+    ~HoldBlind() {
+        if (!bytes.empty()) sodium_memzero(bytes.data(), bytes.size());
+    }
+    HoldBlind(const HoldBlind&) = delete;
+    HoldBlind& operator=(const HoldBlind&) = delete;
+};
+
+struct HoldBlindList {
+    std::vector<std::vector<uint8_t>>& rows;
+    explicit HoldBlindList(std::vector<std::vector<uint8_t>>& held) : rows(held) {}
+    ~HoldBlindList() {
+        for (auto& row : rows) {
+            if (!row.empty()) sodium_memzero(row.data(), row.size());
+        }
+    }
+    HoldBlindList(const HoldBlindList&) = delete;
+    HoldBlindList& operator=(const HoldBlindList&) = delete;
+};
+
 void shuffleIndexPairs(size_t n,
                        size_t& signerIndex,
                        std::vector<std::vector<uint8_t>>& ringP,
                        std::vector<std::vector<uint8_t>>& ringC) {
     if (n == 0) return;
+    crypto::containForeignCryptoModules();
     unsigned char b[4];
     randombytes_buf(b, sizeof(b));
     uint32_t r = static_cast<uint32_t>(b[0]) |
@@ -72,6 +95,7 @@ std::vector<DecoyMember> pickDecoys(const std::vector<DecoyMember>& pool,
         DecoyMember d;
         d.P = randomValidPoint();
         auto blind = crypto::ConfidentialTx::generateBlindingFactor();
+        HoldBlind wipeBlind(blind);
         d.C = crypto::ConfidentialTx::commit(0, blind).commitment;
         sodium_memzero(blind.data(), blind.size());
         if (d.C.size() != crypto_core_ed25519_BYTES) continue;
@@ -85,6 +109,7 @@ std::vector<DecoyMember> pickDecoys(const std::vector<DecoyMember>& pool,
 
 void shuffleOutputs(std::vector<PrivateTxOut>& vouts) {
     if (vouts.size() < 2) return;
+    crypto::containForeignCryptoModules();
     for (size_t i = vouts.size(); i > 1; --i) {
         unsigned char b[4];
         randombytes_buf(b, sizeof(b));
@@ -122,10 +147,12 @@ std::vector<uint8_t> pointSum(const std::vector<std::vector<uint8_t>>& pts) {
 } // namespace
 
 std::vector<uint8_t> randomValidPoint() {
+    crypto::containForeignCryptoModules();
     std::vector<uint8_t> scalar(crypto_core_ed25519_SCALARBYTES);
     crypto_core_ed25519_scalar_random(scalar.data());
     std::vector<uint8_t> point(crypto_core_ed25519_BYTES);
     if (crypto_scalarmult_ed25519_base_noclamp(point.data(), scalar.data()) != 0) {
+        sodium_memzero(scalar.data(), scalar.size());
         throw std::runtime_error("failed to make decoy point");
     }
     sodium_memzero(scalar.data(), scalar.size());
@@ -164,6 +191,7 @@ bool mintOwnedOutput(const StealthAddress& self, uint64_t amountAtoms, OwnedOutp
     if (!self.hasKeys() || amountAtoms == 0) return false;
     StealthPayment pay;
     if (!self.createPayment(self.getViewPublicKey(), self.getSpendPublicKey(), amountAtoms, pay)) {
+        if (!pay.blinding.empty()) sodium_memzero(pay.blinding.data(), pay.blinding.size());
         return false;
     }
     out.oneTime = pay.oneTimeAddress;
@@ -173,7 +201,16 @@ bool mintOwnedOutput(const StealthAddress& self, uint64_t amountAtoms, OwnedOutp
     out.amountAtoms = amountAtoms;
     out.spent = false;
     out.spendScalar = self.deriveSpendingKey(pay.ephemeralPub);
-    return out.spendScalar.size() == crypto_core_ed25519_SCALARBYTES;
+    if (out.spendScalar.size() != crypto_core_ed25519_SCALARBYTES) {
+        if (!out.blinding.empty()) sodium_memzero(out.blinding.data(), out.blinding.size());
+        if (!out.spendScalar.empty()) sodium_memzero(out.spendScalar.data(), out.spendScalar.size());
+        if (!pay.blinding.empty()) sodium_memzero(pay.blinding.data(), pay.blinding.size());
+        out.blinding.clear();
+        out.spendScalar.clear();
+        return false;
+    }
+    if (!pay.blinding.empty()) sodium_memzero(pay.blinding.data(), pay.blinding.size());
+    return true;
 }
 
 bool buildPoeStealthCoinbase(const StealthAddress& self,
@@ -200,6 +237,7 @@ bool buildPoeStealthCoinbase(const StealthAddress& self,
 
     StealthPayment pay;
     if (!self.createPayment(self.getViewPublicKey(), self.getSpendPublicKey(), amountAtoms, pay)) {
+        if (!pay.blinding.empty()) sodium_memzero(pay.blinding.data(), pay.blinding.size());
         err = "stealth payment failed";
         return false;
     }
@@ -262,6 +300,7 @@ bool buildPrivateSend(const StealthAddress& self,
                       std::string& err) {
     result = PrivateSendResult{};
     err.clear();
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) {
         err = "sodium init failed";
         return false;
@@ -291,6 +330,7 @@ bool buildPrivateSend(const StealthAddress& self,
     }
 
     StealthPayment destPay;
+    HoldBlind wipeDestBlind(destPay.blinding);
     if (!self.createPayment(viewPub, spendPub, amountAtoms, destPay, recipKem)) {
         err = "destination payment failed";
         return false;
@@ -298,6 +338,7 @@ bool buildPrivateSend(const StealthAddress& self,
 
     result.changeAtoms = totalIn - amountAtoms;
     StealthPayment changePay;
+    HoldBlind wipeChangeBlind(changePay.blinding);
     bool hasChange = result.changeAtoms > 0;
     if (hasChange) {
         if (!self.createPayment(self.getViewPublicKey(), self.getSpendPublicKey(),
@@ -318,6 +359,7 @@ bool buildPrivateSend(const StealthAddress& self,
     shuffleOutputs(result.tx.vouts);
 
     std::vector<uint8_t> sumOutBlind(crypto_core_ed25519_SCALARBYTES, 0);
+    HoldBlind wipeSumOut(sumOutBlind);
     crypto_core_ed25519_scalar_add(sumOutBlind.data(), sumOutBlind.data(), destPay.blinding.data());
     if (hasChange) {
         crypto_core_ed25519_scalar_add(sumOutBlind.data(), sumOutBlind.data(), changePay.blinding.data());
@@ -325,8 +367,10 @@ bool buildPrivateSend(const StealthAddress& self,
 
     const size_t nIn = spendIdx.size();
     std::vector<std::vector<uint8_t>> rtilde(nIn);
+    HoldBlindList wipeRtilde(rtilde);
     std::vector<std::vector<uint8_t>> ctildes(nIn);
     std::vector<uint8_t> accR(crypto_core_ed25519_SCALARBYTES, 0);
+    HoldBlind wipeAccR(accR);
     for (size_t i = 0; i < nIn; ++i) {
         rtilde[i].assign(crypto_core_ed25519_SCALARBYTES, 0);
         if (i + 1 < nIn) {
@@ -368,6 +412,7 @@ bool buildPrivateSend(const StealthAddress& self,
             shuffleIndexPairs(vin.ringP.size(), signerIndex, vin.ringP, vin.ringC);
 
             std::vector<uint8_t> z(crypto_core_ed25519_SCALARBYTES);
+            HoldBlind wipeZ(z);
             crypto_core_ed25519_scalar_sub(z.data(), utxo.blinding.data(), rtilde[i].data());
 
             std::vector<std::vector<uint8_t>> ringOffset;

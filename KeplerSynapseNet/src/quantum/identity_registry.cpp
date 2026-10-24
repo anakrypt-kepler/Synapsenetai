@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <system_error>
 
 namespace synapse::quantum {
 
@@ -49,91 +50,9 @@ bool looksLikeValidIdentity(const std::string& id) {
     return true;
 }
 
-}
-
-IdentityRegistry::IdentityRegistry() = default;
-
-IdentityRegistry& IdentityRegistry::instance() {
-    static IdentityRegistry registry;
-    return registry;
-}
-
-void IdentityRegistry::setStoragePath(const std::string& path) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    storagePath_ = path;
-    loaded_ = false;
-    bindings_.clear();
-}
-
-bool IdentityRegistry::registerIdentity(const std::string& address, const std::string& identityId) {
-    if (address.empty() || !looksLikeValidIdentity(identityId)) return false;
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!loaded_) loadLocked();
-    auto it = bindings_.find(address);
-    if (it != bindings_.end()) {
-        return it->second == identityId;
-    }
-    bindings_[address] = identityId;
-    return persistLocked();
-}
-
-std::string IdentityRegistry::lookupIdentity(const std::string& address) const {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!loaded_) loadLocked();
-    auto it = bindings_.find(address);
-    return it == bindings_.end() ? std::string() : it->second;
-}
-
-bool IdentityRegistry::hasBinding(const std::string& address) const {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!loaded_) loadLocked();
-    return bindings_.find(address) != bindings_.end();
-}
-
-bool IdentityRegistry::verifyBinding(const std::string& address,
-                                     const std::vector<uint8_t>& envelopeBytes) const {
-    if (envelopeBytes.empty()) return false;
-    // Parse-only TOFU of identity ids. HybridSig AND-verify is the 5-arg
-    // overload (domain/payload/binding). Callers that only have a blob must
-    // have verified the trailer already (transfer does; votes do in Vote::verify).
-    std::string envelopeId;
-    if (!applicationSignatureIdentityId(envelopeBytes, envelopeId)) return false;
-
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!loaded_) loadLocked();
-    auto it = bindings_.find(address);
-    if (it == bindings_.end()) {
-        bindings_[address] = envelopeId;
-        persistLocked();
-        return true;
-    }
-    return it->second == envelopeId;
-}
-
-bool IdentityRegistry::verifyBinding(const std::string& address,
-                                     const std::string& domain,
-                                     const std::vector<uint8_t>& payload,
-                                     const std::vector<uint8_t>& binding,
-                                     const std::vector<uint8_t>& envelopeBytes) const {
-    if (!verifyApplicationPayload(domain, payload, binding, envelopeBytes)) return false;
-    return verifyBinding(address, envelopeBytes);
-}
-
-void IdentityRegistry::clear() {
-    std::lock_guard<std::mutex> lock(mtx_);
-    bindings_.clear();
-    loaded_ = true;
-    persistLocked();
-}
-
-bool IdentityRegistry::loadLocked() const {
-    loaded_ = true;
-    if (storagePath_.empty()) return true;
-    std::ifstream in(storagePath_);
-    if (!in) return true;
-    std::stringstream buf;
-    buf << in.rdbuf();
-    std::string text = buf.str();
+// Whole object or nothing. A skipped value, a missing close, or trailing
+// junk must not come back as a usable map.
+bool parseIdentityMap(const std::string& text, std::unordered_map<std::string, std::string>& out) {
     size_t i = 0;
     auto skipSpace = [&]() {
         while (i < text.size() && (text[i] == ' ' || text[i] == '\t' || text[i] == '\n' || text[i] == '\r')) ++i;
@@ -141,9 +60,10 @@ bool IdentityRegistry::loadLocked() const {
     skipSpace();
     if (i >= text.size() || text[i] != '{') return false;
     ++i;
+    bool closed = false;
     while (i < text.size()) {
         skipSpace();
-        if (i < text.size() && text[i] == '}') { ++i; break; }
+        if (i < text.size() && text[i] == '}') { ++i; closed = true; break; }
         if (i >= text.size() || text[i] != '"') return false;
         ++i;
         size_t keyStart = i;
@@ -168,14 +88,138 @@ bool IdentityRegistry::loadLocked() const {
         if (i >= text.size()) return false;
         std::string value = text.substr(valStart, i - valStart);
         ++i;
-        if (!key.empty() && looksLikeValidIdentity(value)) {
-            bindings_.emplace(std::move(key), std::move(value));
+        if (key.empty() || !looksLikeValidIdentity(value)) return false;
+        auto existing = out.find(key);
+        if (existing != out.end()) {
+            if (existing->second != value) return false;
+        } else {
+            out.emplace(std::move(key), std::move(value));
         }
         skipSpace();
         if (i < text.size() && text[i] == ',') { ++i; continue; }
-        if (i < text.size() && text[i] == '}') { ++i; break; }
+        if (i < text.size() && text[i] == '}') { ++i; closed = true; break; }
         return false;
     }
+    if (!closed) return false;
+    skipSpace();
+    return i == text.size();
+}
+
+}
+
+IdentityRegistry::IdentityRegistry() = default;
+
+IdentityRegistry& IdentityRegistry::instance() {
+    static IdentityRegistry registry;
+    return registry;
+}
+
+void IdentityRegistry::setStoragePath(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    storagePath_ = path;
+    loaded_ = false;
+    loadFailed_ = false;
+    bindings_.clear();
+}
+
+bool IdentityRegistry::registerIdentity(const std::string& address, const std::string& identityId) {
+    if (address.empty() || !looksLikeValidIdentity(identityId)) return false;
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (!loaded_ && !loadLocked()) return false;
+    if (loadFailed_) return false;
+    auto it = bindings_.find(address);
+    if (it != bindings_.end()) {
+        return it->second == identityId;
+    }
+    bindings_[address] = identityId;
+    return persistLocked();
+}
+
+std::string IdentityRegistry::lookupIdentity(const std::string& address) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (!loaded_) loadLocked();
+    if (loadFailed_) return {};
+    auto it = bindings_.find(address);
+    return it == bindings_.end() ? std::string() : it->second;
+}
+
+bool IdentityRegistry::hasBinding(const std::string& address) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (!loaded_) loadLocked();
+    if (loadFailed_) return false;
+    return bindings_.find(address) != bindings_.end();
+}
+
+bool IdentityRegistry::verifyBinding(const std::string& address,
+                                     const std::vector<uint8_t>& envelopeBytes) const {
+    if (envelopeBytes.empty()) return false;
+    // Parse-only TOFU of identity ids. HybridSig AND-verify is the 5-arg
+    // overload (domain/payload/binding). Callers that only have a blob must
+    // have verified the trailer already (transfer does; votes do in Vote::verify).
+    std::string envelopeId;
+    if (!applicationSignatureIdentityId(envelopeBytes, envelopeId)) return false;
+
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (!loaded_ && !loadLocked()) return false;
+    if (loadFailed_) return false;
+    auto it = bindings_.find(address);
+    if (it == bindings_.end()) {
+        bindings_[address] = envelopeId;
+        persistLocked();
+        return true;
+    }
+    return it->second == envelopeId;
+}
+
+bool IdentityRegistry::verifyBinding(const std::string& address,
+                                     const std::string& domain,
+                                     const std::vector<uint8_t>& payload,
+                                     const std::vector<uint8_t>& binding,
+                                     const std::vector<uint8_t>& envelopeBytes) const {
+    if (!verifyApplicationPayload(domain, payload, binding, envelopeBytes)) return false;
+    return verifyBinding(address, envelopeBytes);
+}
+
+void IdentityRegistry::clear() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    bindings_.clear();
+    loaded_ = true;
+    loadFailed_ = false;
+    persistLocked();
+}
+
+bool IdentityRegistry::loadLocked() const {
+    bindings_.clear();
+    loadFailed_ = false;
+    if (storagePath_.empty()) {
+        loaded_ = true;
+        return true;
+    }
+    std::ifstream in(storagePath_);
+    if (!in) {
+        std::error_code existsEc;
+        const bool present = std::filesystem::exists(storagePath_, existsEc);
+        // A missing file is a new registry. A file that cannot be read is not.
+        if (present && !existsEc) {
+            loadFailed_ = true;
+            return false;
+        }
+        loaded_ = true;
+        return true;
+    }
+    std::stringstream buf;
+    buf << in.rdbuf();
+    if (in.bad()) {
+        loadFailed_ = true;
+        return false;
+    }
+    std::unordered_map<std::string, std::string> parsed;
+    if (!parseIdentityMap(buf.str(), parsed)) {
+        loadFailed_ = true;
+        return false;
+    }
+    bindings_ = std::move(parsed);
+    loaded_ = true;
     return true;
 }
 

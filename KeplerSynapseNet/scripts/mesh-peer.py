@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import os
+import stat
 import socket
 import subprocess
 import threading
@@ -77,6 +78,7 @@ MSG_KEM_LABEL = b"synapse-node-msg-v3"
 MSG_PATH = os.path.join(STATE_DIR, "messages.jsonl")
 PEERS = {}
 PEERS_LOCK = threading.Lock()
+MSG_LOCK = threading.Lock()
 PEX_LOCK = threading.Lock()
 LAST_PEX_TS = 0.0
 PEX_LAST = {}
@@ -259,6 +261,27 @@ def load_poe():
     else:
         POE_PK_HEX = ""
         log("poe cell offline (mesh stays a mailbox)")
+
+
+def hex_message_id(mid):
+    # Same admission rule as libsynapsed NODE_MSG: 8-64 hex digits.
+    if not isinstance(mid, str) or len(mid) < 8 or len(mid) > 64:
+        return False
+    return all(c in "0123456789abcdefABCDEF" for c in mid)
+
+
+def message_id_stored(mid):
+    needle = '"id":"' + mid + '"'
+    try:
+        with open(MSG_PATH, "r") as f:
+            for line in f:
+                if needle in line:
+                    return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return False
 
 
 def poe_seen(kind, blob):
@@ -519,6 +542,228 @@ def load_or_build_avatar():
     log("avatar fallback 48x48 CC0 crop %d chars" % len(AVATAR_DATAURL))
 
 
+def lock_owner_only(path):
+    """Limit a regular file to the current user. False if that cannot be done."""
+    if os.name == "nt":
+        return _lock_owner_only_windows(path)
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+        return False
+    if hasattr(os, "geteuid") and st.st_uid != os.geteuid():
+        return False
+    try:
+        os.chmod(path, 0o600)
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+        return False
+    if hasattr(os, "geteuid") and st.st_uid != os.geteuid():
+        return False
+    return (st.st_mode & 0o777) == 0o600
+
+
+def _lock_owner_only_windows(path):
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    class SidAndAttributes(ctypes.Structure):
+        _fields_ = [("Sid", ctypes.c_void_p), ("Attributes", ctypes.c_uint32)]
+
+    class TokenUser(ctypes.Structure):
+        _fields_ = [("User", SidAndAttributes)]
+
+    class Trustee(ctypes.Structure):
+        _fields_ = [
+            ("pMultipleTrustee", ctypes.c_void_p),
+            ("MultipleTrusteeOperation", ctypes.c_uint32),
+            ("TrusteeForm", ctypes.c_uint32),
+            ("TrusteeType", ctypes.c_uint32),
+            ("ptstrName", ctypes.c_void_p),
+        ]
+
+    class ExplicitAccess(ctypes.Structure):
+        _fields_ = [
+            ("grfAccessPermissions", ctypes.c_uint32),
+            ("grfAccessMode", ctypes.c_uint32),
+            ("grfInheritance", ctypes.c_uint32),
+            ("Trustee", Trustee),
+        ]
+
+    k32.GetCurrentProcess.restype = ctypes.c_void_p
+    k32.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+    k32.GetFileAttributesW.restype = ctypes.c_uint32
+    attrs = k32.GetFileAttributesW(os.path.abspath(path))
+    if attrs == 0xFFFFFFFF or (attrs & 0x400) or (attrs & 0x10):
+        return False
+    k32.OpenProcessToken.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p)]
+    k32.OpenProcessToken.restype = ctypes.c_int
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    k32.CloseHandle.restype = ctypes.c_int
+    k32.GetTokenInformation.argtypes = [
+        ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32)
+    ]
+    k32.GetTokenInformation.restype = ctypes.c_int
+    adv.SetEntriesInAclW.argtypes = [
+        ctypes.c_ulong, ctypes.POINTER(ExplicitAccess), ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+    ]
+    adv.SetEntriesInAclW.restype = ctypes.c_ulong
+    adv.SetNamedSecurityInfoW.argtypes = [
+        ctypes.c_wchar_p, ctypes.c_int, ctypes.c_uint32,
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+    ]
+    adv.SetNamedSecurityInfoW.restype = ctypes.c_ulong
+    adv.GetNamedSecurityInfoW.argtypes = [
+        ctypes.c_wchar_p, ctypes.c_int, ctypes.c_uint32,
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+    ]
+    adv.GetNamedSecurityInfoW.restype = ctypes.c_ulong
+    adv.GetAclInformation.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int]
+    adv.GetAclInformation.restype = ctypes.c_int
+    adv.GetAce.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p)]
+    adv.GetAce.restype = ctypes.c_int
+    adv.EqualSid.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    adv.EqualSid.restype = ctypes.c_int
+    adv.GetSecurityDescriptorControl.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.c_uint32)
+    ]
+    adv.GetSecurityDescriptorControl.restype = ctypes.c_int
+    adv.LocalFree.argtypes = [ctypes.c_void_p]
+    adv.LocalFree.restype = ctypes.c_void_p
+
+    def current_sid():
+        token = ctypes.c_void_p()
+        if not k32.OpenProcessToken(k32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):
+            return None, None, None
+        needed = ctypes.c_uint32(0)
+        k32.GetTokenInformation(token, 1, None, 0, ctypes.byref(needed))
+        if needed.value == 0:
+            k32.CloseHandle(token)
+            return None, None, None
+        buf = ctypes.create_string_buffer(needed.value)
+        if not k32.GetTokenInformation(token, 1, buf, needed, ctypes.byref(needed)):
+            k32.CloseHandle(token)
+            return None, None, None
+        user = ctypes.cast(buf, ctypes.POINTER(TokenUser)).contents
+        return token, buf, user.User.Sid
+
+    token, sid_buf, sid = current_sid()
+    if not sid:
+        if token:
+            k32.CloseHandle(token)
+        return False
+    access = ExplicitAccess()
+    access.grfAccessPermissions = 0x1F01FF
+    access.grfAccessMode = 2
+    access.grfInheritance = 0
+    access.Trustee.TrusteeForm = 0
+    access.Trustee.TrusteeType = 1
+    access.Trustee.ptstrName = sid
+    new_acl = ctypes.c_void_p()
+    if adv.SetEntriesInAclW(1, ctypes.byref(access), None, ctypes.byref(new_acl)) != 0 or not new_acl.value:
+        if new_acl.value:
+            adv.LocalFree(new_acl)
+        k32.CloseHandle(token)
+        return False
+    name = ctypes.create_unicode_buffer(os.path.abspath(path))
+    set_ok = adv.SetNamedSecurityInfoW(name, 1, 0x4 | 0x80000000, None, None, new_acl, None) == 0
+    adv.LocalFree(new_acl)
+    k32.CloseHandle(token)
+    if not set_ok:
+        return False
+
+    class AclSize(ctypes.Structure):
+        _fields_ = [
+            ("AceCount", ctypes.c_uint32),
+            ("AclBytesInUse", ctypes.c_uint32),
+            ("AclBytesFree", ctypes.c_uint32),
+        ]
+
+    sd = ctypes.c_void_p()
+    dacl = ctypes.c_void_p()
+    if adv.GetNamedSecurityInfoW(name, 1, 0x4, None, None, ctypes.byref(dacl), None, ctypes.byref(sd)) != 0:
+        return False
+    try:
+        size = AclSize()
+        if not adv.GetAclInformation(dacl, ctypes.byref(size), ctypes.sizeof(size), 2):
+            return False
+        if size.AceCount != 1:
+            return False
+        ace = ctypes.c_void_p()
+        if not adv.GetAce(dacl, 0, ctypes.byref(ace)) or not ace.value:
+            return False
+        header = ctypes.cast(ace, ctypes.POINTER(ctypes.c_ubyte))
+        if header[0] != 0:
+            return False
+        mask = ctypes.cast(ctypes.c_void_p(ace.value + 4), ctypes.POINTER(ctypes.c_uint32))[0]
+        if (mask & 0x10003) != 0x10003:
+            return False
+        token2, buf2, sid2 = current_sid()
+        if not sid2 or not adv.EqualSid(sid2, ctypes.c_void_p(ace.value + 8)):
+            if token2:
+                k32.CloseHandle(token2)
+            return False
+        k32.CloseHandle(token2)
+        control = ctypes.c_uint16(0)
+        revision = ctypes.c_uint32(0)
+        if not adv.GetSecurityDescriptorControl(sd, ctypes.byref(control), ctypes.byref(revision)):
+            return False
+        return (control.value & 0x1000) != 0
+    finally:
+        if sd.value:
+            adv.LocalFree(sd)
+        # sid_buf and buf2 stay alive until EqualSid returns. Referenced to keep the buffer.
+        del sid_buf
+
+
+def write_owner_file(path, text):
+    tmp = path + ".privtmp"
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    fd = os.open(tmp, flags, 0o600)
+    try:
+        data = text.encode("utf-8")
+        view = memoryview(data)
+        while view:
+            wrote = os.write(fd, view)
+            if wrote <= 0:
+                raise OSError("short write")
+            view = view[wrote:]
+    except OSError:
+        os.close(fd)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+    os.close(fd)
+    if not lock_owner_only(tmp):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+    os.replace(tmp, path)
+    if not lock_owner_only(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return False
+    return True
+
+
 def load_or_make_box():
     global BOX_SK, BOX_PK_HEX
     if not HAS_NACL:
@@ -527,20 +772,25 @@ def load_or_make_box():
     path = os.path.join(STATE_DIR, "msgbox.key")
     sk = None
     if os.path.exists(path):
-        lines = [ln.strip() for ln in open(path) if ln.strip()]
-        if lines and len(lines[0]) == 64:
+        if not lock_owner_only(path):
+            log("msgbox file cannot be locked to the current user")
             try:
-                sk = PrivateKey(bytes.fromhex(lines[0]))
-            except Exception as e:
-                log("msgbox load fail: " + str(e))
+                os.remove(path)
+            except OSError:
+                return
+        else:
+            lines = [ln.strip() for ln in open(path) if ln.strip()]
+            if lines and len(lines[0]) == 64:
+                try:
+                    sk = PrivateKey(bytes.fromhex(lines[0]))
+                except Exception as e:
+                    log("msgbox load fail: " + type(e).__name__)
     if sk is None:
         sk = PrivateKey.generate()
         pkhex = sk.public_key.encode().hex()
-        tmp = path + ".tmp"
-        with open(tmp, "w") as f:
-            f.write(sk.encode().hex() + "\n" + pkhex + "\n")
-        os.replace(tmp, path)
-        os.chmod(path, 0o600)
+        if not write_owner_file(path, sk.encode().hex() + "\n" + pkhex + "\n"):
+            log("msgbox file cannot be locked to the current user")
+            return
         log("msgbox generated")
     BOX_SK = sk
     BOX_PK_HEX = sk.public_key.encode().hex()
@@ -702,25 +952,30 @@ def load_or_make_kem():
     sk = b""
     pk = b""
     if os.path.exists(path):
-        lines = [ln.strip() for ln in open(path) if ln.strip()]
-        if (
-            len(lines) >= 2
-            and len(lines[0]) == KEM_SK_LEN * 2
-            and len(lines[1]) == KEM_PK_LEN * 2
-        ):
+        if not lock_owner_only(path):
+            log("msgkem file cannot be locked to the current user")
             try:
-                sk = bytes.fromhex(lines[0])
-                pk = bytes.fromhex(lines[1])
-            except Exception:
-                log("msgkem load fail")
-                sk, pk = b"", b""
+                os.remove(path)
+            except OSError:
+                return
+        else:
+            lines = [ln.strip() for ln in open(path) if ln.strip()]
+            if (
+                len(lines) >= 2
+                and len(lines[0]) == KEM_SK_LEN * 2
+                and len(lines[1]) == KEM_PK_LEN * 2
+            ):
+                try:
+                    sk = bytes.fromhex(lines[0])
+                    pk = bytes.fromhex(lines[1])
+                except Exception:
+                    log("msgkem load fail")
+                    sk, pk = b"", b""
     if len(sk) != KEM_SK_LEN or len(pk) != KEM_PK_LEN:
         pk, sk = backend.keypair()
-        tmp = path + ".tmp"
-        with open(tmp, "w") as f:
-            f.write(sk.hex() + "\n" + pk.hex() + "\n")
-        os.replace(tmp, path)
-        os.chmod(path, 0o600)
+        if not write_owner_file(path, sk.hex() + "\n" + pk.hex() + "\n"):
+            log("msgkem file cannot be locked to the current user")
+            return
         log("msgkem generated")
     KEM_BACKEND = backend
     KEM_SK = sk
@@ -896,6 +1151,8 @@ class TorControl:
         key_path = os.path.join(STATE_DIR, "onion.key")
         key_spec = "NEW:ED25519-V3"
         if os.path.exists(key_path):
+            if not lock_owner_only(key_path):
+                raise RuntimeError("onion key file cannot be locked to the current user")
             key_spec = open(key_path).read().strip()
         ports = " Port=8333,127.0.0.1:%d Port=8332,127.0.0.1:%d" % (P2P_PORT, RPC_PORT)
         lines = self.cmd("ADD_ONION " + key_spec + ports)
@@ -912,9 +1169,8 @@ class TorControl:
         if not ok or not service:
             raise RuntimeError("ADD_ONION failed: " + repr(lines))
         if priv:
-            with open(key_path, "w") as f:
-                f.write(priv + "\n")
-            os.chmod(key_path, 0o600)
+            if not write_owner_file(key_path, priv + "\n"):
+                raise RuntimeError("onion key file cannot be locked to the current user")
         onion = service + ".onion"
         open(os.path.join(STATE_DIR, "session.onion"), "w").write(onion + "\n")
         return onion
@@ -1029,23 +1285,31 @@ def handle_p2p(conn, addr):
                     inner = json.loads(pt.decode("utf-8"))
                     text = str(inner.get("body", "") or "")
                     frm = onion_host(str(j.get("from") or inner.get("from") or ""))
-                    remember(frm, "msg")
-                    rec = {
-                        "peer": frm,
-                        "from": frm,
-                        "to": OWN_ONION,
-                        "dir": "in",
-                        "body": text,
-                        "ts": int(time.time() * 1000),
-                        "encrypted": True,
-                        "hybrid": hybrid,
-                    }
-                    with open(MSG_PATH, "a") as f:
-                        f.write(json.dumps(rec, separators=(",", ":")) + "\n")
-                    log(
-                        "NODE_MSG sealed ok from=%s bytes=%d hybrid=%s"
-                        % (frm, len(text), hybrid)
-                    )
+                    if not hex_message_id(ack_id):
+                        log("NODE_MSG drop id")
+                    else:
+                        with MSG_LOCK:
+                            if message_id_stored(ack_id):
+                                log("NODE_MSG duplicate")
+                            else:
+                                remember(frm, "msg")
+                                rec = {
+                                    "id": ack_id,
+                                    "peer": frm,
+                                    "from": frm,
+                                    "to": OWN_ONION,
+                                    "dir": "in",
+                                    "body": text,
+                                    "ts": int(time.time() * 1000),
+                                    "encrypted": True,
+                                    "hybrid": hybrid,
+                                }
+                                with open(MSG_PATH, "a") as f:
+                                    f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+                                log(
+                                    "NODE_MSG sealed ok from=%s bytes=%d hybrid=%s"
+                                    % (frm, len(text), hybrid)
+                                )
             except Exception as e:
                 log("NODE_MSG fail: " + type(e).__name__)
             conn.sendall(("MSG_ACK " + ack_id + "\n").encode("ascii"))

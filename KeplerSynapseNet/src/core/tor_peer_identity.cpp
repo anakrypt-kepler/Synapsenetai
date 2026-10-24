@@ -109,17 +109,33 @@ std::string formatPeerAddress(const std::string& host, uint16_t port) {
     return host + ":" + std::to_string(port);
 }
 
+bool peerHelloMatchesSocket(const std::string& socketAddress, const PeerHelloInfo& hello) {
+    const std::string host = toLowerAscii(socketAddress);
+    const bool socketOnion = isValidOnionHost(host);
+    const bool helloOnion = isValidOnionHost(hello.advertisedHost);
+    const bool loopback = host == "127.0.0.1" || host.rfind("127.", 0) == 0;
+    if (socketOnion && hello.transport == "clearnet") return false;
+    if (socketOnion && helloOnion && hello.advertisedHost != host) return false;
+    if (helloOnion && !socketOnion && !loopback) return false;
+    if (!socketOnion && !loopback &&
+        (hello.transport == "tor-onion" || hello.transport == "tor-socks")) {
+        return false;
+    }
+    return true;
+}
+
 PeerDisplayInfo selectPeerDisplayInfo(const std::string& rawAddress,
                                       uint16_t rawPort,
                                       const std::optional<PeerHelloInfo>& peerHello) {
     PeerDisplayInfo out;
     out.rawAddress = rawAddress;
     out.rawPort = rawPort;
-    out.transport = rawAddress.size() > 6 && rawAddress.substr(rawAddress.size() - 6) == ".onion"
-        ? "tor-onion"
-        : "clearnet";
+    const std::string rawHost = toLowerAscii(rawAddress);
+    const bool rawOnion = isValidOnionHost(rawHost);
+    out.transport = rawOnion ? "tor-onion" : "clearnet";
 
-    if (peerHello) {
+    const bool helloBound = peerHello && peerHelloMatchesSocket(rawAddress, *peerHello);
+    if (helloBound) {
         out.transport = normalizePeerTransport(peerHello->transport);
         if (out.transport.empty()) {
             out.transport = inferTransport(*peerHello);

@@ -30,17 +30,19 @@ DilithiumKeyPair Dilithium::generateKeyPair() {
         std::fprintf(stderr, "FATAL: Dilithium/ML-DSA-65 algorithm unavailable in liboqs\n");
         std::abort();
     }
-    std::vector<uint8_t> pub(sig->length_public_key);
-    std::vector<uint8_t> priv(sig->length_secret_key);
-    if (OQS_SIG_keypair(sig, pub.data(), priv.data()) != OQS_SUCCESS) {
+    // ML-DSA-65 only. A shorter parameter set must not be copied into the
+    // fixed 1952/4032 buffers and later treated as a real key.
+    if (sig->length_public_key != kp.publicKey.size() ||
+        sig->length_secret_key != kp.secretKey.size() ||
+        sig->length_signature != DILITHIUM_SIGNATURE_SIZE) {
+        OQS_SIG_free(sig);
+        return kp;
+    }
+    if (OQS_SIG_keypair(sig, kp.publicKey.data(), kp.secretKey.data()) != OQS_SUCCESS) {
         OQS_SIG_free(sig);
         std::fprintf(stderr, "FATAL: Dilithium key generation failed\n");
         std::abort();
     }
-    size_t copyPub = std::min(pub.size(), kp.publicKey.size());
-    size_t copyPriv = std::min(priv.size(), kp.secretKey.size());
-    std::memcpy(kp.publicKey.data(), pub.data(), copyPub);
-    std::memcpy(kp.secretKey.data(), priv.data(), copyPriv);
     OQS_SIG_free(sig);
 #endif
     return kp;
@@ -57,21 +59,30 @@ SignatureResult Dilithium::sign(const std::vector<uint8_t>& message,
         std::fprintf(stderr, "FATAL: Dilithium/ML-DSA-65 algorithm unavailable in liboqs\n");
         std::abort();
     }
-    std::vector<uint8_t> signed_msg(DILITHIUM_SIGNATURE_SIZE);
-    size_t sig_len = 0;
-    if (sig->length_signature <= signed_msg.size() &&
-        OQS_SIG_sign(sig, signed_msg.data(), &sig_len, message.data(), message.size(), secretKey.data()) == OQS_SUCCESS) {
-        if (sig_len < signed_msg.size()) {
-            std::fill(signed_msg.begin() + static_cast<std::ptrdiff_t>(sig_len), signed_msg.end(), 0);
-        }
-        result.signature = std::move(signed_msg);
-        result.success = true;
+    if (sig->length_public_key != DILITHIUM_PUBLIC_KEY_SIZE ||
+        sig->length_secret_key != DILITHIUM_SECRET_KEY_SIZE ||
+        sig->length_signature != DILITHIUM_SIGNATURE_SIZE) {
         OQS_SIG_free(sig);
+        result.success = false;
         return result;
     }
+    std::vector<uint8_t> signed_msg(DILITHIUM_SIGNATURE_SIZE);
+    size_t sig_len = 0;
+    if (OQS_SIG_sign(sig, signed_msg.data(), &sig_len, message.data(), message.size(), secretKey.data()) != OQS_SUCCESS) {
+        OQS_SIG_free(sig);
+        std::fprintf(stderr, "FATAL: Dilithium signing failed\n");
+        std::abort();
+    }
     OQS_SIG_free(sig);
-    std::fprintf(stderr, "FATAL: Dilithium signing failed\n");
-    std::abort();
+    // Do not zero-pad a shorter signature up to the wire size. That padding
+    // used to be stripped again in verify and accepted as ML-DSA-65.
+    if (sig_len != DILITHIUM_SIGNATURE_SIZE) {
+        result.success = false;
+        return result;
+    }
+    result.signature = std::move(signed_msg);
+    result.success = true;
+    return result;
 #else
     (void)message; (void)secretKey;
     result.success = false;
@@ -91,9 +102,16 @@ bool Dilithium::verify(const std::vector<uint8_t>& message,
         std::fprintf(stderr, "FATAL: Dilithium/ML-DSA-65 algorithm unavailable in liboqs\n");
         std::abort();
     }
-    const size_t verifyLen = std::min(signature.size(), sig->length_signature);
+    // Exact ML-DSA-65 lengths. Passing a shorter liboqs length used to drop
+    // the tail of this buffer and accept a different parameter set.
+    if (sig->length_public_key != publicKey.size() ||
+        sig->length_secret_key != DILITHIUM_SECRET_KEY_SIZE ||
+        sig->length_signature != signature.size()) {
+        OQS_SIG_free(sig);
+        return false;
+    }
     bool ok = OQS_SIG_verify(sig, message.data(), message.size(),
-                              signature.data(), verifyLen, publicKey.data()) == OQS_SUCCESS;
+                              signature.data(), signature.size(), publicKey.data()) == OQS_SUCCESS;
     OQS_SIG_free(sig);
     return ok;
 #else

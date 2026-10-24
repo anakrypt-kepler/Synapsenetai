@@ -8,7 +8,6 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
-#include <algorithm>
 
 namespace synapse {
 namespace quantum {
@@ -30,17 +29,19 @@ SphincsKeyPair Sphincs::generateKeyPair() {
         std::fprintf(stderr, "FATAL: SPHINCS+/SLH-DSA algorithm unavailable in liboqs\n");
         std::abort();
     }
-    std::vector<uint8_t> pub(sig->length_public_key);
-    std::vector<uint8_t> priv(sig->length_secret_key);
-    if (OQS_SIG_keypair(sig, pub.data(), priv.data()) != OQS_SUCCESS) {
+    // SLH-DSA-SHA2-128s wire sizes only. Do not copy a shorter parameter set
+    // into the fixed key buffers.
+    if (sig->length_public_key != kp.publicKey.size() ||
+        sig->length_secret_key != kp.secretKey.size() ||
+        sig->length_signature != SPHINCS_SIGNATURE_SIZE) {
+        OQS_SIG_free(sig);
+        return kp;
+    }
+    if (OQS_SIG_keypair(sig, kp.publicKey.data(), kp.secretKey.data()) != OQS_SUCCESS) {
         OQS_SIG_free(sig);
         std::fprintf(stderr, "FATAL: SPHINCS+ key generation failed\n");
         std::abort();
     }
-    const size_t copyPub = std::min(pub.size(), kp.publicKey.size());
-    const size_t copyPriv = std::min(priv.size(), kp.secretKey.size());
-    std::memcpy(kp.publicKey.data(), pub.data(), copyPub);
-    std::memcpy(kp.secretKey.data(), priv.data(), copyPriv);
     OQS_SIG_free(sig);
 #endif
     return kp;
@@ -57,21 +58,28 @@ SignatureResult Sphincs::sign(const std::vector<uint8_t>& message,
         std::fprintf(stderr, "FATAL: SPHINCS+/SLH-DSA algorithm unavailable in liboqs\n");
         std::abort();
     }
-    std::vector<uint8_t> signature(SPHINCS_SIGNATURE_SIZE);
-    size_t signatureLen = 0;
-    if (sig->length_signature <= signature.size() &&
-        OQS_SIG_sign(sig, signature.data(), &signatureLen, message.data(), message.size(), secretKey.data()) == OQS_SUCCESS) {
-        if (signatureLen < signature.size()) {
-            std::fill(signature.begin() + static_cast<std::ptrdiff_t>(signatureLen), signature.end(), 0);
-        }
-        result.signature = std::move(signature);
-        result.success = true;
+    if (sig->length_public_key != SPHINCS_PUBLIC_KEY_SIZE ||
+        sig->length_secret_key != SPHINCS_SECRET_KEY_SIZE ||
+        sig->length_signature != SPHINCS_SIGNATURE_SIZE) {
         OQS_SIG_free(sig);
+        result.success = false;
         return result;
     }
+    std::vector<uint8_t> signature(SPHINCS_SIGNATURE_SIZE);
+    size_t signatureLen = 0;
+    if (OQS_SIG_sign(sig, signature.data(), &signatureLen, message.data(), message.size(), secretKey.data()) != OQS_SUCCESS) {
+        OQS_SIG_free(sig);
+        std::fprintf(stderr, "FATAL: SPHINCS+ signing failed\n");
+        std::abort();
+    }
     OQS_SIG_free(sig);
-    std::fprintf(stderr, "FATAL: SPHINCS+ signing failed\n");
-    std::abort();
+    if (signatureLen != SPHINCS_SIGNATURE_SIZE) {
+        result.success = false;
+        return result;
+    }
+    result.signature = std::move(signature);
+    result.success = true;
+    return result;
 #else
     (void)message; (void)secretKey;
     result.success = false;
@@ -91,9 +99,16 @@ bool Sphincs::verify(const std::vector<uint8_t>& message,
         std::fprintf(stderr, "FATAL: SPHINCS+/SLH-DSA algorithm unavailable in liboqs\n");
         std::abort();
     }
-    const size_t verifyLen = std::min(signature.size(), sig->length_signature);
+    // Exact SLH-DSA-SHA2-128s lengths. A shorter signature must not verify
+    // by passing only the algorithm's prefix of this buffer.
+    if (sig->length_public_key != publicKey.size() ||
+        sig->length_secret_key != SPHINCS_SECRET_KEY_SIZE ||
+        sig->length_signature != signature.size()) {
+        OQS_SIG_free(sig);
+        return false;
+    }
     bool ok = OQS_SIG_verify(sig, message.data(), message.size(),
-                              signature.data(), verifyLen, publicKey.data()) == OQS_SUCCESS;
+                              signature.data(), signature.size(), publicKey.data()) == OQS_SUCCESS;
     OQS_SIG_free(sig);
     return ok;
 #else

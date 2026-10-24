@@ -1,9 +1,11 @@
 {
   "identifier": "default",
-  "description": "Main window: core IPC plus native file dialogs (avatar, GGUF, wallet import).",
+  "description": "Main window: core IPC and native file dialogs. Tray creation and tray icon directories are denied so the renderer cannot choose a path for icon files.",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "dialog:default"
+    "dialog:default",
+    "core:tray:deny-new",
+    "core:tray:deny-set-temp-dir-path"
   ]
 }

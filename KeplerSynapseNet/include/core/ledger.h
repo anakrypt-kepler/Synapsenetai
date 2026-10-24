@@ -51,6 +51,8 @@ struct Event {
 constexpr uint32_t BLOCK_VERSION_LEGACY = 1;
 constexpr uint32_t BLOCK_VERSION_PQ = 2;
 constexpr uint64_t BLOCK_PQ_MANDATORY_HEIGHT = 1'000'000ULL;
+// Block::deserialize refuses a larger event list. Store paths use the same cap.
+constexpr uint32_t MAX_EVENTS_PER_BLOCK = 1000;
 
 struct Block {
     uint32_t version = BLOCK_VERSION_LEGACY;

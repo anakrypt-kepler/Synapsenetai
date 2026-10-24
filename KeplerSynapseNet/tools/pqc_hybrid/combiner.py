@@ -150,6 +150,9 @@ def and_mode_accepts(classic_ok: bool, pqc_ok: bool, layout: str = "canonical") 
 
 
 def and_verify(classic_ok: bool, pqc_ok: bool, signature: bytes) -> bool:
+    """AND-mode accepts only a 64-byte Ed25519 half plus a 3309-byte ML-DSA-65 half."""
+    if len(signature) != CLASSIC_SIGNATURE_SIZE + ML_DSA_65_SIGNATURE_SIZE:
+        return False
     if not both_halves_present(signature):
         return False
     return bool(classic_ok) and bool(pqc_ok)

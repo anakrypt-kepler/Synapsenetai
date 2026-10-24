@@ -1,5 +1,7 @@
 #include "crypto/crypto.h"
 #include <cstring>
+#include <cstdlib>
+#include <mutex>
 #include <random>
 #include <algorithm>
 #include <openssl/evp.h>
@@ -7,6 +9,12 @@
 #include <openssl/rand.h>
 #include <openssl/err.h>
 #include <openssl/crypto.h>
+#include <sodium.h>
+
+#if defined(_WIN32)
+extern "C" __declspec(dllimport) int __stdcall SetEnvironmentVariableA(
+    const char* name, const char* value);
+#endif
 
 #ifdef SYNAPSE_USE_SECP256K1
 #include <secp256k1.h>
@@ -17,6 +25,49 @@
 
 namespace synapse {
 namespace crypto {
+
+namespace {
+
+void dropProcessEnv(const char* name) {
+#if defined(_WIN32)
+    _putenv_s(name, "");
+    SetEnvironmentVariableA(name, nullptr);
+#else
+    unsetenv(name);
+#endif
+}
+
+} // namespace
+
+void containForeignCryptoModules() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        // A config file can name an ENGINE or a provider module. Paths come
+        // from these variables or from a relative entry in that file.
+        dropProcessEnv("OPENSSL_CONF");
+        dropProcessEnv("OPENSSL_MODULES");
+        dropProcessEnv("OPENSSL_ENGINES");
+
+        uint64_t flags = 0;
+#if defined(OPENSSL_INIT_NO_LOAD_CONFIG)
+        flags |= static_cast<uint64_t>(OPENSSL_INIT_NO_LOAD_CONFIG);
+#endif
+#if defined(OPENSSL_INIT_ADD_ALL_CIPHERS)
+        flags |= static_cast<uint64_t>(OPENSSL_INIT_ADD_ALL_CIPHERS);
+#endif
+#if defined(OPENSSL_INIT_ADD_ALL_DIGESTS)
+        flags |= static_cast<uint64_t>(OPENSSL_INIT_ADD_ALL_DIGESTS);
+#endif
+        // No OPENSSL_INIT_ENGINE_* flag and no provider path. The built-in
+        // default library stays; algorithms are not swapped.
+        if (OPENSSL_init_crypto(flags, nullptr) != 1) {
+            ERR_clear_error();
+        }
+        // Library default randombytes. Do not install a replacement that
+        // reads a file or the process heap.
+        (void)sodium_init();
+    });
+}
 
 static inline uint32_t rotr32(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
 static inline uint32_t ch(uint32_t x, uint32_t y, uint32_t z) { return (x & y) ^ (~x & z); }
@@ -120,6 +171,7 @@ std::string sha256Hex(const std::string& data) {
 }
 
 Hash256 ripemd160(const uint8_t* data, size_t len) {
+    containForeignCryptoModules();
     Hash256 hash{};
     // Use OpenSSL EVP API to compute RIPEMD-160 digest (20 bytes)
     unsigned char digest[EVP_MAX_MD_SIZE];
@@ -159,6 +211,7 @@ Hash256 hash160Func(const uint8_t* data, size_t len) {
 }
 
 Hash512 sha512(const uint8_t* data, size_t len) {
+    containForeignCryptoModules();
     Hash512 out{};
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int digestLen = 0;
@@ -185,21 +238,48 @@ Hash512 sha512(const uint8_t* data, size_t len) {
 }
 
 static std::mutex& secpMtx() { static std::mutex m; return m; }
-static secp256k1_context* secpCtx() {
+
+static secp256k1_context* signingCtx() {
     static secp256k1_context* ctx = secp256k1_context_create(
         SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
     return ctx;
 }
 
+static secp256k1_context* verifyCtx() {
+    static secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
+    return ctx;
+}
+
+static bool randomizeSigningContext(secp256k1_context* ctx) {
+    if (ctx == nullptr) return false;
+    unsigned char blinding[32];
+    if (RAND_bytes(blinding, static_cast<int>(sizeof(blinding))) != 1) {
+        OPENSSL_cleanse(blinding, sizeof(blinding));
+        ERR_clear_error();
+        return false;
+    }
+    const int ok = secp256k1_context_randomize(ctx, blinding);
+    OPENSSL_cleanse(blinding, sizeof(blinding));
+    return ok == 1;
+}
+
 KeyPair generateKeyPair() {
+    containForeignCryptoModules();
     KeyPair kp;
     {
         std::lock_guard<std::mutex> lock(secpMtx());
-        auto* ctx = secpCtx();
+        auto* ctx = signingCtx();
+        if (!randomizeSigningContext(ctx)) {
+            OPENSSL_cleanse(kp.privateKey.data(), kp.privateKey.size());
+            kp.publicKey.fill(0);
+            return kp;
+        }
         for (;;) {
             if (1 != RAND_bytes(kp.privateKey.data(), PRIVATE_KEY_SIZE)) {
-                kp.privateKey.fill(0);
-                break;
+                OPENSSL_cleanse(kp.privateKey.data(), kp.privateKey.size());
+                kp.publicKey.fill(0);
+                ERR_clear_error();
+                return kp;
             }
             if (secp256k1_ec_seckey_verify(ctx, kp.privateKey.data())) break;
         }
@@ -212,7 +292,12 @@ KeyPair keyPairFromSeed(const Hash256& seed) {
     KeyPair kp;
     {
         std::lock_guard<std::mutex> lock(secpMtx());
-        auto* ctx = secpCtx();
+        auto* ctx = signingCtx();
+        if (!randomizeSigningContext(ctx)) {
+            OPENSSL_cleanse(kp.privateKey.data(), kp.privateKey.size());
+            kp.publicKey.fill(0);
+            return kp;
+        }
         Hash256 cur = seed;
         for (int i = 0; i < 1000; ++i) {
             std::memcpy(kp.privateKey.data(), cur.data(), PRIVATE_KEY_SIZE);
@@ -226,8 +311,12 @@ KeyPair keyPairFromSeed(const Hash256& seed) {
 
 PublicKey derivePublicKey(const PrivateKey& privateKey) {
     std::lock_guard<std::mutex> lock(secpMtx());
-    auto* ctx = secpCtx();
+    auto* ctx = signingCtx();
     PublicKey out{};
+    if (!randomizeSigningContext(ctx)) {
+        out.fill(0);
+        return out;
+    }
     secp256k1_pubkey pub{};
     if (!secp256k1_ec_pubkey_create(ctx, &pub, privateKey.data())) {
         out.fill(0);
@@ -243,8 +332,12 @@ PublicKey derivePublicKey(const PrivateKey& privateKey) {
 
 Signature sign(const Hash256& hash, const PrivateKey& privateKey) {
     std::lock_guard<std::mutex> lock(secpMtx());
-    auto* ctx = secpCtx();
+    auto* ctx = signingCtx();
     Signature out{};
+    if (!randomizeSigningContext(ctx)) {
+        out.fill(0);
+        return out;
+    }
     if (!secp256k1_ec_seckey_verify(ctx, privateKey.data())) {
         out.fill(0);
         return out;
@@ -264,7 +357,8 @@ Signature sign(const Hash256& hash, const PrivateKey& privateKey) {
 
 bool verify(const Hash256& hash, const Signature& signature, const PublicKey& publicKey) {
     std::lock_guard<std::mutex> lock(secpMtx());
-    auto* ctx = secpCtx();
+    auto* ctx = verifyCtx();
+    if (ctx == nullptr) return false;
     secp256k1_pubkey pub{};
     if (!secp256k1_ec_pubkey_parse(ctx, &pub, publicKey.data(), publicKey.size())) return false;
     secp256k1_ecdsa_signature sig{};
@@ -273,13 +367,25 @@ bool verify(const Hash256& hash, const Signature& signature, const PublicKey& pu
     return secp256k1_ecdsa_verify(ctx, &sig, hash.data(), &pub) == 1;
 }
 
+static bool gcmIvAllZero(const uint8_t* iv, size_t len) {
+    if (iv == nullptr || len == 0) return true;
+    uint8_t acc = 0;
+    for (size_t i = 0; i < len; ++i) acc = static_cast<uint8_t>(acc | iv[i]);
+    return acc == 0;
+}
+
 std::vector<uint8_t> encryptAES(const std::vector<uint8_t>& data, const std::array<uint8_t, AES_KEY_SIZE>& key) {
-    // AES-256-GCM authenticated encryption
+    containForeignCryptoModules();
+    // AES-256-GCM authenticated encryption. A 12-byte IV of all zeros is refused.
     const size_t GCM_IV_SIZE = 12;
     const size_t TAG_SIZE = 16;
 
     std::vector<uint8_t> iv(GCM_IV_SIZE);
     if (1 != RAND_bytes(iv.data(), (int)GCM_IV_SIZE)) return {};
+    if (gcmIvAllZero(iv.data(), iv.size())) {
+        if (1 != RAND_bytes(iv.data(), (int)GCM_IV_SIZE)) return {};
+    }
+    if (gcmIvAllZero(iv.data(), iv.size())) return {};
 
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
     if (!ctx) return {};
@@ -327,11 +433,13 @@ std::vector<uint8_t> encryptAES(const std::vector<uint8_t>& data, const std::arr
 }
 
 std::vector<uint8_t> decryptAES(const std::vector<uint8_t>& data, const std::array<uint8_t, AES_KEY_SIZE>& key) {
+    containForeignCryptoModules();
     const size_t GCM_IV_SIZE = 12;
     const size_t TAG_SIZE = 16;
     if (data.size() < GCM_IV_SIZE + TAG_SIZE) return {};
 
     const uint8_t* iv = data.data();
+    if (gcmIvAllZero(iv, GCM_IV_SIZE)) return {};
     const uint8_t* tag = data.data() + data.size() - TAG_SIZE;
     const uint8_t* ciphertext = data.data() + GCM_IV_SIZE;
     size_t ciphertext_len = data.size() - GCM_IV_SIZE - TAG_SIZE;
@@ -353,21 +461,26 @@ std::vector<uint8_t> decryptAES(const std::vector<uint8_t>& data, const std::arr
     int len = 0;
     if (ciphertext_len > 0) {
         if (1 != EVP_DecryptUpdate(ctx, plaintext.data(), &len, ciphertext, (int)ciphertext_len)) {
+            if (!plaintext.empty()) OPENSSL_cleanse(plaintext.data(), plaintext.size());
             EVP_CIPHER_CTX_free(ctx);
+            ERR_clear_error();
             return {};
         }
     }
     int plaintext_len = len;
 
     if (1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, (int)TAG_SIZE, (void*)tag)) {
+        if (!plaintext.empty()) OPENSSL_cleanse(plaintext.data(), plaintext.size());
         EVP_CIPHER_CTX_free(ctx);
+        ERR_clear_error();
         return {};
     }
 
     int ret = EVP_DecryptFinal_ex(ctx, plaintext.data() + len, &len);
     EVP_CIPHER_CTX_free(ctx);
     if (ret <= 0) {
-        // authentication failed
+        if (!plaintext.empty()) OPENSSL_cleanse(plaintext.data(), plaintext.size());
+        ERR_clear_error();
         return {};
     }
     plaintext_len += len;
@@ -376,13 +489,20 @@ std::vector<uint8_t> decryptAES(const std::vector<uint8_t>& data, const std::arr
 }
 
 std::vector<uint8_t> randomBytes(size_t count) {
+    containForeignCryptoModules();
     std::vector<uint8_t> bytes(count);
     if (count == 0) return bytes;
-    if (1 != RAND_bytes(bytes.data(), (int)count)) return {};
+    if (1 != RAND_bytes(bytes.data(), (int)count)) {
+        OPENSSL_cleanse(bytes.data(), bytes.size());
+        ERR_clear_error();
+        return {};
+    }
     return bytes;
 }
 
 void secureZero(void* ptr, size_t len) {
+    containForeignCryptoModules();
+    if (ptr == nullptr || len == 0) return;
     OPENSSL_cleanse(ptr, len);
 }
 
@@ -423,6 +543,7 @@ std::vector<uint8_t> fromHex(const std::string& hex) {
 }
 
 std::array<uint8_t, AES_KEY_SIZE> deriveKey(const std::string& password, const std::vector<uint8_t>& salt) {
+    containForeignCryptoModules();
     std::array<uint8_t, AES_KEY_SIZE> key{};
     // Use PBKDF2-HMAC-SHA256 with at least 100,000 iterations per spec
     const int iterations = 100000;
@@ -430,13 +551,14 @@ std::array<uint8_t, AES_KEY_SIZE> deriveKey(const std::string& password, const s
     if (1 != PKCS5_PBKDF2_HMAC(password.c_str(), static_cast<int>(password.size()),
                                salt.data(), static_cast<int>(salt.size()),
                                iterations, EVP_sha256(), AES_KEY_SIZE, key.data())) {
-        // on failure return zeroed key
-        key.fill(0);
+        OPENSSL_cleanse(key.data(), key.size());
+        ERR_clear_error();
     }
     return key;
 }
 
 std::vector<uint8_t> hmacSha256(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data) {
+    containForeignCryptoModules();
     std::vector<uint8_t> ipad(64, 0x36);
     std::vector<uint8_t> opad(64, 0x5c);
     
@@ -459,16 +581,24 @@ std::vector<uint8_t> hmacSha256(const std::vector<uint8_t>& key, const std::vect
     std::vector<uint8_t> outer = opad;
     outer.insert(outer.end(), innerHash.begin(), innerHash.end());
     Hash256 result = sha256(outer.data(), outer.size());
-    
+    if (!keyPad.empty()) OPENSSL_cleanse(keyPad.data(), keyPad.size());
+    OPENSSL_cleanse(ipad.data(), ipad.size());
+    OPENSSL_cleanse(opad.data(), opad.size());
+
     return std::vector<uint8_t>(result.begin(), result.end());
 }
 
 std::vector<uint8_t> hmacSha512(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data) {
+    containForeignCryptoModules();
     std::vector<uint8_t> out(SHA512_SIZE);
     unsigned int outLen = 0;
     unsigned char* res = HMAC(EVP_sha512(), key.empty() ? nullptr : key.data(), static_cast<int>(key.size()),
                               data.empty() ? nullptr : data.data(), static_cast<int>(data.size()), out.data(), &outLen);
-    if (!res || outLen == 0) return {};
+    if (!res || outLen == 0) {
+        OPENSSL_cleanse(out.data(), out.size());
+        ERR_clear_error();
+        return {};
+    }
     out.resize(outLen);
     return out;
 }
@@ -603,4 +733,21 @@ std::vector<uint8_t> base58Decode(const std::string& str) {
 }
 
 }
+}
+
+#if defined(_MSC_VER)
+#pragma init_seg(lib)
+#endif
+namespace {
+struct ForeignCryptoContainment {
+    ForeignCryptoContainment() { synapse::crypto::containForeignCryptoModules(); }
+};
+#if defined(_MSC_VER)
+ForeignCryptoContainment foreignCryptoContainment;
+#else
+__attribute__((constructor(101)))
+static void containForeignCryptoModulesEarly() {
+    synapse::crypto::containForeignCryptoModules();
+}
+#endif
 }

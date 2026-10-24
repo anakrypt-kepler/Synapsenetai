@@ -7,6 +7,15 @@ const path = require('path');
 // emcmake cmake -B build-wasm -DGGML_WEBGPU=ON -DLLAMA_OPENSSL=OFF
 // cmake --build build-wasm --target test-backend-ops -j
 
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 const PORT = 8080;
 const STATIC_DIR = path.resolve(__dirname, '../build-wasm/bin');
 console.log(`Serving static files from: ${STATIC_DIR}`);
@@ -40,7 +49,7 @@ async function generateDirListing(dirPath, reqUrl) {
       </style>
     </head>
     <body>
-      <h1>Directory: ${reqUrl}</h1>
+      <h1>Directory: ${escapeHtml(reqUrl)}</h1>
       <ul>
   `;
 
@@ -60,7 +69,7 @@ async function generateDirListing(dirPath, reqUrl) {
     }
     const stats = await fs.stat(filePath);
     const link = encodeURIComponent(file) + (stats.isDirectory() ? '/' : '');
-    html += `<li><a href="${link}">${file}${stats.isDirectory() ? '/' : ''}</a></li>`;
+    html += `<li><a href="${link}">${escapeHtml(file)}${stats.isDirectory() ? '/' : ''}</a></li>`;
   }
 
   html += `

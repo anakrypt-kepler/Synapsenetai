@@ -101,7 +101,6 @@ static uint16_t readU16(const uint8_t* p) {
     return static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
 }
 
-constexpr uint32_t MAX_EVENTS_PER_BLOCK = 1000;
 constexpr size_t MAX_EVENT_SIZE = 1 << 20; // 1MB
 // Trailer byte after classic event bytes: 0x01 means a PQ signature blob follows.
 // Absence of the trailer is classical-only and remains valid.
@@ -574,6 +573,7 @@ void Ledger::Impl::rememberEventIds(const Block& block) {
 }
 
 bool Ledger::Impl::validateBlock(const Block& block) {
+    if (block.events.size() > MAX_EVENTS_PER_BLOCK) return false;
     if (block.computeHash() != block.hash) return false;
     if (block.computeMerkleRoot() != block.merkleRoot) return false;
     if (!linksToTip(block)) return false;
@@ -701,22 +701,22 @@ bool Ledger::open(const std::string& dbPath) {
         impl_->currentDifficulty = 1;
 
         auto heightData = impl_->db.get("meta:height");
-        if (!heightData.empty()) {
+        if (heightData.size() >= 8) {
             impl_->currentHeight = readU64(heightData.data());
         }
 
         auto counterData = impl_->db.get("meta:eventCounter");
-        if (!counterData.empty()) {
+        if (counterData.size() >= 8) {
             impl_->eventCounter = readU64(counterData.data());
         }
 
         auto workData = impl_->db.get("meta:totalWork");
-        if (!workData.empty()) {
+        if (workData.size() >= 8) {
             impl_->totalWork = readU64(workData.data());
         }
 
         auto diffData = impl_->db.get("meta:difficulty");
-        if (!diffData.empty()) {
+        if (diffData.size() >= 4) {
             impl_->currentDifficulty = readU32(diffData.data());
         }
 
@@ -906,6 +906,7 @@ bool Ledger::append(const Event& event) {
 bool Ledger::Impl::appendBlockUnlocked(const Block& block) {
     Block b = block;
 
+    if (b.events.size() > MAX_EVENTS_PER_BLOCK) return false;
     if (!linksToTip(b)) return false;
     if (!declaredDifficultyOk(b, false)) return false;
     if (!eventIdsAcceptable(b.events)) return false;

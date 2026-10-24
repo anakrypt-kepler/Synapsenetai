@@ -269,6 +269,30 @@ ToolResult pathError(PathError error) {
     return ToolResult{message, false, ""};
 }
 
+// Absolute arguments are already confined. A relative argument can still leave
+// through a separator or a directory entry that is a junction or symlink.
+bool relativeArgumentNeedsConfine(const std::filesystem::path& root, const std::string& arg) {
+    if (arg.find('/') != std::string::npos || arg.find('\\') != std::string::npos) return true;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path candidate = root / fs::path(arg);
+    const fs::file_status status = fs::symlink_status(candidate, ec);
+    if (!ec) {
+        const fs::file_type type = status.type();
+        if (type == fs::file_type::regular || type == fs::file_type::directory ||
+            type == fs::file_type::symlink || type == fs::file_type::unknown) {
+            return true;
+        }
+    }
+#ifdef _WIN32
+    const DWORD attrs = GetFileAttributesW(candidate.c_str());
+    if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        return true;
+    }
+#endif
+    return false;
+}
+
 bool hasShellMetaOrNewline(const std::string& command) {
     for (unsigned char c : command) {
         if (c < 0x20 || c == 0x7f) return true;
@@ -614,17 +638,16 @@ ToolResult BashTool::execute(const std::string& paramsJson) {
     if (args.empty()) {
         return ToolResult{"command is empty", false, ""};
     }
+    const ConfinedPath cwd = confineUserPath(workingDir_, ".", true);
+    if (cwd.error != PathError::Ok) return pathError(cwd.error);
     for (const auto& arg : args) {
         if (hasDotDotSegment(arg)) {
             return ToolResult{"path traversal is not allowed", false, ""};
         }
-        if (!isAbsoluteInput(arg)) continue;
+        if (!isAbsoluteInput(arg) && !relativeArgumentNeedsConfine(cwd.root, arg)) continue;
         const ConfinedPath confinedArg = confineUserPath(workingDir_, arg, true);
         if (confinedArg.error != PathError::Ok) return pathError(confinedArg.error);
     }
-
-    const ConfinedPath cwd = confineUserPath(workingDir_, ".", true);
-    if (cwd.error != PathError::Ok) return pathError(cwd.error);
 
     const CommandOutput ran = runArgv(args, cwd.root, static_cast<size_t>(MaxOutputLength), 0, true);
     if (!ran.started) {

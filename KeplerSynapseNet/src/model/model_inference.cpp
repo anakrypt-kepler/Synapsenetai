@@ -13,18 +13,83 @@
 #include <algorithm>
 #include <numeric>
 #include <random>
+#include <cstdint>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <iomanip>
 #ifdef USE_LLAMA_CPP
 #include "llama.h"
-#include "ggml-backend.h"
 #endif
 
 #ifdef USE_LLAMA_CPP
 static std::once_flag g_llamaInitFlag;
 static std::mutex g_llamaRefMutex;
 static int g_llamaRefCount = 0;
+
+// llama_tokenize takes int32 lengths. A size that does not fit is narrowed
+// to a negative length, and the vocab builder then copies that many bytes.
+static bool fillLlamaTokens(const llama_vocab* vocab, const std::string& text,
+                            bool addSpecial, bool parseSpecial,
+                            std::vector<llama_token>& tokens) {
+    constexpr int32_t kIntMax = std::numeric_limits<int32_t>::max();
+    if (!vocab || text.size() > static_cast<size_t>(kIntMax)) {
+        tokens.clear();
+        return false;
+    }
+    const int32_t textLen = static_cast<int32_t>(text.size());
+    const size_t guess = text.size() + 16;
+    tokens.assign(guess, 0);
+    const int32_t cap = guess > static_cast<size_t>(kIntMax)
+        ? kIntMax
+        : static_cast<int32_t>(guess);
+    int32_t nTokens = llama_tokenize(vocab, text.c_str(), textLen,
+                                     tokens.data(), cap, addSpecial, parseSpecial);
+    if (nTokens == std::numeric_limits<int32_t>::min()) {
+        tokens.clear();
+        return false;
+    }
+    if (nTokens < 0) {
+        const int64_t need64 = -static_cast<int64_t>(nTokens);
+        if (need64 <= 0 || need64 > static_cast<int64_t>(kIntMax)) {
+            tokens.clear();
+            return false;
+        }
+        const int32_t need = static_cast<int32_t>(need64);
+        tokens.assign(static_cast<size_t>(need), 0);
+        nTokens = llama_tokenize(vocab, text.c_str(), textLen,
+                                 tokens.data(), need, addSpecial, parseSpecial);
+        if (nTokens < 0 || nTokens > need) {
+            tokens.clear();
+            return false;
+        }
+    } else if (nTokens > cap) {
+        tokens.clear();
+        return false;
+    }
+    tokens.resize(static_cast<size_t>(nTokens));
+    return true;
+}
+
+static int32_t batchCountForLlama(size_t n) {
+    constexpr size_t kMax = static_cast<size_t>(std::numeric_limits<int32_t>::max());
+    if (n > kMax) n = kMax;
+    return static_cast<int32_t>(n);
+}
+
+// One llama_decode cannot exceed the context batch. Counts that already fit
+// are left unchanged; a longer prompt keeps its tail.
+static void keepPromptThatFits(std::vector<llama_token>& tokens, llama_context* ctx) {
+    if (!ctx) return;
+    uint32_t fit = llama_n_batch(ctx);
+    const uint32_t nCtx = llama_n_ctx(ctx);
+    if (fit == 0) fit = nCtx;
+    if (nCtx > 0 && fit > nCtx) fit = nCtx;
+    constexpr uint32_t kMax = static_cast<uint32_t>(std::numeric_limits<int32_t>::max());
+    if (fit > kMax) fit = kMax;
+    if (fit == 0 || tokens.size() <= static_cast<size_t>(fit)) return;
+    tokens.erase(tokens.begin(), tokens.end() - static_cast<std::ptrdiff_t>(fit));
+}
 
 static void addDefaultSamplers(llama_sampler* sampler, float temperature) {
     llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
@@ -271,6 +336,8 @@ InferenceStatus InferenceEngine::getStatus(const std::string& requestId) {
 }
 
 bool InferenceEngine::loadModel(const std::string& modelId, const std::string& path, int nGpuLayers) {
+    const std::string mapped = canonicalModelFileForLlama(path);
+    if (mapped.empty()) return false;
     std::lock_guard<std::mutex> lock(impl_->mtx);
 #ifdef USE_LLAMA_CPP
     auto acquire = []() {
@@ -292,8 +359,17 @@ bool InferenceEngine::loadModel(const std::string& modelId, const std::string& p
     };
     acquire();
     llama_model_params modelParams = llama_model_default_params();
-    if (nGpuLayers > 0) modelParams.n_gpu_layers = nGpuLayers;
-    llama_model* model = llama_model_load_from_file(path.c_str(), modelParams);
+    modelParams.devices = nullptr;
+    modelParams.tensor_buft_overrides = nullptr;
+    modelParams.tensor_split = nullptr;
+    modelParams.progress_callback = nullptr;
+    modelParams.progress_callback_user_data = nullptr;
+    modelParams.kv_overrides = nullptr;
+    modelParams.use_mmap = true;
+    modelParams.use_direct_io = false;
+    // Default params use -1, which offloads every layer. Zero stays on the CPU.
+    modelParams.n_gpu_layers = nGpuLayers > 0 ? nGpuLayers : 0;
+    llama_model* model = llama_model_load_from_file(mapped.c_str(), modelParams);
     if (!model) {
         release();
         return false;
@@ -316,7 +392,7 @@ bool InferenceEngine::loadModel(const std::string& modelId, const std::string& p
     }
     LoadedModelState state;
     state.modelId = modelId;
-    state.modelPath = path;
+    state.modelPath = mapped;
     state.contextLength = 0;
     state.maxContextLength = ctxParams.n_ctx ? ctxParams.n_ctx : static_cast<uint64_t>(llama_model_n_ctx_train(model));
     state.isLoaded = true;
@@ -325,20 +401,9 @@ bool InferenceEngine::loadModel(const std::string& modelId, const std::string& p
     impl_->models[modelId] = std::move(state);
     return true;
 #else
-    {
-        std::ifstream ggufCheck(path, std::ios::binary);
-        if (!ggufCheck) return false;
-        char magic[4] = {};
-        ggufCheck.read(magic, 4);
-        if (ggufCheck.gcount() != 4 ||
-            magic[0] != 'G' || magic[1] != 'G' ||
-            magic[2] != 'U' || magic[3] != 'F') {
-            return false;
-        }
-    }
     LoadedModelState state;
     state.modelId = modelId;
-    state.modelPath = path;
+    state.modelPath = mapped;
     state.contextLength = 0;
     state.maxContextLength = 4096;
     state.isLoaded = true;
@@ -710,23 +775,17 @@ std::string InferenceEngine::Impl::generateText(const LoadedModelState& model,
         const llama_model* mdl = model.llamaModel;
         const llama_vocab* vocab = llama_model_get_vocab(mdl);
         
-        std::vector<llama_token> tokens(prompt.size() + 16);
-        int nTokens = llama_tokenize(vocab, prompt.c_str(), prompt.size(),
-                                      tokens.data(), tokens.size(), true, true);
-        if (nTokens < 0) {
-            tokens.resize(-nTokens);
-            nTokens = llama_tokenize(vocab, prompt.c_str(), prompt.size(),
-                                      tokens.data(), tokens.size(), true, true);
-        }
-        if (nTokens < 0) return "[Tokenization failed]";
-        tokens.resize(nTokens);
-        
+        std::vector<llama_token> tokens;
+        if (!fillLlamaTokens(vocab, prompt, true, true, tokens)) return "[Tokenization failed]";
+
         llama_memory_t mem = llama_get_memory(ctx);
         if (mem) {
             llama_memory_clear(mem, true);
         }
-        
-        llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
+
+        keepPromptThatFits(tokens, ctx);
+        llama_batch batch = llama_batch_get_one(tokens.empty() ? nullptr : tokens.data(),
+                                                batchCountForLlama(tokens.size()));
         
         if (llama_decode(ctx, batch) != 0) {
             return "[Decode failed]";
@@ -746,9 +805,9 @@ std::string InferenceEngine::Impl::generateText(const LoadedModelState& model,
             if (llama_vocab_is_eog(vocab, newToken)) break;
             
             char buf[128];
-            int len = llama_token_to_piece(vocab, newToken, buf, sizeof(buf), 0, true);
-            if (len > 0) {
-                result.append(buf, len);
+            const int len = llama_token_to_piece(vocab, newToken, buf, static_cast<int32_t>(sizeof(buf)), 0, true);
+            if (len > 0 && static_cast<size_t>(len) <= sizeof(buf)) {
+                result.append(buf, static_cast<size_t>(len));
                 if (cutAtImEnd(result)) break;
             }
             
@@ -763,9 +822,9 @@ std::string InferenceEngine::Impl::generateText(const LoadedModelState& model,
         if (outTokensGenerated) *outTokensGenerated = nCur - initial_count;
         float conf = 0.0f;
         if (lastSampled >= 0) {
-            const float * logits = llama_get_logits_ith(ctx, nCur - 1);
-            int n_vocab = llama_vocab_n_tokens(vocab);
-            if (logits && n_vocab > 0) {
+            const float * logits = llama_get_logits_ith(ctx, -1);
+            const int n_vocab = llama_vocab_n_tokens(vocab);
+            if (logits && n_vocab > 0 && lastSampled < n_vocab) {
                 float maxLogit = logits[0];
                 for (int vi = 1; vi < n_vocab; ++vi) if (logits[vi] > maxLogit) maxLogit = logits[vi];
                 double sum = 0.0;
@@ -807,23 +866,17 @@ std::string InferenceEngine::Impl::generateTextStream(const LoadedModelState& mo
         const llama_model* mdl = model.llamaModel;
         const llama_vocab* vocab = llama_model_get_vocab(mdl);
         
-        std::vector<llama_token> tokens(prompt.size() + 16);
-        int nTokens = llama_tokenize(vocab, prompt.c_str(), prompt.size(),
-                                      tokens.data(), tokens.size(), true, true);
-        if (nTokens < 0) {
-            tokens.resize(-nTokens);
-            nTokens = llama_tokenize(vocab, prompt.c_str(), prompt.size(),
-                                      tokens.data(), tokens.size(), true, true);
-        }
-        if (nTokens < 0) return "[Tokenization failed]";
-        tokens.resize(nTokens);
-        
+        std::vector<llama_token> tokens;
+        if (!fillLlamaTokens(vocab, prompt, true, true, tokens)) return "[Tokenization failed]";
+
         llama_memory_t mem = llama_get_memory(ctx);
         if (mem) {
             llama_memory_clear(mem, true);
         }
-        
-        llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
+
+        keepPromptThatFits(tokens, ctx);
+        llama_batch batch = llama_batch_get_one(tokens.empty() ? nullptr : tokens.data(),
+                                                batchCountForLlama(tokens.size()));
         
         if (llama_decode(ctx, batch) != 0) {
             return "[Decode failed]";
@@ -843,9 +896,9 @@ std::string InferenceEngine::Impl::generateTextStream(const LoadedModelState& mo
             if (llama_vocab_is_eog(vocab, newToken)) break;
             
             char buf[128];
-            int len = llama_token_to_piece(vocab, newToken, buf, sizeof(buf), 0, true);
-            if (len > 0) {
-                std::string tokenStr(buf, len);
+            const int len = llama_token_to_piece(vocab, newToken, buf, static_cast<int32_t>(sizeof(buf)), 0, true);
+            if (len > 0 && static_cast<size_t>(len) <= sizeof(buf)) {
+                std::string tokenStr(buf, static_cast<size_t>(len));
                 result.append(tokenStr);
                 if (cutAtImEnd(result)) break;
                 
@@ -866,9 +919,9 @@ std::string InferenceEngine::Impl::generateTextStream(const LoadedModelState& mo
         if (outTokensGenerated) *outTokensGenerated = nCur - initial_count;
         float conf = 0.0f;
         if (lastSampled >= 0) {
-            const float * logits = llama_get_logits_ith(ctx, nCur - 1);
-            int n_vocab = llama_vocab_n_tokens(vocab);
-            if (logits && n_vocab > 0) {
+            const float * logits = llama_get_logits_ith(ctx, -1);
+            const int n_vocab = llama_vocab_n_tokens(vocab);
+            if (logits && n_vocab > 0 && lastSampled < n_vocab) {
                 float maxLogit = logits[0];
                 for (int vi = 1; vi < n_vocab; ++vi) if (logits[vi] > maxLogit) maxLogit = logits[vi];
                 double sum = 0.0;

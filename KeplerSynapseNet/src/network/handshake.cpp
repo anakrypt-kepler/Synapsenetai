@@ -14,8 +14,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
-#include <random>
 #include <string>
+#include <openssl/crypto.h>
 #include <openssl/rand.h>
 
 namespace synapse {
@@ -182,6 +182,7 @@ std::vector<uint8_t> Handshake::Impl::deriveSessionKeyLocked() {
 }
 
 std::vector<uint8_t> Handshake::Impl::buildInitMessageLocked() {
+    if (localNonce.size() != HANDSHAKE_NONCE_SIZE) return {};
     std::vector<uint8_t> msg;
 
     auto writeU32 = [&msg](uint32_t val) {
@@ -240,9 +241,11 @@ bool Handshake::init(const std::vector<uint8_t>& nodeId, const std::vector<uint8
     impl_->complete = false;
 
     impl_->localNonce.resize(HANDSHAKE_NONCE_SIZE);
+    crypto::containForeignCryptoModules();
     if (RAND_bytes(impl_->localNonce.data(), static_cast<int>(impl_->localNonce.size())) != 1) {
-        std::random_device rd;
-        for (size_t i = 0; i < impl_->localNonce.size(); i++) impl_->localNonce[i] = static_cast<uint8_t>(rd() & 0xFF);
+        OPENSSL_cleanse(impl_->localNonce.data(), impl_->localNonce.size());
+        impl_->localNonce.clear();
+        return false;
     }
 
     impl_->generateKyberKeyPair();

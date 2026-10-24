@@ -21,16 +21,18 @@ struct HWRNG::Impl {
     RNGStats stats{};
 
     Impl() {
+        crypto::containForeignCryptoModules();
         sodiumReady = (sodium_init() >= 0);
     }
 
-    void fillRandom(uint8_t* buf, size_t len) {
+    bool drawEntropy(uint8_t* buf, size_t len) {
+        if (buf == nullptr || len == 0) return false;
         if (sodiumReady) {
             randombytes_buf(buf, len);
-        } else {
-            readDevRandom(buf, len);
+            return true;
         }
-        stats.bytesGenerated += len;
+        if (!useFallback) return false;
+        return readDevRandom(buf, len);
     }
 
     bool readDevRandom(uint8_t* buf, size_t len) {
@@ -44,17 +46,14 @@ struct HWRNG::Impl {
         return success;
     }
 
-    void mixWithHash(uint8_t* buf, size_t len) {
-        if (!mixEntropy || len == 0) return;
+    bool mixWithHash(uint8_t* buf, size_t len) {
+        if (!mixEntropy || len == 0 || buf == nullptr) return false;
         std::vector<uint8_t> temp(len);
-        if (sodiumReady) {
-            randombytes_buf(temp.data(), len);
-        } else if (!readDevRandom(temp.data(), len)) {
-            return;
-        }
+        if (!drawEntropy(temp.data(), len)) return false;
         for (size_t i = 0; i < len; i++) {
             buf[i] ^= temp[i];
         }
+        return true;
     }
 };
 
@@ -70,10 +69,7 @@ bool HWRNG::init() {
     impl_->hasTpm = false;
 
     uint8_t test[32];
-    if (impl_->sodiumReady) {
-        randombytes_buf(test, 32);
-        impl_->stats.hardwareAvailable = true;
-    } else if (impl_->readDevRandom(test, 32)) {
+    if (impl_->drawEntropy(test, 32)) {
         impl_->stats.hardwareAvailable = true;
     }
 
@@ -87,40 +83,24 @@ bool HWRNG::isAvailable() const {
 
 std::vector<uint8_t> HWRNG::generate(size_t length) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
+    if (length == 0) return {};
     std::vector<uint8_t> result(length);
-
-    if (impl_->sodiumReady) {
-        randombytes_buf(result.data(), length);
-        impl_->stats.bytesGenerated += length;
-    } else if (impl_->useFallback) {
-        if (!impl_->readDevRandom(result.data(), length)) {
-            impl_->fillRandom(result.data(), length);
-        }
-    } else {
-        impl_->fillRandom(result.data(), length);
-    }
-
+    if (!impl_->drawEntropy(result.data(), length)) return {};
+    impl_->stats.bytesGenerated += length;
     if (impl_->mixEntropy) {
         impl_->mixWithHash(result.data(), length);
     }
-
     return result;
 }
 
 void HWRNG::fill(uint8_t* buffer, size_t length) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-
-    if (impl_->sodiumReady) {
-        randombytes_buf(buffer, length);
-        impl_->stats.bytesGenerated += length;
-    } else if (impl_->useFallback) {
-        if (!impl_->readDevRandom(buffer, length)) {
-            impl_->fillRandom(buffer, length);
-        }
-    } else {
-        impl_->fillRandom(buffer, length);
+    if (buffer == nullptr || length == 0) return;
+    if (!impl_->drawEntropy(buffer, length)) {
+        std::memset(buffer, 0, length);
+        return;
     }
-
+    impl_->stats.bytesGenerated += length;
     if (impl_->mixEntropy) {
         impl_->mixWithHash(buffer, length);
     }

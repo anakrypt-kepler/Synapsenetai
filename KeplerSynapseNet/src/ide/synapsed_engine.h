@@ -65,9 +65,15 @@ struct NaanAgentSlot {
     double spent = 0.0;
 };
 
-// False once the process singleton has entered its destructor.
-// FFI entry points must not call instance() after that.
+// True only while the process singleton is constructed. False before the
+// first instance() and after exit has begun.
 bool synapsedEngineAlive();
+
+// Pins the singleton for one FFI call. False once exit has begun; the
+// caller must not call instance() then. Pair every true return with
+// synapsedEngineLeave().
+bool synapsedEngineEnter();
+void synapsedEngineLeave();
 
 class SynapsedEngine {
 public:
@@ -427,6 +433,9 @@ private:
     void savePeerCache() const;
 
     mutable std::atomic<uint64_t> lastBlockHeight_{0};
+    // Covers blocks.jsonl. rpcCall already holds mtx_, so this stays a separate lock.
+    mutable std::mutex localChainMtx_;
+    uint64_t readLocalChainHeightUnlocked() const;
     uint64_t localChainHeight() const;
     void appendLocalChainBlock(const std::string& eventType, const std::string& eventHash);
     mutable std::atomic<uint32_t> seedPeerCount_{0};
@@ -552,6 +561,10 @@ private:
     mutable synapse::crypto::PublicKey poePk_{};
     mutable std::atomic<bool> poeReady_{false};
 
+    // Guards subscribers_ only. emitEvent copies the list, drops this lock,
+    // then calls out, so a callback can re-enter without freeing the
+    // std::function it is running.
+    mutable std::mutex subscribersMtx_;
     std::unordered_map<std::string, std::vector<EventCallback>> subscribers_;
 };
 

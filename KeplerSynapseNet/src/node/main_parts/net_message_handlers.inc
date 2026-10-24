@@ -141,7 +141,142 @@
             }
     }
     
+    // Version and verack are the only commands a socket may send before it is
+    // ready. The serial belongs to that socket, so a finished session is not reused.
+    struct LivePeerBind {
+        int socket = -1;
+        uint64_t serial = 0;
+        bool ok = false;
+    };
+
+    LivePeerBind livePeerBind(const std::string& peerId) const {
+        LivePeerBind out;
+        if (!network_) return out;
+        const network::Peer peer = network_->getPeer(peerId);
+        if (peer.id != peerId || peer.socket < 0 || peer.sessionSerial == 0) return out;
+        out.socket = peer.socket;
+        out.serial = peer.sessionSerial;
+        out.ok = true;
+        return out;
+    }
+
+    void beginPeerSession(const std::string& peerId, int socket, uint64_t serial) {
+        if (peerId.empty() || socket < 0 || serial == 0) return;
+        std::lock_guard<std::mutex> lock(peerSessionMtx_);
+        auto& session = peerSession_[peerId];
+        if (!session.closed && session.serial == serial && session.socket == socket &&
+            session.phase != PeerSessionPhase::Fresh) {
+            return;
+        }
+        session = PeerSession{};
+        session.socket = socket;
+        session.serial = serial;
+        session.phase = PeerSessionPhase::Fresh;
+    }
+
+    void endPeerSession(const std::string& peerId, int socket, uint64_t serial) {
+        std::lock_guard<std::mutex> lock(peerSessionMtx_);
+        auto it = peerSession_.find(peerId);
+        if (it == peerSession_.end()) return;
+        if (serial != 0 && it->second.serial != serial) return;
+        if (socket >= 0 && it->second.socket != socket && it->second.socket >= 0) return;
+        if (it->second.phase == PeerSessionPhase::Ready) {
+            it->second.closed = true;
+            it->second.advertisementPending = false;
+            return;
+        }
+        peerSession_.erase(it);
+    }
+
+    bool peerSessionReady(const std::string& peerId) const {
+        const LivePeerBind live = livePeerBind(peerId);
+        std::lock_guard<std::mutex> lock(peerSessionMtx_);
+        auto it = peerSession_.find(peerId);
+        if (it == peerSession_.end() || it->second.phase != PeerSessionPhase::Ready) return false;
+        if (it->second.closed) return !live.ok;
+        return live.ok && live.socket == it->second.socket && live.serial == it->second.serial;
+    }
+
+    bool bindFreshPeerSession(PeerSession& session, const LivePeerBind& live) {
+        if (!live.ok) return false;
+        if (session.closed || session.serial != live.serial || session.socket != live.socket) {
+            session = PeerSession{};
+            session.socket = live.socket;
+            session.serial = live.serial;
+            session.phase = PeerSessionPhase::Fresh;
+        }
+        return true;
+    }
+
+    bool acceptPeerVersion(const std::string& peerId) {
+        const LivePeerBind live = livePeerBind(peerId);
+        if (!live.ok) return false;
+        std::lock_guard<std::mutex> lock(peerSessionMtx_);
+        auto& session = peerSession_[peerId];
+        if (!bindFreshPeerSession(session, live)) return false;
+        if (session.phase != PeerSessionPhase::Fresh) return false;
+        session.phase = PeerSessionPhase::VersionSeen;
+        return true;
+    }
+
+    void notePeerVersionAdvertisement(const std::string& peerId, uint64_t height,
+                                      const std::array<uint8_t, 16>& addr) {
+        const LivePeerBind live = livePeerBind(peerId);
+        if (!live.ok) return;
+        std::lock_guard<std::mutex> lock(peerSessionMtx_);
+        auto it = peerSession_.find(peerId);
+        if (it == peerSession_.end()) return;
+        if (it->second.closed || it->second.serial != live.serial || it->second.socket != live.socket) return;
+        if (it->second.phase != PeerSessionPhase::VersionSeen) return;
+        it->second.startHeight = height;
+        it->second.addrRecv = addr;
+        it->second.advertisementPending = true;
+    }
+
+    bool takePeerVersionAdvertisement(const std::string& peerId, uint64_t& height,
+                                      std::array<uint8_t, 16>& addr) {
+        const LivePeerBind live = livePeerBind(peerId);
+        if (!live.ok) return false;
+        std::lock_guard<std::mutex> lock(peerSessionMtx_);
+        auto it = peerSession_.find(peerId);
+        if (it == peerSession_.end()) return false;
+        if (it->second.closed || it->second.serial != live.serial || it->second.socket != live.socket) return false;
+        if (it->second.phase != PeerSessionPhase::Ready || !it->second.advertisementPending) return false;
+        height = it->second.startHeight;
+        addr = it->second.addrRecv;
+        it->second.advertisementPending = false;
+        return true;
+    }
+
+    bool acceptPeerVerack(const std::string& peerId) {
+        const LivePeerBind live = livePeerBind(peerId);
+        if (!live.ok) return false;
+        std::lock_guard<std::mutex> lock(peerSessionMtx_);
+        auto it = peerSession_.find(peerId);
+        if (it == peerSession_.end()) return false;
+        if (it->second.closed || it->second.serial != live.serial || it->second.socket != live.socket) return false;
+        if (it->second.phase != PeerSessionPhase::VersionSeen) return false;
+        it->second.phase = PeerSessionPhase::Ready;
+        return true;
+    }
+
+    void sendPostHandshake(const std::string& peerId) {
+        sendPeerHello(peerId);
+        sendGetAddr(peerId);
+        if (agentTorRequired_.load()) {
+            auto onionReq = makeMessage("get_onion_peers", {});
+            if (network_) network_->send(peerId, onionReq);
+        }
+        sendMempoolRequest(peerId);
+        sendPoeInventory(peerId);
+        sendUpdateBundleInventory(peerId);
+        startPoeSync(peerId);
+    }
+
 	    void handleMessage(const std::string& peerId, const network::Message& msg) {
+        if (msg.command != "version" && msg.command != "verack" && !peerSessionReady(peerId)) {
+            return;
+        }
 	        if (msg.command == "ping") {
             network::Message pong;
             pong.command = "pong";
@@ -238,21 +373,32 @@
         return offer;
     }
 
-    bool verifyPaymentToSelf(const std::string& paymentTxidHex, uint64_t minAtoms, uint64_t& paidOut) const {
+    // A rental payment is a pending or confirmed transfer signed by the renter.
+    // The counted amount is the plaintext sum sent to this provider.
+    bool verifyPaymentToSelf(const std::string& paymentTxidHex,
+                             const std::string& renterId,
+                             uint64_t minAtoms,
+                             uint64_t& paidOut) const {
         paidOut = 0;
-        if (!transfer_) return false;
-        auto bytes = crypto::fromHex(paymentTxidHex);
+        if (!transfer_ || renterId.empty() || minAtoms == 0) return false;
+        const auto bytes = crypto::fromHex(paymentTxidHex);
         if (bytes.size() != 32) return false;
         crypto::Hash256 txid{};
         std::memcpy(txid.data(), bytes.data(), txid.size());
         if (!transfer_->hasTransaction(txid)) return false;
-        core::Transaction tx = transfer_->getTransaction(txid);
-        if (tx.outputs.empty()) return false;
+        const core::Transaction tx = transfer_->getTransaction(txid);
+        if (tx.txid != txid || tx.computeHash() != tx.txid) return false;
+        if (tx.status != core::TxStatus::PENDING && tx.status != core::TxStatus::CONFIRMED) return false;
+        if (tx.inputs.empty() || tx.outputs.empty()) return false;
+        if (tx.isRewardCoinbase() || tx.isRewardClaim() || tx.isRingCtSpend()) return false;
+        if (tx.quantumSignature.empty() || !tx.verify()) return false;
+        for (const auto& inp : tx.inputs) {
+            if (pubKeyHex33(inp.pubKey) != renterId) return false;
+        }
         for (const auto& outp : tx.outputs) {
-            if (outp.address == address_) {
-                if (UINT64_MAX - paidOut < outp.amount) return false;
-                paidOut += outp.amount;
-            }
+            if (outp.isConfidential() || outp.address != address_ || outp.amount == 0) continue;
+            if (UINT64_MAX - paidOut < outp.amount) return false;
+            paidOut += outp.amount;
         }
         return paidOut >= minAtoms;
     }
@@ -330,13 +476,21 @@
         ok.pricePerRequestAtoms = remotePricePerRequestAtoms_;
         ok.expiresAt = expiresAt;
 
+        bool installed = false;
         {
             std::lock_guard<std::mutex> lock(remoteProvMtx_);
-            ProviderSession ps;
-            ps.renterId = renterId;
-            ps.expiresAt = expiresAt;
-            ps.pricePerRequestAtoms = remotePricePerRequestAtoms_;
-            providerSessions_[ok.sessionId] = std::move(ps);
+            if (providerSessions_.find(ok.sessionId) == providerSessions_.end()) {
+                ProviderSession ps;
+                ps.renterId = renterId;
+                ps.expiresAt = expiresAt;
+                ps.pricePerRequestAtoms = remotePricePerRequestAtoms_;
+                providerSessions_.emplace(ok.sessionId, std::move(ps));
+                installed = true;
+            }
+        }
+        if (!installed) {
+            (void)modelAccess_->endSession(renterId);
+            return;
         }
 
         if (network_) {
@@ -362,8 +516,10 @@
         s.expiresAt = ok.expiresAt;
         {
             std::lock_guard<std::mutex> lock(remoteMtx_);
-            remoteSessions_[s.sessionId] = s;
-            remoteRentOkByOffer_[ok.offerId] = ok;
+            if (remoteSessions_.find(s.sessionId) != remoteSessions_.end()) return;
+            if (remoteRentOkByOffer_.find(ok.offerId) != remoteRentOkByOffer_.end()) return;
+            remoteSessions_.emplace(s.sessionId, s);
+            remoteRentOkByOffer_.emplace(ok.offerId, ok);
         }
         remoteCv_.notify_all();
     }
@@ -380,27 +536,34 @@
         if (req.sessionId.empty() || req.requestId.empty() || req.prompt.empty()) return;
 
         ProviderSession sess;
+        constexpr size_t kReplayCap = 1024;
+        const std::string renterId = pubKeyHex33(req.renterPubKey);
+        std::string paymentKey;
+        {
+            const auto rawPayment = crypto::fromHex(req.paymentTxidHex);
+            if (rawPayment.size() == 32) {
+                paymentKey = crypto::toHex(rawPayment.data(), rawPayment.size());
+            }
+        }
+        bool paymentAlreadyUsed = false;
         {
             std::lock_guard<std::mutex> lock(remoteProvMtx_);
             auto it = providerSessions_.find(req.sessionId);
             if (it == providerSessions_.end()) return;
-            sess = it->second;
-        }
-        const uint64_t now = std::time(nullptr);
-        if (sess.expiresAt != 0 && sess.expiresAt < now) return;
-
-        const std::string renterId = pubKeyHex33(req.renterPubKey);
-        if (!renterId.empty() && renterId != sess.renterId) return;
-        if (!modelAccess_->canAccess(sess.renterId)) return;
-        if (modelAccess_->isRateLimited(sess.renterId)) return;
-
-        // Enforce payment (mempool/confirmed). Provider address is our local address_.
-        uint64_t paid = 0;
-        bool paidOk = false;
-        if (sess.pricePerRequestAtoms > 0) {
-            paidOk = verifyPaymentToSelf(req.paymentTxidHex, sess.pricePerRequestAtoms, paid);
-        } else {
-            paidOk = true;
+            const uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+            if (it->second.expiresAt != 0 && it->second.expiresAt < now) return;
+            if (!renterId.empty() && renterId != it->second.renterId) return;
+            if (it->second.seenRequestIds.count(req.requestId) != 0) return;
+            if (it->second.seenRequestIds.size() >= kReplayCap) return;
+            if (it->second.pricePerRequestAtoms > 0 &&
+                (paymentKey.empty() ||
+                 acceptedRentalPayments_.count(paymentKey) != 0 ||
+                 it->second.spentPaymentTxids.count(paymentKey) != 0)) {
+                paymentAlreadyUsed = true;
+            } else {
+                it->second.seenRequestIds.insert(req.requestId);
+                sess = it->second;
+            }
         }
 
         auto sendErr = [&](const std::string& errText) {
@@ -414,31 +577,88 @@
             }
         };
 
+        if (paymentAlreadyUsed) {
+            sendErr("ERROR: payment_invalid_or_missing");
+            return;
+        }
+        const uint64_t now = std::time(nullptr);
+        if (sess.expiresAt != 0 && sess.expiresAt < now) return;
+        if (!renterId.empty() && renterId != sess.renterId) return;
+        if (!modelAccess_->canAccess(sess.renterId)) return;
+        if (modelAccess_->isRateLimited(sess.renterId)) return;
+
+        // Pending or confirmed transfer from the renter to this provider.
+        uint64_t paid = 0;
+        bool paidOk = false;
+        if (sess.pricePerRequestAtoms > 0) {
+            paidOk = verifyPaymentToSelf(req.paymentTxidHex, sess.renterId, sess.pricePerRequestAtoms, paid);
+        } else {
+            paidOk = true;
+        }
+
         if (!paidOk) {
             sendErr("ERROR: payment_invalid_or_missing");
             return;
         }
 
+        bool reservedPayment = false;
+        bool paymentReplay = false;
+        if (sess.pricePerRequestAtoms > 0) {
+            std::lock_guard<std::mutex> lock(remoteProvMtx_);
+            auto it = providerSessions_.find(req.sessionId);
+            if (it == providerSessions_.end()) return;
+            const uint64_t nowLocked = static_cast<uint64_t>(std::time(nullptr));
+            if (it->second.expiresAt != 0 && it->second.expiresAt < nowLocked) return;
+            if (paymentKey.empty() ||
+                acceptedRentalPayments_.count(paymentKey) != 0 ||
+                it->second.spentPaymentTxids.count(paymentKey) != 0 ||
+                it->second.spentPaymentTxids.size() >= kReplayCap) {
+                paymentReplay = true;
+            } else {
+                acceptedRentalPayments_.insert(paymentKey);
+                it->second.spentPaymentTxids.insert(paymentKey);
+                reservedPayment = true;
+            }
+        }
+        if (paymentReplay) {
+            sendErr("ERROR: payment_invalid_or_missing");
+            return;
+        }
+        auto releasePayment = [&]() {
+            if (!reservedPayment) return;
+            std::lock_guard<std::mutex> lock(remoteProvMtx_);
+            acceptedRentalPayments_.erase(paymentKey);
+            auto it = providerSessions_.find(req.sessionId);
+            if (it != providerSessions_.end()) {
+                it->second.spentPaymentTxids.erase(paymentKey);
+            }
+            reservedPayment = false;
+        };
+
         std::string resultText;
         uint64_t startMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
 
+        std::string modelError;
         {
             std::lock_guard<std::mutex> lock(modelMtx_);
             if (!modelLoader_->isLoaded()) {
-                sendErr("ERROR: model_not_loaded");
-                return;
+                modelError = "ERROR: model_not_loaded";
+            } else if (modelLoader_->isGenerating()) {
+                modelError = "ERROR: model_busy";
+            } else {
+                model::GenerationParams gp;
+                gp.maxTokens = std::max<uint32_t>(1, req.maxTokens);
+                gp.temperature = std::max(0.0f, req.temperature);
+                gp.topP = std::max(0.0f, req.topP);
+                gp.topK = req.topK;
+                resultText = modelLoader_->generate(req.prompt, gp);
             }
-            if (modelLoader_->isGenerating()) {
-                sendErr("ERROR: model_busy");
-                return;
-            }
-            model::GenerationParams gp;
-            gp.maxTokens = std::max<uint32_t>(1, req.maxTokens);
-            gp.temperature = std::max(0.0f, req.temperature);
-            gp.topP = std::max(0.0f, req.topP);
-            gp.topK = req.topK;
-            resultText = modelLoader_->generate(req.prompt, gp);
+        }
+        if (!modelError.empty()) {
+            releasePayment();
+            sendErr(modelError);
+            return;
         }
 
         uint64_t endMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -491,19 +711,26 @@
     
     void handleVersionMessage(const std::string& peerId, const network::Message& msg) {
         if (msg.payload.size() < 40) return;
+        if (!acceptPeerVersion(peerId)) return;
         synapse::VersionMessage v = synapse::VersionMessage::deserialize(msg.payload);
+        notePeerVersionAdvertisement(peerId, v.startHeight, v.addrRecv);
+        sendVerack(peerId);
+    }
+
+    void applyPeerVersionAdvertisement(const std::string& peerId, uint64_t startHeight,
+                                       const std::array<uint8_t, 16>& addrRecv) {
         {
             std::lock_guard<std::mutex> lock(peerHeightsMtx_);
-            peerHeights_[peerId] = v.startHeight;
+            peerHeights_[peerId] = startHeight;
         }
-        if (v.startHeight > networkHeight_) {
-            networkHeight_ = v.startHeight;
+        if (startHeight > networkHeight_) {
+            networkHeight_ = startHeight;
         }
-        
-        if (discovery_ && v.addrRecv[10] == 0xff && v.addrRecv[11] == 0xff) {
+
+        if (discovery_ && addrRecv[10] == 0xff && addrRecv[11] == 0xff) {
             char ipStr[INET_ADDRSTRLEN];
             in_addr ipv4{};
-            std::memcpy(&ipv4, v.addrRecv.data() + 12, 4);
+            std::memcpy(&ipv4, addrRecv.data() + 12, 4);
             if (inet_ntop(AF_INET, &ipv4, ipStr, sizeof(ipStr))) {
                 std::string ourIP = ipStr;
                 if (ourIP != "127.0.0.1" && ourIP != "0.0.0.0" && ourIP.find("127.") != 0) {
@@ -511,30 +738,24 @@
                 }
             }
         }
-        
-        sendVerack(peerId);
-        sendPeerHello(peerId);
-        sendGetAddr(peerId);
-        if (agentTorRequired_.load()) {
-            auto onionReq = makeMessage("get_onion_peers", {});
-            network_->send(peerId, onionReq);
-        }
-        sendMempoolRequest(peerId);
-        sendPoeInventory(peerId);
-        sendUpdateBundleInventory(peerId);
-        startPoeSync(peerId);
     }
 
     void handlePeerHelloMessage(const std::string& peerId, const network::Message& msg) {
         const auto parsed = core::parsePeerHelloPayload(msg.payload);
         if (!parsed) {
-            utils::Logger::warn("Ignored malformed peer_hello from " + peerId);
+            utils::Logger::warn("Ignored malformed peer_hello");
             return;
         }
 
         if (agentTorRequired_.load() && parsed->transport == "clearnet") {
-            utils::Logger::warn("Rejected clearnet-only peer_hello from " + peerId + " (tor-only mode)");
+            utils::Logger::warn("Rejected clearnet-only peer_hello in tor-only mode");
             if (network_) network_->disconnect(peerId);
+            return;
+        }
+
+        const network::Peer live = network_ ? network_->getPeer(peerId) : network::Peer{};
+        if (live.id != peerId || !core::peerHelloMatchesSocket(live.address, *parsed)) {
+            utils::Logger::warn("Rejected peer_hello that does not match the connected socket");
             return;
         }
 
@@ -543,7 +764,13 @@
             peerHelloById_[peerId] = *parsed;
         }
 
-        if (discovery_ && core::isValidOnionHost(parsed->advertisedHost) && parsed->advertisedPort > 0) {
+        std::string socketHost = live.address;
+        for (char& ch : socketHost) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        // Only the socket that is this onion may mark it connected.
+        if (discovery_ && socketHost == parsed->advertisedHost &&
+            core::isValidOnionHost(parsed->advertisedHost) && parsed->advertisedPort > 0) {
             network::PeerInfo peerInfo{};
             peerInfo.address = parsed->advertisedHost;
             peerInfo.port = parsed->advertisedPort;
@@ -556,8 +783,14 @@
     }
     
     void handleVerackMessage(const std::string& peerId, const network::Message& msg) {
-        (void)peerId;
         (void)msg;
+        if (!acceptPeerVerack(peerId)) return;
+        uint64_t startHeight = 0;
+        std::array<uint8_t, 16> addrRecv{};
+        if (takePeerVersionAdvertisement(peerId, startHeight, addrRecv)) {
+            applyPeerVersionAdvertisement(peerId, startHeight, addrRecv);
+        }
+        sendPostHandshake(peerId);
     }
     
     void handlePongMessage(const std::string& peerId, const network::Message& msg) {
@@ -1157,9 +1390,8 @@
         if (!f.good()) return;
         f << j.dump() << "\n";
         f.close();
-#ifndef _WIN32
-        ::chmod(path.c_str(), S_IRUSR | S_IWUSR);
-#endif
+        // A failed lock leaves the private coin file in place.
+        utils::lockFileToCurrentUser(path);
     }
 
     bool creditPoeReward(const crypto::PublicKey& author, const crypto::Hash256& rewardId, uint64_t amount) {

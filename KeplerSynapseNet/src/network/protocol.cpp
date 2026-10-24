@@ -13,6 +13,7 @@
 #include <chrono>
 #include <random>
 #include <cctype>
+#include <openssl/crypto.h>
 #include <openssl/rand.h>
 
 namespace synapse {
@@ -608,6 +609,7 @@ private:
     MessageParser parser;
     uint32_t protocolVersion;
     uint64_t localNonce;
+    bool localNonceReady;
     std::string userAgent;
     int32_t startHeight;
     uint64_t services;
@@ -616,13 +618,17 @@ private:
     std::mt19937_64 rng;
 
 public:
-    ProtocolHandler() : protocolVersion(LOCAL_PROTOCOL_VERSION), startHeight(0),
+    ProtocolHandler() : protocolVersion(LOCAL_PROTOCOL_VERSION), localNonce(0),
+                        localNonceReady(false), startHeight(0),
                         services(1), handshakeComplete(false), sendHeaders(false),
                         rng(std::random_device{}()) {
-        // initialize localNonce with secure RNG
-        if (1 != RAND_bytes(reinterpret_cast<unsigned char*>(&localNonce), sizeof(localNonce))) {
-            // fallback to PRNG if RAND_bytes fails
-            localNonce = rng();
+        crypto::containForeignCryptoModules();
+        if (1 == RAND_bytes(reinterpret_cast<unsigned char*>(&localNonce), sizeof(localNonce))) {
+            localNonceReady = true;
+        } else {
+            OPENSSL_cleanse(&localNonce, sizeof(localNonce));
+            localNonce = 0;
+            localNonceReady = false;
         }
         userAgent = "/SynapseNet:0.1.0/";
     }
@@ -640,6 +646,7 @@ public:
     }
 
     std::vector<uint8_t> createVersionMessage(const std::string& remoteIP, uint16_t remotePort) {
+        if (!localNonceReady) return {};
         VersionMessage version;
         version.version = protocolVersion;
         version.services = services;

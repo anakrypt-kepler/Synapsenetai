@@ -46,9 +46,12 @@ using pid_t = int;
 #define __builtin_popcountll(x) static_cast<int>(__popcnt64(static_cast<unsigned long long>(x)))
 #endif
 
+// _popen starts cmd.exe. The desktop sources do not need that.
+inline FILE* synapse_popen_refused(const char*, const char*) { return nullptr; }
+inline int synapse_pclose_refused(FILE*) { return -1; }
 #ifndef popen
-#define popen _popen
-#define pclose _pclose
+#define popen synapse_popen_refused
+#define pclose synapse_pclose_refused
 #endif
 
 #ifndef F_GETFL

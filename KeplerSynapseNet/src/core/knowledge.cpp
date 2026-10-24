@@ -181,7 +181,7 @@ bool KnowledgeNetwork::open(const std::string& dbPath) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     if (!impl_->db.open(dbPath)) return false;
     auto counterData = impl_->db.get("meta:counter");
-    if (!counterData.empty()) {
+    if (counterData.size() >= 8) {
         impl_->entryCounter = readU64(counterData.data());
     }
     return true;

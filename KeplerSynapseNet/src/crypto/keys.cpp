@@ -1,6 +1,7 @@
 #include "crypto/keys.h"
 #include "crypto/address.h"
 #include "crypto/crypto.h"
+#include "utils/secret_file.h"
 #include "quantum/application_signature.h"
 #include "tui/bip39_wordlist.h"
 #include <fstream>
@@ -9,7 +10,10 @@
 #include <cstring>
 #include <set>
 #include <random>
+#include <mutex>
 #include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <openssl/crypto.h>
 
 #ifdef SYNAPSE_USE_SECP256K1
 #include <secp256k1.h>
@@ -32,10 +36,31 @@ static const std::vector<std::string>& bip39Wordlist() {
 }
 
 #ifdef SYNAPSE_USE_SECP256K1
-static secp256k1_context* ecdhContext() {
-    static secp256k1_context* ctx = secp256k1_context_create(
-        SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+static std::mutex& ecdhMtx() {
+    static std::mutex m;
+    return m;
+}
+
+static secp256k1_context* ecdhSignContext() {
+    static secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
     return ctx;
+}
+
+static secp256k1_context* ecdhParseContext() {
+    static secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
+    return ctx;
+}
+
+static bool randomizeEcdhSignContext(secp256k1_context* ctx) {
+    if (ctx == nullptr) return false;
+    unsigned char blinding[32];
+    if (RAND_bytes(blinding, static_cast<int>(sizeof(blinding))) != 1) {
+        OPENSSL_cleanse(blinding, sizeof(blinding));
+        return false;
+    }
+    const int ok = secp256k1_context_randomize(ctx, blinding);
+    OPENSSL_cleanse(blinding, sizeof(blinding));
+    return ok == 1;
 }
 #endif
 
@@ -115,12 +140,28 @@ Keys::~Keys() { wipe(); }
 
 bool Keys::generate(KeyType type) {
     impl_->keyType = type;
-    impl_->privateKey.resize(32);
-    impl_->seed.resize(64);
+    impl_->valid = false;
+    impl_->privateKey.assign(32, 0);
+    impl_->seed.assign(64, 0);
+
+    auto fail = [&]() {
+        secureZero(impl_->privateKey.data(), impl_->privateKey.size());
+        secureZero(impl_->seed.data(), impl_->seed.size());
+        impl_->privateKey.clear();
+        impl_->seed.clear();
+        if (!impl_->publicKey.empty()) {
+            secureZero(impl_->publicKey.data(), impl_->publicKey.size());
+            impl_->publicKey.clear();
+        }
+        impl_->valid = false;
+        return false;
+    };
 
     for (int attempt = 0; attempt < 1000; ++attempt) {
         auto rnd = randomBytes(32);
+        if (rnd.size() != 32) return fail();
         std::memcpy(impl_->privateKey.data(), rnd.data(), 32);
+        secureZero(rnd.data(), rnd.size());
         impl_->derivePublicKey();
         bool allZero = true;
         for (auto b : impl_->publicKey) {
@@ -128,15 +169,16 @@ bool Keys::generate(KeyType type) {
         }
         if (!allZero) {
             auto rnd2 = randomBytes(64);
+            if (rnd2.size() != 64) return fail();
             std::memcpy(impl_->seed.data(), rnd2.data(), 64);
+            secureZero(rnd2.data(), rnd2.size());
             impl_->valid = true;
             impl_->ensureHybridKeyPair();
             return true;
         }
     }
 
-    impl_->valid = false;
-    return false;
+    return fail();
 }
 
 bool Keys::fromSeed(const std::vector<uint8_t>& seed) {
@@ -147,8 +189,15 @@ bool Keys::fromSeed(const std::vector<uint8_t>& seed) {
     std::vector<uint8_t> key(13);
     std::memcpy(key.data(), "Bitcoin seed", 12);
     auto derived = impl_->hmacSha512(key, seed);
-    
+    if (derived.size() < 32) {
+        if (!derived.empty()) secureZero(derived.data(), derived.size());
+        secureZero(impl_->seed.data(), impl_->seed.size());
+        impl_->seed.clear();
+        impl_->valid = false;
+        return false;
+    }
     impl_->privateKey.assign(derived.begin(), derived.begin() + 32);
+    secureZero(derived.data(), derived.size());
 
     for (int attempt = 0; attempt < 1000; ++attempt) {
         impl_->derivePublicKey();
@@ -165,6 +214,14 @@ bool Keys::fromSeed(const std::vector<uint8_t>& seed) {
     }
 
     impl_->valid = false;
+    if (!impl_->privateKey.empty()) {
+        secureZero(impl_->privateKey.data(), impl_->privateKey.size());
+        impl_->privateKey.clear();
+    }
+    if (!impl_->seed.empty()) {
+        secureZero(impl_->seed.data(), impl_->seed.size());
+        impl_->seed.clear();
+    }
     return false;
 }
 
@@ -173,11 +230,16 @@ bool Keys::fromMnemonic(const std::string& mnemonic) {
     
     impl_->mnemonic = mnemonic;
     // Derive seed using PBKDF2-HMAC-SHA512 per BIP39 (100000 iterations)
+    containForeignCryptoModules();
     impl_->seed.resize(64);
     const unsigned char* salt = reinterpret_cast<const unsigned char*>("mnemonic");
     const int saltLen = 8; // length of "mnemonic"
     if (1 != PKCS5_PBKDF2_HMAC(mnemonic.c_str(), static_cast<int>(mnemonic.size()),
                                salt, saltLen, 100000, EVP_sha512(), 64, impl_->seed.data())) {
+        secureZero(impl_->seed.data(), impl_->seed.size());
+        impl_->seed.clear();
+        secureZero(const_cast<char*>(impl_->mnemonic.data()), impl_->mnemonic.size());
+        impl_->mnemonic.clear();
         return false;
     }
 
@@ -206,6 +268,7 @@ std::string Keys::generateMnemonic(uint32_t wordCount) {
     uint32_t entropyBytes = entropyBits / 8;
     
     auto entropy = randomBytes(entropyBytes);
+    if (entropy.size() != entropyBytes) return {};
     Hash256 hash = sha256(entropy.data(), entropy.size());
     
     std::vector<bool> bits;
@@ -323,8 +386,13 @@ DerivedKey Keys::deriveChild(uint32_t index) {
     data.push_back(index & 0xff);
     
     auto hmac = impl_->hmacSha512(impl_->seed, data);
+    secureZero(data.data(), data.size());
+    if (hmac.size() < 32) {
+        if (!hmac.empty()) secureZero(hmac.data(), hmac.size());
+        return derived;
+    }
     derived.key.assign(hmac.begin(), hmac.begin() + 32);
-    
+    secureZero(hmac.data(), hmac.size());
     return derived;
 }
 
@@ -369,6 +437,7 @@ std::vector<uint8_t> Keys::sign(const std::vector<uint8_t>& message) const {
     std::memcpy(privKey.data(), impl_->privateKey.data(), 32);
     
     Signature sig = synapse::crypto::sign(hash, privKey);
+    secureZero(privKey.data(), privKey.size());
     return std::vector<uint8_t>(sig.begin(), sig.end());
 }
 
@@ -392,16 +461,21 @@ std::vector<uint8_t> Keys::sharedSecret(const std::vector<uint8_t>& otherPublicK
     if (otherPublicKey.size() != PUBLIC_KEY_SIZE && otherPublicKey.size() != 65) return {};
 
 #ifdef SYNAPSE_USE_SECP256K1
-    secp256k1_context* ctx = ecdhContext();
+    containForeignCryptoModules();
+    std::lock_guard<std::mutex> lock(ecdhMtx());
+    secp256k1_context* signCtx = ecdhSignContext();
+    secp256k1_context* parseCtx = ecdhParseContext();
+    if (!randomizeEcdhSignContext(signCtx) || parseCtx == nullptr) return {};
+
     std::array<uint8_t, PRIVATE_KEY_SIZE> privateKey{};
     std::array<uint8_t, SHA256_SIZE> secret{};
     secp256k1_pubkey peerPubKey{};
     std::memcpy(privateKey.data(), impl_->privateKey.data(), privateKey.size());
 
     const bool ok =
-        secp256k1_ec_seckey_verify(ctx, privateKey.data()) == 1 &&
-        secp256k1_ec_pubkey_parse(ctx, &peerPubKey, otherPublicKey.data(), otherPublicKey.size()) == 1 &&
-        secp256k1_ecdh(ctx, secret.data(), &peerPubKey, privateKey.data(), nullptr, nullptr) == 1;
+        secp256k1_ec_seckey_verify(signCtx, privateKey.data()) == 1 &&
+        secp256k1_ec_pubkey_parse(parseCtx, &peerPubKey, otherPublicKey.data(), otherPublicKey.size()) == 1 &&
+        secp256k1_ecdh(signCtx, secret.data(), &peerPubKey, privateKey.data(), nullptr, nullptr) == 1;
 
     secureZero(privateKey.data(), privateKey.size());
     secureZero(&peerPubKey, sizeof(peerPubKey));
@@ -423,18 +497,15 @@ bool Keys::save(const std::string& path, const std::string& password) {
     std::vector<uint8_t> encrypted;
     if (!exportEncrypted(encrypted, password)) return false;
 
-    std::ofstream file(path, std::ios::binary);
-    if (!file.is_open()) return false;
-
-    file.write(reinterpret_cast<const char*>(encrypted.data()), encrypted.size());
-    if (!file.good()) return false;
-    file.close();
+    const std::string bytes(reinterpret_cast<const char*>(encrypted.data()), encrypted.size());
+    if (!utils::writeFileForCurrentUser(path, bytes)) return false;
 
     impl_->ensureHybridKeyPair();
     return true;
 }
 
 bool Keys::load(const std::string& path, const std::string& password) {
+    if (!utils::lockFileToCurrentUser(path)) return false;
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) return false;
 
@@ -454,10 +525,13 @@ bool Keys::exportEncrypted(std::vector<uint8_t>& output, const std::string& pass
     if (impl_->privateKey.empty()) return false;
     
     auto salt = randomBytes(16);
+    if (salt.size() != 16) return false;
     auto keyArr = deriveKey(password, salt);
 
     std::vector<uint8_t> plaintext(impl_->privateKey.begin(), impl_->privateKey.end());
     auto ciphertext = crypto::encryptAES(plaintext, keyArr);
+    secureZero(keyArr.data(), keyArr.size());
+    secureZero(plaintext.data(), plaintext.size());
     if (ciphertext.empty()) return false;
 
     output.clear();
@@ -475,6 +549,7 @@ bool Keys::importEncrypted(const std::vector<uint8_t>& data, const std::string& 
 
     std::vector<uint8_t> ciphertext(data.begin() + 16, data.end());
     auto decrypted = crypto::decryptAES(ciphertext, keyArr);
+    secureZero(keyArr.data(), keyArr.size());
     if (decrypted.empty()) return false;
 
     impl_->privateKey = std::move(decrypted);
@@ -483,8 +558,14 @@ bool Keys::importEncrypted(const std::vector<uint8_t>& data, const std::string& 
     for (auto b : impl_->publicKey) {
         if (b != 0) { allZero = false; break; }
     }
-    impl_->valid = !allZero;
-    return impl_->valid;
+    if (allZero) {
+        secureZero(impl_->privateKey.data(), impl_->privateKey.size());
+        impl_->privateKey.clear();
+        impl_->valid = false;
+        return false;
+    }
+    impl_->valid = true;
+    return true;
 }
 
 void Keys::wipe() {

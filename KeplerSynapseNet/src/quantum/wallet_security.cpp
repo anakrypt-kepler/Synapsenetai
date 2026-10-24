@@ -1,5 +1,6 @@
 #include "quantum/wallet_security.h"
 #include "crypto/crypto.h"
+#include "oqs_rng_scope.h"
 #include "pqc_backend_oqs.h"
 #include <array>
 #include <algorithm>
@@ -131,6 +132,7 @@ std::vector<uint8_t> decryptWithSuppliedKey(const std::vector<uint8_t>& data,
 // This liboqs has no OQS_KEM_keypair_derand. Seed Kyber the same way
 // HybridSig seeds Dilithium: HKDF → SHAKE stream → temporary OQS RNG.
 std::vector<uint8_t> shake256Expand(const std::vector<uint8_t>& seed, size_t outputLen) {
+    crypto::containForeignCryptoModules();
     std::vector<uint8_t> out(outputLen);
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (!ctx) return {};
@@ -140,123 +142,15 @@ std::vector<uint8_t> shake256Expand(const std::vector<uint8_t>& seed, size_t out
     if (ok && 1 != EVP_DigestFinalXOF(ctx, out.data(), outputLen)) ok = false;
     EVP_MD_CTX_free(ctx);
     if (!ok) {
+        OPENSSL_cleanse(out.data(), out.size());
         out.clear();
         return {};
     }
     return out;
 }
 
-std::mutex& fileKyberRngMutex() {
-    static std::mutex m;
-    return m;
-}
-
-// liboqs 0.12 keeps one process-wide RNG function pointer. The coin stream
-// is thread-local so only the thread that armed it reads those bytes.
-// Any other thread that enters this hook draws from OpenSSL instead.
-thread_local std::vector<uint8_t> tl_file_kyber_stream;
-thread_local size_t tl_file_kyber_pos = 0;
-thread_local bool tl_file_kyber_active = false;
-thread_local bool tl_file_kyber_underflow = false;
-thread_local int tl_os_fill_depth = 0;
-
 // ML-KEM-768 and Kyber768 keygen read 64 coins (d || z) in one draw.
 constexpr size_t kDeterministicKeygenCoins = 64;
-
-bool fillOsRandom(uint8_t* out, size_t n) {
-    if (out == nullptr || n == 0 || tl_os_fill_depth != 0) return false;
-    ++tl_os_fill_depth;
-    uint8_t* cursor = out;
-    size_t left = n;
-    bool ok = true;
-    while (ok && left > 0) {
-        const size_t chunk = std::min(left, static_cast<size_t>(1u << 30));
-        if (RAND_bytes(cursor, static_cast<int>(chunk)) != 1) {
-            RAND_poll();
-            if (RAND_bytes(cursor, static_cast<int>(chunk)) != 1) {
-                ok = false;
-                break;
-            }
-        }
-        cursor += chunk;
-        left -= chunk;
-    }
-    --tl_os_fill_depth;
-    if (!ok) OPENSSL_cleanse(out, n);
-    return ok;
-}
-
-void fileKyberRngCallback(uint8_t* out, size_t n) {
-    if (n == 0) return;
-    if (out == nullptr) {
-        tl_file_kyber_underflow = true;
-        return;
-    }
-    if (!tl_file_kyber_active) {
-        if (!fillOsRandom(out, n)) {
-            OPENSSL_cleanse(out, n);
-            // The hook cannot report failure. A zero buffer would be shared
-            // with every other liboqs caller, so stop instead of returning it.
-            std::abort();
-        }
-        return;
-    }
-    if (tl_file_kyber_pos > tl_file_kyber_stream.size() ||
-        n > tl_file_kyber_stream.size() - tl_file_kyber_pos) {
-        tl_file_kyber_underflow = true;
-        std::memset(out, 0, n);
-        return;
-    }
-    std::memcpy(out, tl_file_kyber_stream.data() + tl_file_kyber_pos, n);
-    tl_file_kyber_pos += n;
-}
-
-// Installs the process-wide hook for one deterministic keygen and always
-// restores the system generator, including when keygen throws.
-class FileKyberRngGuard {
-public:
-    explicit FileKyberRngGuard(std::vector<uint8_t> stream)
-        : prevStream_(std::move(tl_file_kyber_stream)),
-          prevPos_(tl_file_kyber_pos),
-          prevActive_(tl_file_kyber_active),
-          prevUnderflow_(tl_file_kyber_underflow) {
-        tl_file_kyber_stream = std::move(stream);
-        tl_file_kyber_pos = 0;
-        tl_file_kyber_underflow = false;
-        tl_file_kyber_active = true;
-        OQS_randombytes_custom_algorithm(fileKyberRngCallback);
-        armed_ = true;
-    }
-
-    ~FileKyberRngGuard() {
-        if (armed_) {
-            OQS_randombytes_switch_algorithm(OQS_RAND_alg_system);
-            armed_ = false;
-        }
-        if (!tl_file_kyber_stream.empty()) {
-            OPENSSL_cleanse(tl_file_kyber_stream.data(), tl_file_kyber_stream.size());
-        }
-        tl_file_kyber_stream = std::move(prevStream_);
-        tl_file_kyber_pos = prevPos_;
-        tl_file_kyber_active = prevActive_;
-        tl_file_kyber_underflow = prevUnderflow_;
-    }
-
-    FileKyberRngGuard(const FileKyberRngGuard&) = delete;
-    FileKyberRngGuard& operator=(const FileKyberRngGuard&) = delete;
-
-    bool accepted() const {
-        return tl_file_kyber_active && !tl_file_kyber_underflow &&
-               tl_file_kyber_pos >= kDeterministicKeygenCoins;
-    }
-
-private:
-    std::vector<uint8_t> prevStream_;
-    size_t prevPos_ = 0;
-    bool prevActive_ = false;
-    bool prevUnderflow_ = false;
-    bool armed_ = false;
-};
 
 #endif // USE_LIBOQS
 
@@ -352,13 +246,12 @@ bool WalletSecurity::deriveFileKyberKeyPair(const std::vector<uint8_t>& pbkdf2Ke
         return false;
     }
 
-    std::lock_guard<std::mutex> rngLock(fileKyberRngMutex());
-    FileKyberRngGuard rng(std::move(stream));
+    detail::OqsDeterministicRngGuard rng(std::move(stream));
     Kyber kyber;
     out = kyber.generateKeyPair();
     // Coins must come from this thread's stream. A keypair drawn while the
     // hook was exhausted, or never consulted, is not reproducible.
-    if (!rng.accepted()) {
+    if (!rng.accepted(kDeterministicKeygenCoins)) {
         OPENSSL_cleanse(out.publicKey.data(), out.publicKey.size());
         OPENSSL_cleanse(out.secretKey.data(), out.secretKey.size());
         out = KyberKeyPair{};

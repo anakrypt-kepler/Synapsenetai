@@ -95,21 +95,31 @@ bool argContainsControlChar(const std::string& value) const {
     return false;
 }
 
-void restrictManagedTorDirPermissions(const std::filesystem::path& dir) const {
-#ifndef _WIN32
-    std::error_code ec;
-    if (!std::filesystem::is_directory(dir, ec) || ec) return;
-    std::filesystem::permissions(
-        dir,
-        std::filesystem::perms::owner_all,
-        std::filesystem::perm_options::replace,
-        ec);
-    if (ec) {
+bool managedTorCredentialsAreLocked(const std::filesystem::path& torDir) const {
+    auto lockedDir = [&](const std::filesystem::path& dir) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(dir, ec) || ec) return false;
+        if (utils::lockDirectoryToCurrentUser(dir.string())) return true;
         utils::Logger::warn("Could not restrict permissions on managed Tor directory " + dir.string());
+        return false;
+    };
+    if (!lockedDir(torDir)) return false;
+    const auto hidden = torDir / "hidden_service";
+    std::error_code ec;
+    if (std::filesystem::is_directory(hidden, ec) && !ec && !lockedDir(hidden)) return false;
+    const std::filesystem::path files[] = {
+        torDir / "control_auth_cookie",
+        hidden / "hs_ed25519_secret_key",
+        hidden / "private_key",
+    };
+    for (const auto& file : files) {
+        ec.clear();
+        if (!std::filesystem::is_regular_file(file, ec) || ec) continue;
+        if (utils::lockFileToCurrentUser(file.string())) continue;
+        utils::Logger::warn("Could not restrict permissions on a managed Tor credential file");
+        return false;
     }
-#else
-    (void)dir;
-#endif
+    return true;
 }
 
 bool spawnWithoutShell(const std::vector<std::string>& argv) const {
@@ -118,6 +128,11 @@ bool spawnWithoutShell(const std::vector<std::string>& argv) const {
         if (argContainsControlChar(arg)) {
             utils::Logger::warn(
                 "Refusing to launch managed Tor because a command argument contains unsupported control characters");
+            return false;
+        }
+        if (arg.find('"') != std::string::npos) {
+            utils::Logger::warn(
+                "Refusing to launch managed Tor because a command argument contains an unsupported quote");
             return false;
         }
     }
@@ -159,14 +174,6 @@ bool spawnWithoutShell(const std::vector<std::string>& argv) const {
     if (!WIFEXITED(status)) return false;
     return WEXITSTATUS(status) == 0;
 #else
-    for (const std::string& arg : argv) {
-        if (arg.find('"') != std::string::npos) {
-            utils::Logger::warn(
-                "Refusing to launch managed Tor because a command argument contains an unsupported quote");
-            return false;
-        }
-    }
-
     auto appendArg = [](std::string& commandLine, const std::string& arg) {
         const bool needsQuote = arg.empty() || arg.find_first_of(" \t") != std::string::npos;
         if (!needsQuote) {
@@ -236,10 +243,13 @@ bool spawnManagedTorProcess(const std::string& torBin,
         return false;
     }
 
-    // Tor rejects a world-readable DataDirectory or HiddenServiceDir. Tighten
-    // both before -f loads the hidden service from the generated torrc.
-    restrictManagedTorDirPermissions(torDir);
-    restrictManagedTorDirPermissions(torDir / "hidden_service");
+    // Tor rejects a world-readable DataDirectory or HiddenServiceDir. Do not
+    // start when the directory or an existing credential file cannot be
+    // limited to the current user.
+    if (!managedTorCredentialsAreLocked(torDir)) {
+        utils::Logger::warn("Refusing to start managed Tor because its credential files could not be locked to the current user");
+        return false;
+    }
 
     const std::string socksSpec = socksHost + ":" + std::to_string(socksPort);
     const std::string controlSpec = std::string("127.0.0.1:") + std::to_string(controlPort);
@@ -1355,9 +1365,8 @@ bool tryBootstrapTorBinary(const std::filesystem::path& torDir) {
 #ifdef SYNAPSE_TOR_BOOTSTRAP_SCRIPT
     const std::string script = SYNAPSE_TOR_BOOTSTRAP_SCRIPT;
     if (!std::filesystem::exists(script)) return false;
-    const std::string cmd = "bash " + script + " " + torDir.string() + " > /dev/null 2>&1";
     utils::Logger::info("Running Tor bootstrap script: " + script);
-    return std::system(cmd.c_str()) == 0;
+    return spawnWithoutShell({"bash", script, torDir.string()});
 #else
     (void)torDir;
     return false;

@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import time
+from urllib.parse import urlsplit
 
 ONION_CAPTCHA_SOURCES = [
     {
@@ -34,8 +35,67 @@ ONION_CAPTCHA_SOURCES = [
 AHMIA_SEARCH = "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/search/?q="
 TORCH_SEARCH = "http://torchdeedp3i2jigzjdmfpn5ttjhthh5wbmda2rr3jvqjg5p77c54dqd.onion/search?query="
 
+_ONION_ALPHABET = frozenset("abcdefghijklmnopqrstuvwxyz234567")
+
+
+def http_hostname(url):
+    """Hostname from the URL authority. Userinfo, path, and query do not count."""
+    try:
+        parts = urlsplit((url or "").strip())
+    except ValueError:
+        return ""
+    if parts.scheme not in ("http", "https"):
+        return ""
+    return (parts.hostname or "").lower().rstrip(".")
+
+
+def is_onion_http_url(url):
+    """True only when the hostname's last label is onion.
+
+    The address label is the one before that suffix. A lookalike earlier in
+    the path, query, or userinfo is a different host.
+    """
+    host = http_hostname(url)
+    labels = [part for part in host.split(".") if part]
+    if len(labels) < 2 or labels[-1] != "onion":
+        return False
+    address = labels[-2]
+    if not 1 <= len(address) <= 63:
+        return False
+    return all(ch in _ONION_ALPHABET for ch in address)
+
+
+def onion_urls_from_html(html, limit=20):
+    found = []
+    for raw in re.findall(r"https?://[^\s\"'<>]+", html or ""):
+        if not is_onion_http_url(raw) or raw in found:
+            continue
+        found.append(raw)
+        if len(found) >= limit:
+            break
+    return found
+
+
+def _same_http_host(url, base_url):
+    host = http_hostname(url)
+    return bool(host) and host == http_hostname(base_url)
+
+
+def _origin_join(base_url, path):
+    try:
+        parts = urlsplit(base_url)
+    except ValueError:
+        return ""
+    host = (parts.hostname or "").lower().rstrip(".")
+    if parts.scheme not in ("http", "https") or not host:
+        return ""
+    netloc = host if not parts.port else f"{host}:{parts.port}"
+    return f"{parts.scheme}://{netloc}{path}"
+
 
 def fetch_tor(url, timeout=30):
+    if not is_onion_http_url(url):
+        return b""
     try:
         result = subprocess.run(
             [
@@ -53,6 +113,8 @@ def fetch_tor(url, timeout=30):
 
 
 def fetch_tor_binary(url, output_path, timeout=30):
+    if not is_onion_http_url(url):
+        return False
     try:
         subprocess.run(
             [
@@ -106,12 +168,23 @@ def extract_img_src_captcha(html_bytes, base_url):
     for src in srcs:
         if src.startswith("data:"):
             continue
-        if src.startswith("http"):
-            urls.append(src)
+        if src.startswith("http://") or src.startswith("https://"):
+            if _same_http_host(src, base_url):
+                urls.append(src)
+        elif src.startswith("//"):
+            try:
+                scheme = urlsplit(base_url).scheme
+            except ValueError:
+                scheme = ""
+            if scheme not in ("http", "https"):
+                continue
+            absolute = scheme + ":" + src
+            if _same_http_host(absolute, base_url):
+                urls.append(absolute)
         elif src.startswith("/"):
-            domain = re.match(r'(https?://[^/]+)', base_url)
-            if domain:
-                urls.append(domain.group(1) + src)
+            joined = _origin_join(base_url, src)
+            if joined and _same_http_host(joined, base_url):
+                urls.append(joined)
     return urls
 
 
@@ -119,18 +192,14 @@ def search_ahmia_for_captcha_sites(query="captcha register forum"):
     url = AHMIA_SEARCH + query.replace(" ", "+")
     raw = fetch_tor(url, timeout=45)
     html = raw.decode("utf-8", errors="ignore")
-    onion_pattern = r'https?://[a-z2-7]{16,56}\.onion[^\s"<>]*'
-    found = list(set(re.findall(onion_pattern, html)))
-    return found[:20]
+    return onion_urls_from_html(html)
 
 
 def search_torch_for_captcha_sites(query="captcha register"):
     url = TORCH_SEARCH + query.replace(" ", "+")
     raw = fetch_tor(url, timeout=45)
     html = raw.decode("utf-8", errors="ignore")
-    onion_pattern = r'https?://[a-z2-7]{16,56}\.onion[^\s"<>]*'
-    found = list(set(re.findall(onion_pattern, html)))
-    return found[:20]
+    return onion_urls_from_html(html)
 
 
 def harvest_direct_image(source, output_dir, count):
@@ -219,6 +288,8 @@ def discover_and_harvest(output_dir, max_sites=10, per_site=5):
     for url in all_urls:
         if tested >= max_sites:
             break
+        if not is_onion_http_url(url):
+            continue
         tested += 1
         print(f"\nProbing [{tested}/{min(len(all_urls), max_sites)}] {url[:60]}...")
         raw = fetch_tor(url, timeout=20)
@@ -233,8 +304,7 @@ def discover_and_harvest(output_dir, max_sites=10, per_site=5):
         b64_imgs = extract_base64_images(raw)
         for data in b64_imgs:
             h = hashlib.md5(data).hexdigest()[:8]
-            domain = re.search(r'://([^/]+)', url)
-            name = domain.group(1)[:12] if domain else "unknown"
+            name = (http_hostname(url) or "unknown")[:12]
             fname = f"discovered_{name}_{h}.png"
             fpath = os.path.join(output_dir, fname)
             with open(fpath, "wb") as f:
@@ -244,8 +314,7 @@ def discover_and_harvest(output_dir, max_sites=10, per_site=5):
 
         img_urls = extract_img_src_captcha(raw, url)
         for img_url in img_urls[:per_site]:
-            domain = re.search(r'://([^/]+)', url)
-            name = domain.group(1)[:12] if domain else "unknown"
+            name = (http_hostname(url) or "unknown")[:12]
             fname = f"discovered_{name}_{int(time.time())}_{saved}.png"
             fpath = os.path.join(output_dir, fname)
             if fetch_tor_binary(img_url, fpath, timeout=20):

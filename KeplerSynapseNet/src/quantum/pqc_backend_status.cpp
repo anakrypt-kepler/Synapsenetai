@@ -13,11 +13,17 @@ PQCBackendStatus getPQCBackendStatus() {
         OQS_KEM_free(kem);
     }
     if (auto* sig = detail::newPreferredDilithiumSig()) {
-        status.dilithiumReal = true;
+        status.dilithiumReal =
+            sig->length_public_key == DILITHIUM_PUBLIC_KEY_SIZE &&
+            sig->length_secret_key == DILITHIUM_SECRET_KEY_SIZE &&
+            sig->length_signature == DILITHIUM_SIGNATURE_SIZE;
         OQS_SIG_free(sig);
     }
     if (auto* sig = detail::newPreferredSphincsSig()) {
-        status.sphincsReal = true;
+        status.sphincsReal =
+            sig->length_public_key == SPHINCS_PUBLIC_KEY_SIZE &&
+            sig->length_secret_key == SPHINCS_SECRET_KEY_SIZE &&
+            sig->length_signature == SPHINCS_SIGNATURE_SIZE;
         OQS_SIG_free(sig);
     }
 #endif

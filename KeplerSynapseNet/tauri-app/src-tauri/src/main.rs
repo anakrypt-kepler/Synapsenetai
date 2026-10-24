@@ -1,11 +1,50 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use synapsenet_app::commands::{self, EngineState};
 use std::sync::Mutex;
+use synapsenet_app::commands::{self, EngineState};
+use synapsenet_app::navigation;
+use tauri::{Url, WebviewWindowBuilder};
+
+static DEV_ORIGIN: once_cell::sync::OnceCell<Option<Url>> = once_cell::sync::OnceCell::new();
+
+fn origin_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("origin-guard")
+        .on_navigation(|_webview, url| {
+            let dev = DEV_ORIGIN.get().and_then(|origin| origin.as_ref());
+            navigation::allowed(url, dev)
+        })
+        .build()
+}
+
+fn open_configured_windows<R: tauri::Runtime>(
+    app: &mut tauri::App<R>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dev_origin = if cfg!(dev) {
+        app.config().build.dev_url.clone()
+    } else {
+        None
+    };
+    let _ = DEV_ORIGIN.set(dev_origin.clone());
+
+    for window in app
+        .config()
+        .app
+        .windows
+        .iter()
+        .filter(|window| !window.create)
+    {
+        let dev_origin = dev_origin.clone();
+        WebviewWindowBuilder::from_config(app.handle(), window)?
+            .on_navigation(move |url| navigation::allowed(url, dev_origin.as_ref()))
+            .on_new_window(|_url, _features| tauri::webview::NewWindowResponse::Deny)
+            .build()?;
+    }
+    Ok(())
+}
 
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
+        .plugin(origin_guard())
         .plugin(tauri_plugin_dialog::init())
         .manage(EngineState {
             initialized: Mutex::new(false),
@@ -40,6 +79,7 @@ fn main() {
             commands::privacy_view_scan,
             commands::privacy_status,
         ])
+        .setup(open_configured_windows)
         .build(tauri::generate_context!())
         .expect("failed to build synapsenet app")
         .run(|_app, event| {

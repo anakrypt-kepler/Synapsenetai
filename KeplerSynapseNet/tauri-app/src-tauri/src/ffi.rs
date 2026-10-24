@@ -200,6 +200,11 @@ fn is_same_or_under(path: &Path, root: &Path) -> bool {
     !root.is_empty() && path.len() >= root.len() && path[..root.len()] == root[..]
 }
 
+/// True when `path` is `root` or a file inside it, after `..` and links resolve.
+pub(crate) fn path_within_root(path: &Path, root: &Path) -> bool {
+    is_same_or_under(path, root)
+}
+
 fn profile_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(home) = dirs::home_dir() {
@@ -357,6 +362,22 @@ unsafe fn copy_cstr_within(ptr: *const c_char, max_window: usize) -> Option<Stri
         len += 1;
     }
     None
+}
+
+/// Copies one callback C string using the same window as rpc and status.
+///
+/// A null pointer is an empty string. Any other pointer is copied only when a
+/// null byte sits inside that window.
+///
+/// # Safety
+/// When `ptr` is not null, it must be readable through the first null byte, or
+/// for the whole window when no null appears sooner. Bytes past the window are
+/// not read.
+pub(crate) unsafe fn copy_cstr_bounded(ptr: *const c_char) -> Option<String> {
+    if ptr.is_null() {
+        return Some(String::new());
+    }
+    unsafe { copy_cstr_within(ptr, MAX_CSTRING_WINDOW) }
 }
 
 fn ptr_to_string(lib: &SynapsedLib, ptr: *const c_char) -> Result<String, String> {
@@ -572,5 +593,15 @@ mod tests {
         let mut missing = [b'a'; 4];
         let text = unsafe { copy_cstr_within(missing.as_mut_ptr().cast(), missing.len()) };
         assert!(text.is_none());
+    }
+
+    #[test]
+    fn bounded_copy_keeps_terminated_text_and_empty_null() {
+        let text = unsafe { copy_cstr_bounded(std::ptr::null()) };
+        assert_eq!(text.as_deref(), Some(""));
+
+        let terminated = b"node.event\0";
+        let text = unsafe { copy_cstr_bounded(terminated.as_ptr().cast()) };
+        assert_eq!(text.as_deref(), Some("node.event"));
     }
 }

@@ -3,9 +3,11 @@
 
 #include "database/database.h"
 #include <algorithm>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <stdexcept>
+#include <system_error>
 
 #if SYNAPSE_HAVE_SQLITE3
 #include <sqlite3.h>
@@ -142,6 +144,175 @@ void Iterator::prev() {
 std::string Iterator::key() const { return impl_->currentKey; }
 std::vector<uint8_t> Iterator::value() const { return impl_->currentValue; }
 
+namespace {
+
+// A connection may not load an extension or follow a caller-supplied name to
+// another file. URI filenames stay disabled, ATTACH is refused, and a second
+// database file has to stay in the same directory as the open database.
+bool sqlitePathRejected(const std::string& path) {
+    if (path.empty()) return true;
+    if (path == ":memory:") return false;
+    if (path.find('\0') != std::string::npos) return true;
+    if (path.find('?') != std::string::npos ||
+        path.find('#') != std::string::npos ||
+        path.find('%') != std::string::npos) {
+        return true;
+    }
+    for (unsigned char c : path) {
+        if (c < 0x20 || c == 0x7f) return true;
+    }
+    if (path.size() >= 2 &&
+        ((path[0] == '\\' && path[1] == '\\') || (path[0] == '/' && path[1] == '/'))) {
+        return true;
+    }
+
+    std::string lower(path.size(), '\0');
+    for (size_t i = 0; i < path.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(path[i]);
+        lower[i] = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
+    }
+    if (lower.compare(0, 5, "file:") == 0) return true;
+    if (lower.find("://") != std::string::npos) return true;
+
+    const std::filesystem::path fsPath(path);
+    for (const auto& part : fsPath) {
+        if (part == "..") return true;
+    }
+    for (const auto& part : fsPath.lexically_normal()) {
+        if (part == "..") return true;
+    }
+    const auto filename = fsPath.filename();
+    return filename.empty() || filename == "." || filename == "..";
+}
+
+#ifndef SQLITE_OMIT_AUTHORIZATION
+bool nameIsLoadExtension(const char* name) {
+    static constexpr char kExpected[] = "load_extension";
+    if (!name) return false;
+    for (size_t i = 0; kExpected[i] != '\0'; ++i) {
+        const unsigned char c = static_cast<unsigned char>(name[i]);
+        if (c == 0) return false;
+        const char lower = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
+        if (lower != kExpected[i]) return false;
+    }
+    return name[sizeof(kExpected) - 1] == '\0';
+}
+
+extern "C" int synapseDbSqliteDenyForeignFile(
+    void*,
+    int action,
+    const char* arg1,
+    const char* arg2,
+    const char*,
+    const char*) {
+    if (action == SQLITE_ATTACH || action == SQLITE_DETACH) return SQLITE_DENY;
+    if (action == SQLITE_FUNCTION &&
+        (nameIsLoadExtension(arg1) || nameIsLoadExtension(arg2))) {
+        return SQLITE_DENY;
+    }
+    return SQLITE_OK;
+}
+#endif
+
+bool lockDownSqlite(sqlite3* db) {
+    if (!db) return false;
+#ifndef SQLITE_OMIT_LOAD_EXTENSION
+    if (sqlite3_enable_load_extension(db, 0) != SQLITE_OK) return false;
+#if SQLITE_VERSION_NUMBER >= 3013000
+    {
+        int prior = 0;
+        if (sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 0, &prior) != SQLITE_OK) {
+            return false;
+        }
+    }
+#endif
+#endif
+#if SQLITE_VERSION_NUMBER >= 3026000
+    {
+        int prior = 0;
+        if (sqlite3_db_config(db, SQLITE_DBCONFIG_DEFENSIVE, 1, &prior) != SQLITE_OK) return false;
+    }
+#endif
+#if SQLITE_VERSION_NUMBER >= 3031000
+    {
+        int prior = 0;
+        if (sqlite3_db_config(db, SQLITE_DBCONFIG_TRUSTED_SCHEMA, 0, &prior) != SQLITE_OK) return false;
+    }
+#endif
+    sqlite3_limit(db, SQLITE_LIMIT_ATTACHED, 0);
+#ifndef SQLITE_OMIT_AUTHORIZATION
+    if (sqlite3_set_authorizer(db, synapseDbSqliteDenyForeignFile, nullptr) != SQLITE_OK) return false;
+#endif
+    return true;
+}
+
+std::filesystem::path canonicalDirectory(const std::filesystem::path& dir, std::error_code& ec) {
+    ec.clear();
+    std::filesystem::path parent = dir;
+    if (parent.empty()) parent = std::filesystem::current_path(ec);
+    if (ec) return {};
+    const auto canonical = std::filesystem::weakly_canonical(parent, ec);
+    if (ec || canonical.empty()) return {};
+    return canonical;
+}
+
+bool sameCanonicalDirectory(const std::filesystem::path& left, const std::filesystem::path& right) {
+    std::error_code ec;
+    const auto leftDir = canonicalDirectory(left, ec);
+    if (ec || leftDir.empty()) return false;
+    const auto rightDir = canonicalDirectory(right, ec);
+    if (ec || rightDir.empty()) return false;
+    return leftDir == rightDir;
+}
+
+bool openedDatabaseStaysPut(sqlite3* db, const std::string& requested) {
+    const char* actual = sqlite3_db_filename(db, "main");
+    if (requested == ":memory:") return actual == nullptr || actual[0] == '\0';
+    if (!actual || actual[0] == '\0') return false;
+    if (std::string(actual) == requested) return true;
+    if (sqlitePathRejected(actual)) return false;
+    return sameCanonicalDirectory(
+        std::filesystem::path(requested).parent_path(),
+        std::filesystem::path(actual).parent_path());
+}
+
+bool openContainedSqlite(const std::string& path, sqlite3** out) {
+    if (!out) return false;
+    *out = nullptr;
+    if (sqlitePathRejected(path)) return false;
+    if (path != ":memory:") {
+        std::error_code ec;
+        const auto status = std::filesystem::symlink_status(path, ec);
+        if (!ec && std::filesystem::is_symlink(status)) return false;
+        if (ec && ec != std::errc::no_such_file_or_directory) return false;
+    }
+    sqlite3* db = nullptr;
+    // SQLITE_OPEN_URI is omitted so a file: name cannot select another file.
+    const int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+    const int rc = sqlite3_open_v2(path.c_str(), &db, flags, nullptr);
+    if (rc != SQLITE_OK || !db) {
+        if (db) sqlite3_close(db);
+        return false;
+    }
+    if (!lockDownSqlite(db) || !openedDatabaseStaysPut(db, path)) {
+        sqlite3_close(db);
+        return false;
+    }
+    *out = db;
+    return true;
+}
+
+bool sqliteSiblingPathAllowed(const std::string& openPath, const std::string& extraPath) {
+    if (openPath == ":memory:" || extraPath == ":memory:") return false;
+    if (sqlitePathRejected(openPath) || sqlitePathRejected(extraPath)) return false;
+    const std::filesystem::path opened(openPath);
+    const std::filesystem::path extra(extraPath);
+    if (opened.filename().empty() || extra.filename().empty()) return false;
+    return sameCanonicalDirectory(opened.parent_path(), extra.parent_path());
+}
+
+}  // namespace
+
 struct Database::Impl {
     sqlite3* db = nullptr;
     std::string path;
@@ -156,9 +327,13 @@ Database::~Database() { close(); }
 bool Database::open(const std::string& path) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     if (impl_->isOpen) return false;
-    
-    int rc = sqlite3_open(path.c_str(), &impl_->db);
-    if (rc != SQLITE_OK) return false;
+    if (impl_->db) {
+        sqlite3_close(impl_->db);
+        impl_->db = nullptr;
+    }
+    if (!openContainedSqlite(path, &impl_->db)) return false;
+
+    int rc = SQLITE_OK;
     
     const char* createTable = 
         "CREATE TABLE IF NOT EXISTS kv ("
@@ -324,6 +499,18 @@ std::unique_ptr<Iterator> Database::newIterator() const {
     return iter;
 }
 
+// Bound prefix match. LIKE still treats % and _ as wildcards, so those
+// characters in caller text are escaped and the trailing % stays the only wildcard.
+static std::string likeLiteralPrefix(const std::string& prefix) {
+    std::string out;
+    out.reserve(prefix.size());
+    for (char c : prefix) {
+        if (c == '\\' || c == '%' || c == '_') out.push_back('\\');
+        out.push_back(c);
+    }
+    return out;
+}
+
 void Database::forEach(const std::string& prefix, 
                        std::function<bool(const std::string&, const std::vector<uint8_t>&)> fn) const {
     std::lock_guard<std::mutex> lock(impl_->mtx);
@@ -332,14 +519,15 @@ void Database::forEach(const std::string& prefix,
     sqlite3_stmt* stmt;
     std::string sql = "SELECT key, value FROM kv";
     if (!prefix.empty()) {
-        sql += " WHERE key LIKE ? || '%'";
+        sql += " WHERE key LIKE ? || '%' ESCAPE '\\'";
     }
     sql += " ORDER BY key;";
     
     if (sqlite3_prepare_v2(impl_->db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) return;
     
+    const std::string boundPrefix = prefix.empty() ? std::string() : likeLiteralPrefix(prefix);
     if (!prefix.empty()) {
-        sqlite3_bind_text(stmt, 1, prefix.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 1, boundPrefix.c_str(), -1, SQLITE_TRANSIENT);
     }
     
     while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -370,14 +558,15 @@ size_t Database::count(const std::string& prefix) const {
     sqlite3_stmt* stmt;
     std::string sql = "SELECT COUNT(*) FROM kv";
     if (!prefix.empty()) {
-        sql += " WHERE key LIKE ? || '%'";
+        sql += " WHERE key LIKE ? || '%' ESCAPE '\\'";
     }
     sql += ";";
     
     if (sqlite3_prepare_v2(impl_->db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) return 0;
     
+    const std::string boundPrefix = prefix.empty() ? std::string() : likeLiteralPrefix(prefix);
     if (!prefix.empty()) {
-        sqlite3_bind_text(stmt, 1, prefix.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 1, boundPrefix.c_str(), -1, SQLITE_TRANSIENT);
     }
     
     size_t cnt = 0;
@@ -450,11 +639,10 @@ uint64_t Database::size() const {
 bool Database::backup(const std::string& destPath) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     if (!impl_->db) return false;
-    
-    sqlite3* destDb;
-    if (sqlite3_open(destPath.c_str(), &destDb) != SQLITE_OK) {
-        return false;
-    }
+    if (!sqliteSiblingPathAllowed(impl_->path, destPath)) return false;
+
+    sqlite3* destDb = nullptr;
+    if (!openContainedSqlite(destPath, &destDb)) return false;
     
     sqlite3_backup* bkp = sqlite3_backup_init(destDb, "main", impl_->db, "main");
     if (!bkp) {
@@ -474,11 +662,10 @@ bool Database::backup(const std::string& destPath) {
 bool Database::restore(const std::string& srcPath) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
     if (!impl_->db) return false;
-    
-    sqlite3* srcDb;
-    if (sqlite3_open(srcPath.c_str(), &srcDb) != SQLITE_OK) {
-        return false;
-    }
+    if (!sqliteSiblingPathAllowed(impl_->path, srcPath)) return false;
+
+    sqlite3* srcDb = nullptr;
+    if (!openContainedSqlite(srcPath, &srcDb)) return false;
     
     sqlite3_backup* bkp = sqlite3_backup_init(impl_->db, "main", srcDb, "main");
     if (!bkp) {

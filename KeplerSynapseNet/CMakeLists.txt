@@ -24,16 +24,21 @@ if(WIN32)
 endif()
 option(BUILD_TUI "Build terminal UI (ncurses)" ${BUILD_TUI_DEFAULT})
 
-# GGUF GPU offload for desktop llama. Do not edit third_party/llama.cpp.
-if(USE_LLAMA_CPP AND NOT GGML_CUDA)
-    find_program(SYNAPSE_NVCC nvcc HINTS /usr/local/cuda/bin /opt/cuda/bin)
-    if(SYNAPSE_NVCC)
-        set(GGML_CUDA ON CACHE BOOL "ggml: use CUDA" FORCE)
-        message(STATUS "llama.cpp CUDA enabled (${SYNAPSE_NVCC})")
-    endif()
-endif()
-
+# In-process CPU backend only. Do not edit third_party/llama.cpp.
+# No ggml plugins from the working directory. CUDA and Vulkan stay off.
+# llama-server, llama RPC, and the server web UI stay out of this build.
 if(USE_LLAMA_CPP)
+    set(GGML_CPU ON CACHE BOOL "ggml: keep the built-in CPU backend" FORCE)
+    set(GGML_BACKEND_DL OFF CACHE BOOL "ggml: do not build loadable backends" FORCE)
+    set(GGML_BACKEND_DIR "" CACHE PATH "ggml: no plugin directory" FORCE)
+    set(GGML_CUDA OFF CACHE BOOL "ggml: CUDA stays off" FORCE)
+    set(GGML_VULKAN OFF CACHE BOOL "ggml: Vulkan stays off" FORCE)
+    set(LLAMA_CUDA OFF CACHE BOOL "llama: CUDA stays off" FORCE)
+    set(LLAMA_CUBLAS OFF CACHE BOOL "llama: CUBLAS stays off" FORCE)
+    set(GGML_RPC OFF CACHE BOOL "ggml: RPC backend stays off" FORCE)
+    set(LLAMA_RPC OFF CACHE BOOL "llama: RPC stays off" FORCE)
+    set(LLAMA_BUILD_SERVER OFF CACHE BOOL "llama: server and web UI stay out of this build" FORCE)
+    set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "llama: examples and pocs stay out of this build" FORCE)
     if(EXISTS ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/CMakeLists.txt)
         add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/llama.cpp ${CMAKE_BINARY_DIR}/llama.cpp)
         if(TARGET llama)
@@ -103,6 +108,14 @@ elseif(SYNAPSE_FETCH_LIBOQS OR SYNAPSE_REQUIRE_REAL_PQC)
     endif()
     set(OQS_BUILD_ONLY_LIB ON CACHE BOOL "" FORCE)
     set(OQS_MINIMAL_BUILD "${SYNAPSE_LIBOQS_MINIMAL_BUILD}" CACHE STRING "" FORCE)
+    # HQC defaults on. LMS and XMSS are the stateful families and stay off.
+    set(OQS_ENABLE_KEM_HQC OFF CACHE BOOL "" FORCE)
+    set(OQS_ENABLE_KEM_hqc_128 OFF CACHE BOOL "" FORCE)
+    set(OQS_ENABLE_KEM_hqc_192 OFF CACHE BOOL "" FORCE)
+    set(OQS_ENABLE_KEM_hqc_256 OFF CACHE BOOL "" FORCE)
+    set(OQS_ENABLE_SIG_STFL_LMS OFF CACHE BOOL "" FORCE)
+    set(OQS_ENABLE_SIG_STFL_XMSS OFF CACHE BOOL "" FORCE)
+    set(OQS_HAZARDOUS_EXPERIMENTAL_ENABLE_SIG_STFL_KEY_SIG_GEN OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(
         liboqs
         GIT_REPOSITORY https://github.com/open-quantum-safe/liboqs.git
@@ -443,6 +456,7 @@ set(PYTHON_SOURCES
 
 set(UTILS_SOURCES
     src/utils/config.cpp
+    src/utils/secret_file.cpp
     src/utils/format.cpp
     src/utils/logger.cpp
     src/utils/memory.cpp
@@ -490,6 +504,7 @@ set(QUANTUM_SOURCES
     src/quantum/network_security.cpp
     src/quantum/otp.cpp
     src/quantum/otp_manager.cpp
+    src/quantum/oqs_rng_scope.cpp
     src/quantum/pqc_backend_status.cpp
     src/quantum/pqc_manager.cpp
     src/quantum/qkd_bb84.cpp
@@ -602,7 +617,7 @@ if(USE_LLAMA_CPP AND HAS_LLAMA)
 endif()
 
 if(WIN32)
-    target_link_libraries(synapsed_core PUBLIC ws2_32 iphlpapi)
+    target_link_libraries(synapsed_core PUBLIC ws2_32 iphlpapi advapi32)
 endif()
 if(MSVC)
     target_include_directories(synapsed_core BEFORE PUBLIC ${CMAKE_SOURCE_DIR}/include/wincompat)
@@ -678,6 +693,7 @@ if(SYNAPSE_PRIVACY_TESTS)
         src/crypto/crypto.cpp
         src/crypto/address.cpp
         src/crypto/keys.cpp
+        src/utils/secret_file.cpp
         src/crypto/ring_signature.cpp
         src/crypto/confidential_tx.cpp
         src/privacy/stealth_address.cpp
@@ -686,6 +702,9 @@ if(SYNAPSE_PRIVACY_TESTS)
     )
     target_include_directories(crypto_lib PUBLIC include ${SODIUM_INCLUDE_DIRS})
     target_link_libraries(crypto_lib PUBLIC Threads::Threads OpenSSL::Crypto ${SODIUM_LIBRARIES})
+    if(WIN32)
+        target_link_libraries(crypto_lib PUBLIC advapi32)
+    endif()
     if(HAS_SECP256K1)
         target_compile_definitions(crypto_lib PUBLIC SYNAPSE_USE_SECP256K1=1)
         target_link_libraries(crypto_lib PUBLIC secp256k1)

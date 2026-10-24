@@ -6,10 +6,14 @@
 #include <algorithm>
 #include <sodium.h>
 #include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <openssl/crypto.h>
+#include <cstdlib>
 
 #ifdef USE_LIBOQS
 #include <oqs/oqs.h>
 #endif
+#include "oqs_rng_scope.h"
 #include "pqc_backend_oqs.h"
 
 // AND-mode HybridSig: Ed25519 AND ML-DSA-65 (FIPS 204). Both halves must
@@ -55,10 +59,13 @@ std::vector<uint8_t> hkdfSha256Expand(const std::vector<uint8_t>& ikm,
         if (counter == 0xff) break;
         counter = static_cast<uint8_t>(counter + 1);
     }
+    sodium_memzero(prk.data(), prk.size());
+    if (!block.empty()) sodium_memzero(block.data(), block.size());
     return out;
 }
 
 std::vector<uint8_t> shake256Expand(const std::vector<uint8_t>& seed, size_t outputLen) {
+    crypto::containForeignCryptoModules();
     std::vector<uint8_t> out(outputLen);
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (!ctx) return {};
@@ -67,30 +74,11 @@ std::vector<uint8_t> shake256Expand(const std::vector<uint8_t>& seed, size_t out
     if (ok && 1 != EVP_DigestUpdate(ctx, seed.data(), seed.size())) ok = false;
     if (ok && 1 != EVP_DigestFinalXOF(ctx, out.data(), outputLen)) ok = false;
     EVP_MD_CTX_free(ctx);
-    if (!ok) return {};
-    return out;
-}
-
-std::mutex& detRngMutex() {
-    static std::mutex m;
-    return m;
-}
-
-thread_local std::vector<uint8_t> tl_det_stream;
-thread_local size_t tl_det_pos = 0;
-
-void detRngCallback(uint8_t* out, size_t n) {
-    while (n > 0) {
-        if (tl_det_pos >= tl_det_stream.size()) {
-            std::memset(out, 0, n);
-            return;
-        }
-        const size_t take = std::min(n, tl_det_stream.size() - tl_det_pos);
-        std::memcpy(out, tl_det_stream.data() + tl_det_pos, take);
-        tl_det_pos += take;
-        out += take;
-        n -= take;
+    if (!ok) {
+        OPENSSL_cleanse(out.data(), out.size());
+        return {};
     }
+    return out;
 }
 
 }
@@ -103,6 +91,7 @@ struct HybridSig::Impl {
     bool sodiumReady = false;
 
     Impl() {
+        crypto::containForeignCryptoModules();
         sodiumReady = (sodium_init() >= 0);
     }
 };
@@ -124,6 +113,7 @@ HybridKeyPair HybridSig::generateKeyPair() {
     auto dilithiumKp = impl_->dilithium.generateKeyPair();
     kp.pqcPublicKey.assign(dilithiumKp.publicKey.begin(), dilithiumKp.publicKey.end());
     kp.pqcSecretKey.assign(dilithiumKp.secretKey.begin(), dilithiumKp.secretKey.end());
+    sodium_memzero(dilithiumKp.secretKey.data(), dilithiumKp.secretKey.size());
 
     return kp;
 }
@@ -137,8 +127,16 @@ HybridKeyPair HybridSig::generateKeyPairFromSeed(const std::vector<uint8_t>& mas
 
     if (masterSeed.size() < 16) return kp;
 
-    const auto classicSeed = hkdfSha256Expand(masterSeed, "synapsenet-hybrid-classical-v1", crypto_sign_ed25519_SEEDBYTES);
-    const auto pqcSeed = hkdfSha256Expand(masterSeed, "synapsenet-hybrid-pqc-v1", 32);
+    auto classicSeed = hkdfSha256Expand(masterSeed, "synapsenet-hybrid-classical-v1", crypto_sign_ed25519_SEEDBYTES);
+    auto pqcSeed = hkdfSha256Expand(masterSeed, "synapsenet-hybrid-pqc-v1", 32);
+    struct WipeSeeds {
+        std::vector<uint8_t>& classicSeed;
+        std::vector<uint8_t>& pqcSeed;
+        ~WipeSeeds() {
+            if (!classicSeed.empty()) sodium_memzero(classicSeed.data(), classicSeed.size());
+            if (!pqcSeed.empty()) sodium_memzero(pqcSeed.data(), pqcSeed.size());
+        }
+    } wipeSeeds{classicSeed, pqcSeed};
     if (classicSeed.size() != crypto_sign_ed25519_SEEDBYTES || pqcSeed.size() != 32) {
         return kp;
     }
@@ -147,6 +145,7 @@ HybridKeyPair HybridSig::generateKeyPairFromSeed(const std::vector<uint8_t>& mas
     kp.classicSecretKey.resize(crypto_sign_ed25519_SECRETKEYBYTES);
     if (crypto_sign_ed25519_seed_keypair(kp.classicPublicKey.data(), kp.classicSecretKey.data(),
                                           classicSeed.data()) != 0) {
+        if (!kp.classicSecretKey.empty()) sodium_memzero(kp.classicSecretKey.data(), kp.classicSecretKey.size());
         kp.classicPublicKey.clear();
         kp.classicSecretKey.clear();
         return kp;
@@ -154,37 +153,33 @@ HybridKeyPair HybridSig::generateKeyPairFromSeed(const std::vector<uint8_t>& mas
 
     {
 #ifdef USE_LIBOQS
-        std::lock_guard<std::mutex> rngLock(detRngMutex());
         const size_t streamLen = 64 * 1024;
-        auto prevStream = std::move(tl_det_stream);
-        const size_t prevPos = tl_det_pos;
-        tl_det_stream = shake256Expand(pqcSeed, streamLen);
-        tl_det_pos = 0;
-        if (tl_det_stream.size() != streamLen) {
-            tl_det_stream = std::move(prevStream);
-            tl_det_pos = prevPos;
+        auto stream = shake256Expand(pqcSeed, streamLen);
+        if (stream.size() != streamLen) {
+            if (!stream.empty()) OPENSSL_cleanse(stream.data(), stream.size());
             return kp;
         }
 
-        OQS_randombytes_custom_algorithm(detRngCallback);
-        OQS_SIG* sig = detail::newPreferredDilithiumSig();
-        if (sig) {
-            kp.pqcPublicKey.assign(sig->length_public_key, 0);
-            kp.pqcSecretKey.assign(sig->length_secret_key, 0);
-            if (OQS_SIG_keypair(sig, kp.pqcPublicKey.data(), kp.pqcSecretKey.data()) != OQS_SUCCESS) {
+        {
+            detail::OqsDeterministicRngGuard rng(std::move(stream));
+            OQS_SIG* sig = detail::newPreferredDilithiumSig();
+            const bool mlDsa65 = detail::dilithiumSigPinned(sig);
+            if (mlDsa65) {
+                kp.pqcPublicKey.assign(DILITHIUM_PUBLIC_KEY_SIZE, 0);
+                kp.pqcSecretKey.assign(DILITHIUM_SECRET_KEY_SIZE, 0);
+                if (OQS_SIG_keypair(sig, kp.pqcPublicKey.data(), kp.pqcSecretKey.data()) != OQS_SUCCESS
+                    || !rng.accepted(1)) {
+                    OPENSSL_cleanse(kp.pqcPublicKey.data(), kp.pqcPublicKey.size());
+                    OPENSSL_cleanse(kp.pqcSecretKey.data(), kp.pqcSecretKey.size());
+                    kp.pqcPublicKey.clear();
+                    kp.pqcSecretKey.clear();
+                }
+            } else {
                 kp.pqcPublicKey.clear();
                 kp.pqcSecretKey.clear();
             }
-            OQS_SIG_free(sig);
-        } else {
-            kp.pqcPublicKey.clear();
-            kp.pqcSecretKey.clear();
+            if (sig) OQS_SIG_free(sig);
         }
-
-        OQS_randombytes_switch_algorithm(OQS_RAND_alg_system);
-        std::fill(tl_det_stream.begin(), tl_det_stream.end(), 0);
-        tl_det_stream = std::move(prevStream);
-        tl_det_pos = prevPos;
 #else
         (void)pqcSeed;
 #endif
@@ -205,7 +200,8 @@ SignatureResult HybridSig::sign(const std::vector<uint8_t>& message,
     if (secretKey.classicSecretKey.size() != crypto_sign_ed25519_SECRETKEYBYTES) {
         return result;
     }
-    if (!pqcKeyMaterialPresent(secretKey.pqcSecretKey)) {
+    if (secretKey.pqcSecretKey.size() != DILITHIUM_SECRET_KEY_SIZE ||
+        !pqcKeyMaterialPresent(secretKey.pqcSecretKey)) {
         return result;
     }
 
@@ -222,19 +218,19 @@ SignatureResult HybridSig::sign(const std::vector<uint8_t>& message,
     }
 
     DilithiumSecretKey dilSk{};
-    const size_t copyLen = std::min(secretKey.pqcSecretKey.size(), dilSk.size());
-    std::memcpy(dilSk.data(), secretKey.pqcSecretKey.data(), copyLen);
+    std::memcpy(dilSk.data(), secretKey.pqcSecretKey.data(), dilSk.size());
     if (!impl_->dilithium.validateSecretKey(dilSk)) {
+        sodium_memzero(dilSk.data(), dilSk.size());
         return result;
     }
     auto pqcResult = impl_->dilithium.sign(message, dilSk);
+    sodium_memzero(dilSk.data(), dilSk.size());
 
-    if (!pqcResult.success || pqcResult.signature.empty()) {
+    if (!pqcResult.success || pqcResult.signature.size() != DILITHIUM_SIGNATURE_SIZE) {
         return result;
     }
 
-    // Wire bytes are classic || pqc. Use the Dilithium result length (liboqs
-    // ML-DSA-65 may not match DILITHIUM_SIGNATURE_SIZE exactly).
+    // Wire bytes are classic || pqc, and the PQC half is ML-DSA-65 (3309 bytes).
     result.signature.clear();
     result.signature.insert(result.signature.end(), classicSig.begin(), classicSig.end());
     result.signature.insert(result.signature.end(), pqcResult.signature.begin(), pqcResult.signature.end());
@@ -251,19 +247,17 @@ bool HybridSig::verify(const std::vector<uint8_t>& message,
     if (publicKey.classicPublicKey.size() != crypto_sign_ed25519_PUBLICKEYBYTES) {
         return false;
     }
-    if (!pqcKeyMaterialPresent(publicKey.pqcPublicKey)) {
+    if (publicKey.pqcPublicKey.size() != DILITHIUM_PUBLIC_KEY_SIZE ||
+        !pqcKeyMaterialPresent(publicKey.pqcPublicKey)) {
         return false;
     }
 
-    // Need the 64-byte Ed25519 prefix. PQC half is the remaining bytes so a
-    // liboqs ML-DSA-65 length that is not DILITHIUM_SIGNATURE_SIZE still AND-verifies.
-    if (signature.size() < crypto_sign_ed25519_BYTES) {
+    // Exact sizes: 64-byte Ed25519 and 3309-byte ML-DSA-65. A missing, short,
+    // or other lattice parameter set fails closed.
+    if (signature.size() != crypto_sign_ed25519_BYTES + DILITHIUM_SIGNATURE_SIZE) {
         return false;
     }
-    const size_t pqcLen = signature.size() - crypto_sign_ed25519_BYTES;
-    if (pqcLen == 0) {
-        return false;
-    }
+    const size_t pqcLen = DILITHIUM_SIGNATURE_SIZE;
 
     if (crypto_sign_ed25519_verify_detached(signature.data(),
                                              message.data(), message.size(),
@@ -272,16 +266,14 @@ bool HybridSig::verify(const std::vector<uint8_t>& message,
     }
 
     DilithiumPublicKey dilPk{};
-    const size_t pkCopy = std::min(publicKey.pqcPublicKey.size(), dilPk.size());
-    std::memcpy(dilPk.data(), publicKey.pqcPublicKey.data(), pkCopy);
+    std::memcpy(dilPk.data(), publicKey.pqcPublicKey.data(), dilPk.size());
     if (!impl_->dilithium.validatePublicKey(dilPk)) {
         return false;
     }
 
     DilithiumSignature dilSig{};
     const uint8_t* pqcSigStart = signature.data() + crypto_sign_ed25519_BYTES;
-    const size_t sigCopy = std::min(pqcLen, dilSig.size());
-    std::memcpy(dilSig.data(), pqcSigStart, sigCopy);
+    std::memcpy(dilSig.data(), pqcSigStart, pqcLen);
 
     // AND-mode: classic already verified; Dilithium must also verify.
     return impl_->dilithium.verify(message, dilSig, dilPk);

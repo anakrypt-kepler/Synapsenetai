@@ -3,6 +3,7 @@
 #include "crypto/confidential_tx.h"
 #include "quantum/quantum_security.h"
 #include "quantum/application_signature.h"
+#include "../quantum/oqs_rng_scope.h"
 #include "../quantum/pqc_backend_oqs.h"
 
 #include <algorithm>
@@ -11,6 +12,9 @@
 #include <random>
 #include <sodium.h>
 #include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <openssl/crypto.h>
+#include <cstdlib>
 
 #ifdef USE_LIBOQS
 #include <oqs/oqs.h>
@@ -42,6 +46,7 @@ struct StealthAddress::Impl {
 
 bool StealthAddress::Impl::generateScalarKeyPair(std::vector<uint8_t>& secretScalar,
                                                  std::vector<uint8_t>& publicPoint) {
+    crypto::containForeignCryptoModules();
     unsigned char seed[crypto_core_ed25519_NONREDUCEDSCALARBYTES];
     randombytes_buf(seed, sizeof(seed));
 
@@ -51,6 +56,8 @@ bool StealthAddress::Impl::generateScalarKeyPair(std::vector<uint8_t>& secretSca
 
     publicPoint.resize(crypto_core_ed25519_BYTES);
     if (crypto_scalarmult_ed25519_base_noclamp(publicPoint.data(), secretScalar.data()) != 0) {
+        sodium_memzero(secretScalar.data(), secretScalar.size());
+        secretScalar.clear();
         return false;
     }
 
@@ -131,6 +138,7 @@ constexpr uint8_t kEcdhWrapV3 = 0x03;
 
 // Domain-separated SHAKE256 stream for deterministic OQS keygen.
 std::vector<uint8_t> shake256Expand(const std::vector<uint8_t>& seed, size_t outputLen) {
+    crypto::containForeignCryptoModules();
     std::vector<uint8_t> out(outputLen);
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (!ctx) return {};
@@ -139,31 +147,15 @@ std::vector<uint8_t> shake256Expand(const std::vector<uint8_t>& seed, size_t out
     if (ok && 1 != EVP_DigestUpdate(ctx, seed.data(), seed.size())) ok = false;
     if (ok && 1 != EVP_DigestFinalXOF(ctx, out.data(), outputLen)) ok = false;
     EVP_MD_CTX_free(ctx);
-    if (!ok) return {};
+    if (!ok) {
+        if (!out.empty()) OPENSSL_cleanse(out.data(), out.size());
+        return {};
+    }
     return out;
 }
 
-std::mutex& kyberDetRngMutex() {
-    static std::mutex m;
-    return m;
-}
-
-thread_local std::vector<uint8_t> tl_kyber_det_stream;
-thread_local size_t tl_kyber_det_pos = 0;
-
-void kyberDetRngCallback(uint8_t* out, size_t n) {
-    while (n > 0) {
-        if (tl_kyber_det_pos >= tl_kyber_det_stream.size()) {
-            std::memset(out, 0, n);
-            return;
-        }
-        const size_t take = std::min(n, tl_kyber_det_stream.size() - tl_kyber_det_pos);
-        std::memcpy(out, tl_kyber_det_stream.data() + tl_kyber_det_pos, take);
-        tl_kyber_det_pos += take;
-        out += take;
-        n -= take;
-    }
-}
+// ML-KEM-768 keygen reads 64 coins (d || z). A short stream is not padded.
+constexpr size_t kStealthKyberCoins = 64;
 
 // Kyber KP is derived from the stealth VIEW SCALAR (32-byte ed25519 secret),
 // not from the public view point. Recipients decapsulate with this SK.
@@ -182,37 +174,35 @@ bool deriveKyberFromViewSeed(const std::vector<uint8_t>& viewKey,
     std::vector<uint8_t> seed(tag, tag + sizeof(tag) - 1);
     seed.insert(seed.end(), viewKey.begin(), viewKey.end());
 
-    std::lock_guard<std::mutex> rngLock(kyberDetRngMutex());
     const size_t streamLen = 64 * 1024;
-    auto prevStream = std::move(tl_kyber_det_stream);
-    const size_t prevPos = tl_kyber_det_pos;
-    tl_kyber_det_stream = shake256Expand(seed, streamLen);
-    tl_kyber_det_pos = 0;
+    auto stream = shake256Expand(seed, streamLen);
     sodium_memzero(seed.data(), seed.size());
-    if (tl_kyber_det_stream.size() != streamLen) {
-        tl_kyber_det_stream = std::move(prevStream);
-        tl_kyber_det_pos = prevPos;
+    if (stream.size() != streamLen) {
+        if (!stream.empty()) OPENSSL_cleanse(stream.data(), stream.size());
         return false;
     }
 
-    OQS_randombytes_custom_algorithm(kyberDetRngCallback);
-    OQS_KEM* kem = quantum::detail::newPreferredKyberKem();
     bool ok = false;
-    if (kem) {
-        pk.assign(kem->length_public_key, 0);
-        sk.assign(kem->length_secret_key, 0);
-        if (OQS_KEM_keypair(kem, pk.data(), sk.data()) == OQS_SUCCESS) {
-            ok = true;
+    {
+        quantum::detail::OqsDeterministicRngGuard rng(std::move(stream));
+        OQS_KEM* kem = quantum::detail::newPreferredKyberKem();
+        if (!quantum::detail::kyberKemPinned(kem)) {
+            if (kem) OQS_KEM_free(kem);
         } else {
-            pk.clear();
-            sk.clear();
+            pk.assign(quantum::KYBER_PUBLIC_KEY_SIZE, 0);
+            sk.assign(quantum::KYBER_SECRET_KEY_SIZE, 0);
+            if (OQS_KEM_keypair(kem, pk.data(), sk.data()) == OQS_SUCCESS &&
+                rng.accepted(kStealthKyberCoins)) {
+                ok = true;
+            } else {
+                if (!pk.empty()) sodium_memzero(pk.data(), pk.size());
+                if (!sk.empty()) sodium_memzero(sk.data(), sk.size());
+                pk.clear();
+                sk.clear();
+            }
+            OQS_KEM_free(kem);
         }
-        OQS_KEM_free(kem);
     }
-    OQS_randombytes_switch_algorithm(OQS_RAND_alg_system);
-    std::fill(tl_kyber_det_stream.begin(), tl_kyber_det_stream.end(), 0);
-    tl_kyber_det_stream = std::move(prevStream);
-    tl_kyber_det_pos = prevPos;
     return ok;
 #else
     (void)viewKey;
@@ -230,13 +220,14 @@ bool wrapEcdhV3(const std::vector<uint8_t>& classical,
     if (classical.empty() || recipientKyberPk.size() != quantum::KYBER_PUBLIC_KEY_SIZE) {
         return false;
     }
+    crypto::containForeignCryptoModules();
     quantum::Kyber kyber;
     quantum::KyberPublicKey pk{};
     std::memcpy(pk.data(), recipientKyberPk.data(), pk.size());
     auto enc = kyber.encapsulate(pk);
-    if (!enc.success || enc.ciphertext.empty() ||
-        enc.sharedSecret.size() != crypto_secretbox_KEYBYTES ||
-        enc.ciphertext.size() > 0xffff) {
+    if (!enc.success ||
+        enc.ciphertext.size() != quantum::KYBER_CIPHERTEXT_SIZE ||
+        enc.sharedSecret.size() != crypto_secretbox_KEYBYTES) {
         if (!enc.sharedSecret.empty()) {
             sodium_memzero(enc.sharedSecret.data(), enc.sharedSecret.size());
         }
@@ -273,12 +264,12 @@ bool unwrapEcdhV3(const std::vector<uint8_t>& wrapped,
     if (wrapped.size() < 3 || wrapped[0] != kEcdhWrapV3) return false;
     const uint16_t ctLen = static_cast<uint16_t>(wrapped[1]) |
                            (static_cast<uint16_t>(wrapped[2]) << 8);
-    if (ctLen == 0 || wrapped.size() < static_cast<size_t>(3) + ctLen +
+    if (ctLen != quantum::KYBER_CIPHERTEXT_SIZE ||
+        wrapped.size() < static_cast<size_t>(3) + ctLen +
         crypto_secretbox_NONCEBYTES + crypto_secretbox_MACBYTES) {
         return false;
     }
     if (kyberSk.size() != quantum::KYBER_SECRET_KEY_SIZE) return false;
-    if (ctLen > quantum::KYBER_CIPHERTEXT_SIZE) return false;
 
     quantum::KyberCiphertext ct{};
     std::memcpy(ct.data(), wrapped.data() + 3, ctLen);
@@ -327,6 +318,7 @@ StealthAddress::StealthAddress() : impl_(std::make_unique<Impl>()) {}
 StealthAddress::~StealthAddress() = default;
 
 bool StealthAddress::generateKeys() {
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) {
         return false;
     }
@@ -345,6 +337,7 @@ bool StealthAddress::generateKeys() {
 
 bool StealthAddress::setKeys(const std::vector<uint8_t>& viewSecret,
                              const std::vector<uint8_t>& spendSecret) {
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) {
         return false;
     }
@@ -387,6 +380,7 @@ std::vector<uint8_t> StealthAddress::getSpendPublicKey() const {
 std::vector<uint8_t> StealthAddress::generateOneTimeAddress(const std::vector<uint8_t>& recipientViewPub,
                                                             const std::vector<uint8_t>& recipientSpendPub,
                                                             std::vector<uint8_t>& ephemeralPub) {
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) {
         return std::vector<uint8_t>();
     }
@@ -434,6 +428,7 @@ bool StealthAddress::createPayment(const std::vector<uint8_t>& recipientViewPub,
                                    StealthPayment& out,
                                    const std::vector<uint8_t>& recipientKyberPk) const {
     out = StealthPayment{};
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) {
         return false;
     }
@@ -501,6 +496,16 @@ bool StealthAddress::createPayment(const std::vector<uint8_t>& recipientViewPub,
     sodium_memzero(payload, sizeof(payload));
     sodium_memzero(nonce, sizeof(nonce));
 
+    // A supplied KEM key that is not a full ML-KEM-768 public key must not
+    // be ignored in favor of the classical amount blob.
+    if (!recipientKyberPk.empty() &&
+        recipientKyberPk.size() != quantum::KYBER_PUBLIC_KEY_SIZE) {
+        if (!out.blinding.empty()) sodium_memzero(out.blinding.data(), out.blinding.size());
+        out.blinding.clear();
+        out.ecdh.clear();
+        return false;
+    }
+
     // Quantum-WRAP: prefix 0x03 + ML-KEM-768 ct, then classical ecdh encrypted
     // under the KEM shared secret. Skip when kyberReal is false (no fake PQ).
     if (quantum::getPQCBackendStatus().kyberReal) {
@@ -514,6 +519,8 @@ bool StealthAddress::createPayment(const std::vector<uint8_t>& recipientViewPub,
         if (kemPk.size() == quantum::KYBER_PUBLIC_KEY_SIZE) {
             std::vector<uint8_t> wrapped;
             if (!wrapEcdhV3(out.ecdh, kemPk, wrapped)) {
+                if (!out.blinding.empty()) sodium_memzero(out.blinding.data(), out.blinding.size());
+                out.blinding.clear();
                 out.ecdh.clear();
                 return false;
             }
@@ -580,11 +587,17 @@ bool StealthAddress::tryOpenPayment(const std::vector<uint8_t>& ephemeralPub,
     sodium_memzero(key, sizeof(key));
     sodium_memzero(sharedPoint.data(), sharedPoint.size());
     sodium_memzero(payload, sizeof(payload));
-    return amountAtoms > 0 && blinding.size() == crypto_core_ed25519_SCALARBYTES;
+    if (amountAtoms == 0 || blinding.size() != crypto_core_ed25519_SCALARBYTES) {
+        if (!blinding.empty()) sodium_memzero(blinding.data(), blinding.size());
+        blinding.clear();
+        return false;
+    }
+    return true;
 }
 
 bool StealthAddress::checkOwnership(const std::vector<uint8_t>& oneTimeAddress,
                                     const std::vector<uint8_t>& ephemeralPub) const {
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) {
         return false;
     }
@@ -607,6 +620,7 @@ bool StealthAddress::checkOwnership(const std::vector<uint8_t>& oneTimeAddress,
 }
 
 std::vector<uint8_t> StealthAddress::deriveSpendingKey(const std::vector<uint8_t>& ephemeralPub) const {
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) {
         return std::vector<uint8_t>();
     }
@@ -720,6 +734,7 @@ bool StealthAddress::verifyHybrid(const std::vector<uint8_t>& message,
 namespace {
 
 bool scalarFromUtf8Seed(const std::string& seed, std::vector<uint8_t>& scalar) {
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) return false;
     unsigned char wide[crypto_core_ed25519_NONREDUCEDSCALARBYTES];
     crypto_hash_sha512(wide, reinterpret_cast<const unsigned char*>(seed.data()), seed.size());
@@ -730,6 +745,7 @@ bool scalarFromUtf8Seed(const std::string& seed, std::vector<uint8_t>& scalar) {
 }
 
 bool scalarFromBytes(const std::vector<uint8_t>& data, std::vector<uint8_t>& scalar) {
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) return false;
     unsigned char wide[crypto_core_ed25519_NONREDUCEDSCALARBYTES];
     crypto_hash_sha512(wide, data.data(), data.size());

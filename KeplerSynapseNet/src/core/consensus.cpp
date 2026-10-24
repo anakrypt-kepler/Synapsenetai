@@ -136,13 +136,17 @@ static void writeString(std::vector<uint8_t>& out, const std::string& s) {
     out.insert(out.end(), s.begin(), s.end());
 }
 
-static std::string readString(const uint8_t* p, size_t& off, size_t maxLen) {
-    uint32_t len = readU32(p + off);
+// False when the length prefix or the bytes do not fit. An empty string is a
+// real length of zero, not a stand-in for a short read.
+static bool readBoundedString(const uint8_t* base, size_t size, size_t& off, size_t maxLen, std::string& out) {
+    if (base == nullptr || off > size || size - off < 4) return false;
+    const uint32_t len = readU32(base + off);
+    if (static_cast<size_t>(len) > maxLen) return false;
+    if (size - off - 4 < static_cast<size_t>(len)) return false;
     off += 4;
-    if (len > maxLen) return std::string();
-    std::string s(reinterpret_cast<const char*>(p + off), len);
-    off += len;
-    return s;
+    out.assign(reinterpret_cast<const char*>(base + off), static_cast<size_t>(len));
+    off += static_cast<size_t>(len);
+    return true;
 }
 
 static std::vector<uint8_t> serializeValidator(const Validator& v) {
@@ -161,21 +165,27 @@ static std::vector<uint8_t> serializeValidator(const Validator& v) {
     return out;
 }
 
-static Validator deserializeValidator(const std::vector<uint8_t>& data) {
-    Validator v;
-    if (data.size() < crypto::PUBLIC_KEY_SIZE + 4 + 8 + 8 + 4 + 8 + 1 + 1 + 8) return v;
+static bool deserializeValidator(const std::vector<uint8_t>& data, Validator& v) {
+    v = Validator{};
+    constexpr size_t kTail = 8 + 8 + 4 + 8 + 1 + 1 + 8;
+    if (data.size() < crypto::PUBLIC_KEY_SIZE + 4 + kTail) return false;
     size_t off = 0;
-    std::memcpy(v.pubKey.data(), data.data() + off, crypto::PUBLIC_KEY_SIZE); off += crypto::PUBLIC_KEY_SIZE;
-    v.address = readString(data.data(), off, 1024);
-    v.stake = readU64(data.data() + off); off += 8;
-    uint64_t repBits = readU64(data.data() + off); off += 8;
+    const uint8_t* base = data.data();
+    std::memcpy(v.pubKey.data(), base + off, crypto::PUBLIC_KEY_SIZE);
+    off += crypto::PUBLIC_KEY_SIZE;
+    if (!readBoundedString(base, data.size(), off, 1024, v.address) || data.size() - off < kTail) {
+        v = Validator{};
+        return false;
+    }
+    v.stake = readU64(base + off); off += 8;
+    uint64_t repBits = readU64(base + off); off += 8;
     std::memcpy(&v.reputation, &repBits, sizeof(double));
-    v.validationsCompleted = readU32(data.data() + off); off += 4;
-    v.lastActive = readU64(data.data() + off); off += 8;
-    v.eligible = data[off++] != 0;
-    v.active = data[off++] != 0;
-    v.totalRewards = readU64(data.data() + off); off += 8;
-    return v;
+    v.validationsCompleted = readU32(base + off); off += 4;
+    v.lastActive = readU64(base + off); off += 8;
+    v.eligible = base[off++] != 0;
+    v.active = base[off++] != 0;
+    v.totalRewards = readU64(base + off);
+    return true;
 }
 
 // Fixed prefix shared with records that predate the voter list.
@@ -399,7 +409,7 @@ bool Consensus::open(const std::string& dbPath) {
     if (!impl_->db.open(dbPath)) return false;
     
     auto counterData = impl_->db.get("meta:validationCounter");
-    if (!counterData.empty()) {
+    if (counterData.size() >= 8) {
         impl_->validationCounter = readU64(counterData.data());
     }
     // load persisted validators
@@ -407,7 +417,8 @@ bool Consensus::open(const std::string& dbPath) {
     for (const auto& k : vkeys) {
         auto data = impl_->db.get(k);
         if (data.empty()) continue;
-        Validator v = deserializeValidator(data);
+        Validator v;
+        if (!deserializeValidator(data, v)) continue;
         std::string addr = crypto::toHex(v.pubKey);
         impl_->validators[addr] = v;
     }

@@ -113,6 +113,7 @@
 #include "database/database.h"
 #include "utils/logger.h"
 #include "utils/config.h"
+#include "utils/secret_file.h"
 #include "utils/single_instance.h"
 #include "utils/utils.h"
 #include "privacy/privacy.h"
@@ -2181,7 +2182,10 @@ std::string createAndSubmitShieldTx(const std::string& to, uint64_t amountAtoms,
     }
     std::vector<uint8_t> viewPub;
     std::vector<uint8_t> spendPub;
-    if (!privacy::StealthAddress::decodeAddress(to, viewPub, spendPub)) {
+    std::vector<uint8_t> kyberPub;
+    // Keep a published ML-KEM-768 key. Dropping it seals the amount with
+    // classical ECDH even though the recipient asked for the KEM wrap.
+    if (!privacy::StealthAddress::decodeAddress(to, viewPub, spendPub, kyberPub)) {
         throw std::runtime_error("invalid stealth address");
     }
     if (amountAtoms == 0) {
@@ -2193,7 +2197,7 @@ std::string createAndSubmitShieldTx(const std::string& to, uint64_t amountAtoms,
         throw std::runtime_error("stealth sender failed");
     }
     privacy::StealthPayment pay;
-    if (!sender.createPayment(viewPub, spendPub, amountAtoms, pay)) {
+    if (!sender.createPayment(viewPub, spendPub, amountAtoms, pay, kyberPub)) {
         throw std::runtime_error("one-time payment derivation failed");
     }
     auto range = crypto::ConfidentialTx::proveRange(amountAtoms, pay.blinding);
@@ -2659,6 +2663,13 @@ std::string handleRpcPrivacyRingSign(const std::string& paramsJson) {
     if (ringSize > 32) ringSize = 32;
     std::vector<uint8_t> messageBytes(message.begin(), message.end());
     std::vector<uint8_t> privateKey(crypto_core_ed25519_SCALARBYTES);
+    struct HoldKey {
+        std::vector<uint8_t>& key;
+        ~HoldKey() {
+            if (!key.empty()) sodium_memzero(key.data(), key.size());
+        }
+    } holdKey{privateKey};
+    crypto::containForeignCryptoModules();
     crypto_core_ed25519_scalar_random(privateKey.data());
     std::vector<uint8_t> signerPub(crypto_core_ed25519_BYTES);
     if (crypto_scalarmult_ed25519_base_noclamp(signerPub.data(), privateKey.data()) != 0) {
@@ -3155,7 +3166,15 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
 
             rpcCookieFilePath_ = resolveRpcCookiePath(config_.dataDir, config_.rpcCookieFile);
             std::filesystem::create_directories(std::filesystem::path(rpcCookieFilePath_).parent_path());
-            rpcCookieToken_ = crypto::toHex(crypto::randomBytes(32));
+            auto cookieEntropy = crypto::randomBytes(32);
+            if (cookieEntropy.size() != 32) {
+                utils::Logger::error("RPC cookie RNG failed");
+                rpcCookieFilePath_.clear();
+                rpcCookieToken_.clear();
+                return false;
+            }
+            rpcCookieToken_ = crypto::toHex(cookieEntropy);
+            crypto::secureZero(cookieEntropy.data(), cookieEntropy.size());
 #ifdef _WIN32
             if (!writeUserOnlyRpcCookie(std::filesystem::path(rpcCookieFilePath_), rpcCookieToken_)) {
                 utils::Logger::error("Failed to create RPC cookie file at " + rpcCookieFilePath_);
@@ -3166,18 +3185,14 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
                 return false;
             }
 #else
-            std::ofstream cookieFile(rpcCookieFilePath_, std::ios::trunc);
-            if (!cookieFile.is_open()) {
+            if (!utils::writeFileForCurrentUser(rpcCookieFilePath_, rpcCookieToken_ + "\n")) {
                 utils::Logger::error("Failed to create RPC cookie file at " + rpcCookieFilePath_);
+                std::error_code ec;
+                std::filesystem::remove(rpcCookieFilePath_, ec);
+                rpcCookieFilePath_.clear();
+                rpcCookieToken_.clear();
                 return false;
             }
-            cookieFile << rpcCookieToken_ << "\n";
-            cookieFile.close();
-            if (!cookieFile.good()) {
-                utils::Logger::error("Failed to write RPC cookie file at " + rpcCookieFilePath_);
-                return false;
-            }
-            ::chmod(rpcCookieFilePath_.c_str(), S_IRUSR | S_IWUSR);
 #endif
 
             if (!config_.rpcUser.empty() || !config_.rpcPassword.empty()) {
@@ -3560,6 +3575,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         updateAndLogTorReadinessState(torRequired, torReachable, agentTorWebReady_.load(), route.torDegraded);
 
         if (torRequired) {
+            netCfg.torRequired = true;
             netCfg.useSocksProxy = torReachable;
             netCfg.socksProxyHost = configuredTorSocksHost();
             netCfg.socksProxyPort = configuredTorSocksPort();
@@ -4868,11 +4884,102 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         if (!ledger_) return;
         auto events = ledger_->getPendingEvents();
         if (events.empty()) return;
+
+        // Peer acceptance runs transfer checks before a block is stored.
+        // Select the events that already pass, and cap the list at the same
+        // size Block::deserialize accepts, before any hash is committed.
+        std::vector<std::vector<uint8_t>> knownImages;
+        {
+            std::lock_guard<std::mutex> kiLock(usedKeyImagesMtx_);
+            knownImages = usedKeyImages_;
+        }
+
+        auto localTransferChecks = [&](const std::vector<core::Transaction>& txs,
+                                       const std::vector<std::vector<uint8_t>>& baseImages,
+                                       std::vector<std::vector<uint8_t>>* newImages) -> bool {
+            if (!transfer_) return txs.empty();
+            std::vector<std::vector<uint8_t>> images = baseImages;
+            std::vector<std::vector<uint8_t>> added;
+            for (const auto& tx : txs) {
+                std::vector<crypto::PedersenCommitment> inputCommits;
+                std::vector<crypto::PedersenCommitment> outputCommits;
+                for (const auto& outp : tx.outputs) {
+                    if (!outp.isConfidential()) continue;
+                    crypto::PedersenCommitment c;
+                    c.commitment = outp.commitment;
+                    if (!crypto::ConfidentialTx::rangeCheck(c)) return false;
+                    outputCommits.push_back(c);
+                }
+                for (const auto& inp : tx.inputs) {
+                    core::Transaction prev = transfer_->getTransaction(inp.prevTxHash);
+                    if (inp.outputIndex < prev.outputs.size() &&
+                        prev.outputs[inp.outputIndex].isConfidential()) {
+                        crypto::PedersenCommitment c;
+                        c.commitment = prev.outputs[inp.outputIndex].commitment;
+                        inputCommits.push_back(c);
+                    }
+                    std::vector<uint8_t> kiData;
+                    kiData.insert(kiData.end(), inp.pubKey.begin(), inp.pubKey.end());
+                    kiData.insert(kiData.end(), inp.prevTxHash.begin(), inp.prevTxHash.end());
+                    kiData.insert(kiData.end(), inp.signature.begin(), inp.signature.end());
+                    crypto::Hash256 kih = crypto::sha256(kiData);
+                    std::vector<uint8_t> keyImage(kih.begin(), kih.end());
+                    if (crypto::RingSign::isDoubleSpend(keyImage, images)) return false;
+                    images.push_back(keyImage);
+                    added.push_back(std::move(keyImage));
+                }
+                if (!inputCommits.empty() && !outputCommits.empty() &&
+                    !crypto::ConfidentialTx::verifyBalance(inputCommits, outputCommits, tx.fee)) {
+                    return false;
+                }
+            }
+            if (newImages) *newImages = std::move(added);
+            return true;
+        };
+
+        auto batchPasses = [&](const std::vector<core::Transaction>& txs,
+                               const std::vector<std::vector<uint8_t>>& baseImages,
+                               std::vector<std::vector<uint8_t>>* newImages) -> bool {
+            if (txs.empty()) {
+                if (newImages) newImages->clear();
+                return true;
+            }
+            if (!transfer_) return false;
+            if (!transfer_->verifyTransactionsInBlockOrder(txs)) return false;
+            return localTransferChecks(txs, baseImages, newImages);
+        };
+
+        std::vector<core::Event> included;
+        std::vector<core::Transaction> blockTxs;
+        std::vector<std::vector<uint8_t>> newKeyImages;
+        std::vector<std::vector<uint8_t>> imageView = knownImages;
+        included.reserve(std::min(events.size(), static_cast<size_t>(core::MAX_EVENTS_PER_BLOCK)));
+        for (const auto& ev : events) {
+            if (included.size() >= core::MAX_EVENTS_PER_BLOCK) break;
+            if (ev.type != core::EventType::TRANSFER) {
+                included.push_back(ev);
+                continue;
+            }
+            if (!transfer_) continue;
+            core::Transaction tx = core::Transaction::deserialize(ev.data);
+            if (tx.txid == crypto::Hash256{}) continue;
+            std::vector<core::Transaction> trial = blockTxs;
+            trial.push_back(tx);
+            std::vector<std::vector<uint8_t>> added;
+            if (!transfer_ || !transfer_->verifyTransactionsInBlockOrder(trial)) continue;
+            if (!localTransferChecks(std::vector<core::Transaction>{tx}, imageView, &added)) continue;
+            imageView.insert(imageView.end(), added.begin(), added.end());
+            newKeyImages.insert(newKeyImages.end(), added.begin(), added.end());
+            blockTxs.push_back(std::move(tx));
+            included.push_back(ev);
+        }
+        if (included.empty()) return;
+
         core::Block block;
         block.height = ledger_->height();
         block.timestamp = std::time(nullptr);
         block.prevHash = ledger_->tipHash();
-        block.events = std::move(events);
+        block.events = std::move(included);
         block.difficulty = ledger_->currentDifficulty();
         block.merkleRoot = block.computeMerkleRoot();
         block.nonce = 0;
@@ -4935,76 +5042,31 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
             }
         }
 
+        if (!blockTxs.empty()) {
+            std::vector<std::vector<uint8_t>> freshImages;
+            {
+                std::lock_guard<std::mutex> kiLock(usedKeyImagesMtx_);
+                freshImages = usedKeyImages_;
+            }
+            std::vector<std::vector<uint8_t>> checkedImages;
+            if (!batchPasses(blockTxs, freshImages, &checkedImages)) {
+                utils::Logger::error("Block not stored: transfer checks failed");
+                return;
+            }
+            newKeyImages = std::move(checkedImages);
+        }
+
         if (!ledger_->appendBlockWithValidation(block)) {
             return;
         }
 
-        if (transfer_) {
-            std::vector<core::Transaction> blockTxs;
-            for (const auto& ev : block.events) {
-                if (ev.type != core::EventType::TRANSFER) continue;
-                core::Transaction tx = core::Transaction::deserialize(ev.data);
-                if (tx.txid == crypto::Hash256{}) continue;
-                blockTxs.push_back(tx);
-            }
-            if (!blockTxs.empty()) {
-                std::vector<std::vector<uint8_t>> blockKeyImages;
-                {
-                    std::lock_guard<std::mutex> kiLock(usedKeyImagesMtx_);
-                    for (const auto& tx : blockTxs) {
-                        std::vector<crypto::PedersenCommitment> inputCommits;
-                        std::vector<crypto::PedersenCommitment> outputCommits;
-                        bool rangeOk = true;
-                        for (const auto& outp : tx.outputs) {
-                            if (!outp.isConfidential()) continue;
-                            crypto::PedersenCommitment c;
-                            c.commitment = outp.commitment;
-                            if (!crypto::ConfidentialTx::rangeCheck(c)) {
-                                rangeOk = false;
-                                break;
-                            }
-                            outputCommits.push_back(c);
-                        }
-                        if (!rangeOk) {
-                            utils::Logger::error("Block rejected: confidential output range check failed");
-                            return;
-                        }
-                        for (const auto& inp : tx.inputs) {
-                            core::Transaction prev = transfer_->getTransaction(inp.prevTxHash);
-                            if (inp.outputIndex < prev.outputs.size()) {
-                                const auto& prevOut = prev.outputs[inp.outputIndex];
-                                if (prevOut.isConfidential()) {
-                                    crypto::PedersenCommitment c;
-                                    c.commitment = prevOut.commitment;
-                                    inputCommits.push_back(c);
-                                }
-                            }
-                            std::vector<uint8_t> kiData;
-                            kiData.insert(kiData.end(), inp.pubKey.begin(), inp.pubKey.end());
-                            kiData.insert(kiData.end(), inp.prevTxHash.begin(), inp.prevTxHash.end());
-                            kiData.insert(kiData.end(), inp.signature.begin(), inp.signature.end());
-                            crypto::Hash256 kih = crypto::sha256(kiData);
-                            std::vector<uint8_t> keyImage(kih.begin(), kih.end());
-                            if (crypto::RingSign::isDoubleSpend(keyImage, usedKeyImages_)) {
-                                utils::Logger::error("Block rejected: double-spend detected");
-                                return;
-                            }
-                            blockKeyImages.push_back(keyImage);
-                        }
-                        if (!inputCommits.empty() && !outputCommits.empty()) {
-                            if (!crypto::ConfidentialTx::verifyBalance(inputCommits, outputCommits, tx.fee)) {
-                                utils::Logger::error("Block rejected: confidential balance check failed");
-                                return;
-                            }
-                        }
-                    }
-                    for (const auto& ki : blockKeyImages) {
-                        usedKeyImages_.push_back(ki);
-                    }
-                }
-                if (!transfer_->applyBlockTransactionsFromBlock(blockTxs, block.height, block.hash)) {
-                    utils::Logger::error("Failed to apply block transfer events (local mined block)");
-                }
+        if (!newKeyImages.empty()) {
+            std::lock_guard<std::mutex> kiLock(usedKeyImagesMtx_);
+            for (const auto& ki : newKeyImages) usedKeyImages_.push_back(ki);
+        }
+        if (transfer_ && !blockTxs.empty()) {
+            if (!transfer_->applyBlockTransactionsFromBlock(blockTxs, block.height, block.hash)) {
+                utils::Logger::error("Failed to apply block transfer events (local mined block)");
             }
         }
     }
@@ -5357,9 +5419,27 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
 	        network_->send(peerId, reply);
 	    }
 
+        enum class PeerSessionPhase : uint8_t {
+            Fresh = 0,
+            VersionSeen = 1,
+            Ready = 2
+        };
+        struct PeerSession {
+            int socket = -1;
+            uint64_t serial = 0;
+            bool closed = false;
+            PeerSessionPhase phase = PeerSessionPhase::Fresh;
+            uint64_t startHeight = 0;
+            std::array<uint8_t, 16> addrRecv{};
+            bool advertisementPending = false;
+        };
+        mutable std::mutex peerSessionMtx_;
+        std::unordered_map<std::string, PeerSession> peerSession_;
+
 #include "node/main_parts/net_message_handlers.inc"
 
     void handlePeerConnected(const network::Peer& peer) {
+        beginPeerSession(peer.id, peer.socket, peer.sessionSerial);
         const bool torRequired = agentTorRequired_.load();
         if (torRequired) {
             const bool torReachable = probeTorSocks();
@@ -5400,6 +5480,7 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
     }
 
 	    void handlePeerDisconnected(const network::Peer& peer) {
+            endPeerSession(peer.id, peer.socket, peer.sessionSerial);
 	        utils::Logger::info("Peer disconnected: " + peer.id);
 	        {
 	            std::lock_guard<std::mutex> lock(peerHeightsMtx_);
@@ -5691,6 +5772,8 @@ std::string handleRpcNodeTorControl(const std::string& paramsJson) {
         std::string localOfferId_;
         uint64_t remotePricePerRequestAtoms_ = 0;
         std::unordered_map<std::string, ProviderSession> providerSessions_;
+        // Normalized payment txids already accepted. One txid pays for one request.
+        std::unordered_set<std::string> acceptedRentalPayments_;
 
     std::thread networkThread_;
     std::thread consensusThread_;

@@ -136,7 +136,9 @@ bool decodeJsonRpcMessage(const std::string& raw, std::string& body, size_t& con
     }
 
     size_t bodyStart = headerEnd + 4;
-    if (raw.size() < bodyStart + contentLength) return false;
+    // Compare against the unread tail. Adding the length first wraps when the
+    // declared size is huge and would treat a short frame as complete.
+    if (bodyStart > raw.size() || contentLength > raw.size() - bodyStart) return false;
 
     body = raw.substr(bodyStart, contentLength);
     consumed = bodyStart + contentLength;

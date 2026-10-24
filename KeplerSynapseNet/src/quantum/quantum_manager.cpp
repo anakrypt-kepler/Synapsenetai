@@ -13,6 +13,7 @@ constexpr uint8_t kQuantumFrameModeQkd = 0x01;
 constexpr uint8_t kQuantumFrameModeAesGcm = 0x02;
 
 bool aes256GcmReady() {
+    synapse::crypto::containForeignCryptoModules();
     return EVP_aes_256_gcm() != nullptr;
 }
 

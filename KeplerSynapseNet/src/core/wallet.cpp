@@ -3,7 +3,7 @@
 // File layout v4: magic 0xA5 | version 4 | salt(16) | kem_ct(1088) | iv(12) | ciphertext | tag(16).
 // v4: PBKDF2 → K → HKDF seed → deterministic ML-KEM-768 KP; encaps random DEK; AES-GCM(plaintext, DEK).
 // AAD binds magic+version+salt[+kem_ct]+iv so a swapped header fails GCM auth.
-// If RAND_bytes fails we fall back to random_device (weaker; log that path if you debug).
+// If RAND_bytes fails, salt, IV, and mnemonic entropy are not invented. Creation and encryption fail closed.
 
 #include "core/wallet.h"
 #include "crypto/address.h"
@@ -12,10 +12,11 @@
 #include "quantum/wallet_security.h"
 #include "tui/bip39_wordlist.h"
 #include "utils/logger.h"
+#include "utils/secret_file.h"
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <mutex>
-#include <random>
 #include <chrono>
 #include <openssl/rand.h>
 #include <openssl/evp.h>
@@ -39,22 +40,35 @@ static constexpr size_t WALLET_GCM_IV_SIZE = 12;
 static constexpr size_t WALLET_GCM_TAG_SIZE = 16;
 
 static std::vector<uint8_t> generateRandom(size_t len) {
+    crypto::containForeignCryptoModules();
+    if (len == 0) return {};
     std::vector<uint8_t> result(len);
-    if (len > 0) {
-        if (RAND_bytes(result.data(), static_cast<int>(len)) != 1) {
-            std::random_device rd;
-            for (size_t i = 0; i < len; ++i) result[i] = static_cast<uint8_t>(rd() & 0xFF);
-        }
+    if (RAND_bytes(result.data(), static_cast<int>(len)) != 1) {
+        OPENSSL_cleanse(result.data(), result.size());
+        return {};
     }
     return result;
 }
 
 static std::vector<uint8_t> pbkdf2_hmac(const std::string& password, const std::vector<uint8_t>& salt, int iterations, size_t outLen) {
+    crypto::containForeignCryptoModules();
     std::vector<uint8_t> out(outLen);
     if (!PKCS5_PBKDF2_HMAC(password.c_str(), static_cast<int>(password.size()), salt.data(), static_cast<int>(salt.size()), iterations, EVP_sha256(), static_cast<int>(outLen), out.data())) {
-        std::fill(out.begin(), out.end(), 0);
+        OPENSSL_cleanse(out.data(), out.size());
     }
     return out;
+}
+
+static void wipeSecretBytes(std::vector<uint8_t>& bytes) {
+    if (bytes.empty()) return;
+    OPENSSL_cleanse(bytes.data(), bytes.size());
+    bytes.clear();
+}
+
+static void wipeSecretString(std::string& text) {
+    if (text.empty()) return;
+    OPENSSL_cleanse(&text[0], text.size());
+    text.clear();
 }
 
 static void appendU32LE(std::vector<uint8_t>& out, uint32_t v) {
@@ -131,6 +145,7 @@ static bool aes256GcmEncrypt(const std::vector<uint8_t>& key,
                              const std::vector<uint8_t>& plaintext,
                              std::vector<uint8_t>& ciphertext,
                              std::vector<uint8_t>& tag) {
+    crypto::containForeignCryptoModules();
     ciphertext.assign(plaintext.size(), 0);
     tag.assign(WALLET_GCM_TAG_SIZE, 0);
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
@@ -164,9 +179,11 @@ static bool aes256GcmDecrypt(const std::vector<uint8_t>& key,
                              const std::vector<uint8_t>& ciphertext,
                              const std::vector<uint8_t>& tag,
                              std::vector<uint8_t>& plaintextOut) {
+    crypto::containForeignCryptoModules();
     plaintextOut.assign(ciphertext.size(), 0);
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
     if (!ctx) {
+        if (!plaintextOut.empty()) OPENSSL_cleanse(plaintextOut.data(), plaintextOut.size());
         plaintextOut.clear();
         return false;
     }
@@ -185,6 +202,7 @@ static bool aes256GcmDecrypt(const std::vector<uint8_t>& key,
     if (ok && 1 != EVP_DecryptFinal_ex(ctx, plaintextOut.data() + outlen, &tmplen)) ok = false;
     EVP_CIPHER_CTX_free(ctx);
     if (!ok) {
+        if (!plaintextOut.empty()) OPENSSL_cleanse(plaintextOut.data(), plaintextOut.size());
         plaintextOut.clear();
         return false;
     }
@@ -196,8 +214,13 @@ static bool encryptAndWriteV3(const std::string& path,
                               const std::vector<uint8_t>& plaintext,
                               const std::string& password) {
     auto salt = generateRandom(16);
+    if (salt.size() != 16) return false;
     auto aesKey = pbkdf2_hmac(password, salt, WALLET_PBKDF2_ITERATIONS_V3, 32);
     auto iv = generateRandom(WALLET_GCM_IV_SIZE);
+    if (iv.size() != WALLET_GCM_IV_SIZE) {
+        OPENSSL_cleanse(aesKey.data(), aesKey.size());
+        return false;
+    }
 
     std::vector<uint8_t> aad;
     aad.reserve(1 + 1 + salt.size() + iv.size());
@@ -212,15 +235,15 @@ static bool encryptAndWriteV3(const std::string& path,
     OPENSSL_cleanse(aesKey.data(), aesKey.size());
     if (!ok) return false;
 
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
-    file.put(static_cast<char>(WALLET_MAGIC));
-    file.put(static_cast<char>(WALLET_FORMAT_V3_HYBRID_GCM));
-    file.write(reinterpret_cast<char*>(salt.data()), static_cast<std::streamsize>(salt.size()));
-    file.write(reinterpret_cast<char*>(iv.data()), static_cast<std::streamsize>(iv.size()));
-    file.write(reinterpret_cast<char*>(ciphertext.data()), static_cast<std::streamsize>(ciphertext.size()));
-    file.write(reinterpret_cast<char*>(tag.data()), static_cast<std::streamsize>(tag.size()));
-    return file.good();
+    std::string bytes;
+    bytes.reserve(2 + salt.size() + iv.size() + ciphertext.size() + tag.size());
+    bytes.push_back(static_cast<char>(WALLET_MAGIC));
+    bytes.push_back(static_cast<char>(WALLET_FORMAT_V3_HYBRID_GCM));
+    bytes.append(reinterpret_cast<const char*>(salt.data()), salt.size());
+    bytes.append(reinterpret_cast<const char*>(iv.data()), iv.size());
+    bytes.append(reinterpret_cast<const char*>(ciphertext.data()), ciphertext.size());
+    bytes.append(reinterpret_cast<const char*>(tag.data()), tag.size());
+    return utils::writeFileForCurrentUser(path, bytes);
 }
 
 // ML-KEM-768 wrap of a random AES-GCM DEK. Fail closed on KEM errors (no plaintext, no silent v3).
@@ -228,6 +251,7 @@ static bool encryptAndWriteV4(const std::string& path,
                               const std::vector<uint8_t>& plaintext,
                               const std::string& password) {
     auto salt = generateRandom(16);
+    if (salt.size() != 16) return false;
     auto k = pbkdf2_hmac(password, salt, WALLET_PBKDF2_ITERATIONS_V3, 32);
     quantum::KyberKeyPair wrapKp{};
     if (!quantum::WalletSecurity::deriveFileKyberKeyPair(k, wrapKp)) {
@@ -247,6 +271,10 @@ static bool encryptAndWriteV4(const std::string& path,
     }
 
     auto iv = generateRandom(WALLET_GCM_IV_SIZE);
+    if (iv.size() != WALLET_GCM_IV_SIZE) {
+        OPENSSL_cleanse(dek.data(), dek.size());
+        return false;
+    }
     std::vector<uint8_t> aad;
     aad.reserve(1 + 1 + salt.size() + kemCt.size() + iv.size());
     aad.push_back(WALLET_MAGIC);
@@ -261,16 +289,16 @@ static bool encryptAndWriteV4(const std::string& path,
     OPENSSL_cleanse(dek.data(), dek.size());
     if (!sealed) return false;
 
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
-    file.put(static_cast<char>(WALLET_MAGIC));
-    file.put(static_cast<char>(WALLET_FORMAT_V4_KYBER_GCM));
-    file.write(reinterpret_cast<char*>(salt.data()), static_cast<std::streamsize>(salt.size()));
-    file.write(reinterpret_cast<char*>(kemCt.data()), static_cast<std::streamsize>(kemCt.size()));
-    file.write(reinterpret_cast<char*>(iv.data()), static_cast<std::streamsize>(iv.size()));
-    file.write(reinterpret_cast<char*>(ciphertext.data()), static_cast<std::streamsize>(ciphertext.size()));
-    file.write(reinterpret_cast<char*>(tag.data()), static_cast<std::streamsize>(tag.size()));
-    return file.good();
+    std::string bytes;
+    bytes.reserve(2 + salt.size() + kemCt.size() + iv.size() + ciphertext.size() + tag.size());
+    bytes.push_back(static_cast<char>(WALLET_MAGIC));
+    bytes.push_back(static_cast<char>(WALLET_FORMAT_V4_KYBER_GCM));
+    bytes.append(reinterpret_cast<const char*>(salt.data()), salt.size());
+    bytes.append(reinterpret_cast<const char*>(kemCt.data()), kemCt.size());
+    bytes.append(reinterpret_cast<const char*>(iv.data()), iv.size());
+    bytes.append(reinterpret_cast<const char*>(ciphertext.data()), ciphertext.size());
+    bytes.append(reinterpret_cast<const char*>(tag.data()), tag.size());
+    return utils::writeFileForCurrentUser(path, bytes);
 }
 
 // Real Kyber → v4. Simulated/absent Kyber is not a wrap: keep AES-GCM v3.
@@ -288,28 +316,46 @@ static bool encryptAndWriteCurrent(const std::string& path,
                               const std::string& password,
                               uint8_t formatVersion) {
     auto salt = generateRandom(16);
+    if (salt.size() != 16) return false;
     auto derived = pbkdf2_hmac(password, salt, WALLET_PBKDF2_ITERATIONS_LEGACY, 64);
     std::vector<uint8_t> aesKey(derived.begin(), derived.begin() + 32);
     std::vector<uint8_t> hmacKey(derived.begin() + 32, derived.begin() + 64);
     auto iv = generateRandom(16);
+    if (iv.size() != 16) {
+        OPENSSL_cleanse(derived.data(), derived.size());
+        OPENSSL_cleanse(aesKey.data(), aesKey.size());
+        OPENSSL_cleanse(hmacKey.data(), hmacKey.size());
+        return false;
+    }
 
     std::vector<uint8_t> ciphertext;
     ciphertext.resize(plaintext.size() + EVP_CIPHER_block_size(EVP_aes_256_cbc()));
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-    if (!ctx) return false;
+    auto wipeKeys = [&]() {
+        OPENSSL_cleanse(derived.data(), derived.size());
+        OPENSSL_cleanse(aesKey.data(), aesKey.size());
+        OPENSSL_cleanse(hmacKey.data(), hmacKey.size());
+    };
+    if (!ctx) {
+        wipeKeys();
+        return false;
+    }
     int outlen = 0;
     int tmplen = 0;
     if (1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, aesKey.data(), iv.data())) {
         EVP_CIPHER_CTX_free(ctx);
+        wipeKeys();
         return false;
     }
     if (1 != EVP_EncryptUpdate(ctx, ciphertext.data(), &outlen,
                                plaintext.data(), static_cast<int>(plaintext.size()))) {
         EVP_CIPHER_CTX_free(ctx);
+        wipeKeys();
         return false;
     }
     if (1 != EVP_EncryptFinal_ex(ctx, ciphertext.data() + outlen, &tmplen)) {
         EVP_CIPHER_CTX_free(ctx);
+        wipeKeys();
         return false;
     }
     outlen += tmplen;
@@ -328,19 +374,25 @@ static bool encryptAndWriteCurrent(const std::string& path,
     unsigned char hmacOut[EVP_MAX_MD_SIZE];
     if (!HMAC(EVP_sha256(), hmacKey.data(), static_cast<int>(hmacKey.size()),
               hmacInput.data(), hmacInput.size(), hmacOut, &hmacLen)) {
+        wipeKeys();
         return false;
     }
-    if (hmacLen != 32) return false;
+    if (hmacLen != 32) {
+        wipeKeys();
+        return false;
+    }
 
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
-    file.put(static_cast<char>(WALLET_MAGIC));
-    file.put(static_cast<char>(formatVersion));
-    file.write(reinterpret_cast<char*>(salt.data()), salt.size());
-    file.write(reinterpret_cast<char*>(iv.data()), iv.size());
-    file.write(reinterpret_cast<char*>(ciphertext.data()), ciphertext.size());
-    file.write(reinterpret_cast<char*>(hmacOut), 32);
-    return file.good();
+    std::string bytes;
+    bytes.reserve(2 + salt.size() + iv.size() + ciphertext.size() + 32);
+    bytes.push_back(static_cast<char>(WALLET_MAGIC));
+    bytes.push_back(static_cast<char>(formatVersion));
+    bytes.append(reinterpret_cast<const char*>(salt.data()), salt.size());
+    bytes.append(reinterpret_cast<const char*>(iv.data()), iv.size());
+    bytes.append(reinterpret_cast<const char*>(ciphertext.data()), ciphertext.size());
+    bytes.append(reinterpret_cast<const char*>(hmacOut), 32);
+    const bool wrote = utils::writeFileForCurrentUser(path, bytes);
+    wipeKeys();
+    return wrote;
 }
 
 static bool decryptFileV3(const std::vector<uint8_t>& encrypted,
@@ -446,6 +498,11 @@ static bool decryptFile(const std::vector<uint8_t>& encrypted,
     auto derived = pbkdf2_hmac(password, salt, 100000, 64);
     std::vector<uint8_t> aesKey(derived.begin(), derived.begin() + 32);
     std::vector<uint8_t> hmacKey(derived.begin() + 32, derived.begin() + 64);
+    auto wipeKeys = [&]() {
+        OPENSSL_cleanse(derived.data(), derived.size());
+        OPENSSL_cleanse(aesKey.data(), aesKey.size());
+        OPENSSL_cleanse(hmacKey.data(), hmacKey.size());
+    };
 
     std::vector<uint8_t> hmacInput;
     hmacInput.reserve(1 + 1 + salt.size() + iv.size() + ciphertext.size());
@@ -459,9 +516,13 @@ static bool decryptFile(const std::vector<uint8_t>& encrypted,
     unsigned char hmacOut[EVP_MAX_MD_SIZE];
     if (!HMAC(EVP_sha256(), hmacKey.data(), static_cast<int>(hmacKey.size()),
               hmacInput.data(), hmacInput.size(), hmacOut, &hmacLen)) {
+        wipeKeys();
         return false;
     }
-    if (hmacLen != 32) return false;
+    if (hmacLen != 32) {
+        wipeKeys();
+        return false;
+    }
     if (formatVersionOut == WALLET_FORMAT_V1_MNEMONIC_ONLY) {
         std::vector<uint8_t> legacyInput;
         legacyInput.reserve(salt.size() + iv.size() + ciphertext.size());
@@ -472,28 +533,60 @@ static bool decryptFile(const std::vector<uint8_t>& encrypted,
         unsigned char legacyOut[EVP_MAX_MD_SIZE];
         if (!HMAC(EVP_sha256(), hmacKey.data(), static_cast<int>(hmacKey.size()),
                   legacyInput.data(), legacyInput.size(), legacyOut, &legacyLen)) {
+            wipeKeys();
             return false;
         }
-        if (legacyLen != 32) return false;
+        if (legacyLen != 32) {
+            wipeKeys();
+            return false;
+        }
         if (CRYPTO_memcmp(hmacOut, hmacStored.data(), 32) != 0
             && CRYPTO_memcmp(legacyOut, hmacStored.data(), 32) != 0) {
+            wipeKeys();
             return false;
         }
     } else {
-        if (CRYPTO_memcmp(hmacOut, hmacStored.data(), 32) != 0) return false;
+        if (CRYPTO_memcmp(hmacOut, hmacStored.data(), 32) != 0) {
+            wipeKeys();
+            return false;
+        }
     }
 
     plaintextOut.assign(ciphertext.size() + EVP_CIPHER_block_size(EVP_aes_256_cbc()), 0);
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
     int outlen = 0;
     int tmplen = 0;
-    if (!ctx) return false;
-    if (1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, aesKey.data(), iv.data())) { EVP_CIPHER_CTX_free(ctx); return false; }
-    if (1 != EVP_DecryptUpdate(ctx, plaintextOut.data(), &outlen, ciphertext.data(), static_cast<int>(ciphertext.size()))) { EVP_CIPHER_CTX_free(ctx); return false; }
-    if (1 != EVP_DecryptFinal_ex(ctx, plaintextOut.data() + outlen, &tmplen)) { EVP_CIPHER_CTX_free(ctx); return false; }
+    if (!ctx) {
+        if (!plaintextOut.empty()) OPENSSL_cleanse(plaintextOut.data(), plaintextOut.size());
+        plaintextOut.clear();
+        wipeKeys();
+        return false;
+    }
+    if (1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, aesKey.data(), iv.data())) {
+        EVP_CIPHER_CTX_free(ctx);
+        if (!plaintextOut.empty()) OPENSSL_cleanse(plaintextOut.data(), plaintextOut.size());
+        plaintextOut.clear();
+        wipeKeys();
+        return false;
+    }
+    if (1 != EVP_DecryptUpdate(ctx, plaintextOut.data(), &outlen, ciphertext.data(), static_cast<int>(ciphertext.size()))) {
+        EVP_CIPHER_CTX_free(ctx);
+        if (!plaintextOut.empty()) OPENSSL_cleanse(plaintextOut.data(), plaintextOut.size());
+        plaintextOut.clear();
+        wipeKeys();
+        return false;
+    }
+    if (1 != EVP_DecryptFinal_ex(ctx, plaintextOut.data() + outlen, &tmplen)) {
+        EVP_CIPHER_CTX_free(ctx);
+        if (!plaintextOut.empty()) OPENSSL_cleanse(plaintextOut.data(), plaintextOut.size());
+        plaintextOut.clear();
+        wipeKeys();
+        return false;
+    }
     outlen += tmplen;
     plaintextOut.resize(outlen);
     EVP_CIPHER_CTX_free(ctx);
+    wipeKeys();
     return true;
 }
 
@@ -530,6 +623,7 @@ void Wallet::Impl::deriveMasterSeed() {
     std::memcpy(salt.data(), saltPrefix, 8);
 
     masterSeed = pbkdf2_hmac(mnemonic, salt, 100000, 64);
+    wipeSecretString(mnemonic);
 }
 
 void Wallet::Impl::deriveKeys() {
@@ -590,9 +684,10 @@ Wallet::~Wallet() {
 bool Wallet::create() {
     std::lock_guard<std::mutex> lock(impl_->mtx);
 
-    impl_->seedWords.clear();
-
     auto entropy = generateRandom(32);
+    if (entropy.size() != 32) return false;
+
+    impl_->seedWords.clear();
 
     for (int i = 0; i < 24; i++) {
         int idx = 0;
@@ -607,6 +702,7 @@ bool Wallet::create() {
         idx %= ::synapse::tui::BIP39_WORDLIST_SIZE;
         impl_->seedWords.push_back(::synapse::tui::BIP39_WORDLIST[idx]);
     }
+    OPENSSL_cleanse(entropy.data(), entropy.size());
 
     impl_->deriveMasterSeed();
     impl_->deriveKeys();
@@ -635,6 +731,11 @@ bool Wallet::restore(const std::vector<std::string>& seedWords) {
 bool Wallet::load(const std::string& path, const std::string& password) {
     std::lock_guard<std::mutex> lock(impl_->mtx);
 
+    if (!utils::lockFileToCurrentUser(path)) {
+        utils::Logger::error("wallet: file cannot be locked to the current user");
+        return false;
+    }
+
     std::ifstream file(path, std::ios::binary);
     if (!file) return false;
 
@@ -659,6 +760,10 @@ bool Wallet::load(const std::string& path, const std::string& password) {
         || formatVersion == WALLET_FORMAT_V2_HYBRID) {
         if (!decodeV2Plaintext(plaintext, mnemonic, loadedKeyPair)) {
             utils::Logger::error("wallet: hybrid plaintext structure invalid for " + path);
+            wipeSecretString(mnemonic);
+            wipeSecretBytes(plaintext);
+            wipeSecretBytes(loadedKeyPair.classicSecretKey);
+            wipeSecretBytes(loadedKeyPair.pqcSecretKey);
             return false;
         }
         if (formatVersion == WALLET_FORMAT_V2_HYBRID) {
@@ -682,7 +787,16 @@ bool Wallet::load(const std::string& path, const std::string& password) {
         }
     }
     if (!word.empty()) impl_->seedWords.push_back(word);
-    if (impl_->seedWords.size() != 24) return false;
+    if (impl_->seedWords.size() != 24) {
+        for (auto& seedWord : impl_->seedWords) wipeSecretString(seedWord);
+        impl_->seedWords.clear();
+        wipeSecretString(word);
+        wipeSecretString(mnemonic);
+        wipeSecretBytes(plaintext);
+        wipeSecretBytes(loadedKeyPair.classicSecretKey);
+        wipeSecretBytes(loadedKeyPair.pqcSecretKey);
+        return false;
+    }
 
     impl_->deriveMasterSeed();
     impl_->deriveKeys();
@@ -709,8 +823,13 @@ bool Wallet::load(const std::string& path, const std::string& password) {
         if (!encryptAndWriteCurrent(path, upgraded, password)) {
             utils::Logger::error("wallet: lazy migrate to current on-disk format failed for " + path);
         }
+        wipeSecretBytes(upgraded);
+        wipeSecretString(mnemonicNorm);
     }
 
+    wipeSecretString(mnemonic);
+    wipeSecretString(word);
+    wipeSecretBytes(plaintext);
     return true;
 }
 
@@ -727,7 +846,13 @@ bool Wallet::save(const std::string& path, const std::string& password) {
         mnemonic += w;
     }
     auto plaintext = encodeV2Plaintext(mnemonic, impl_->hybridKeyPair);
-    if (!encryptAndWriteCurrent(path, plaintext, password)) return false;
+    if (!encryptAndWriteCurrent(path, plaintext, password)) {
+        wipeSecretString(mnemonic);
+        wipeSecretBytes(plaintext);
+        return false;
+    }
+    wipeSecretString(mnemonic);
+    wipeSecretBytes(plaintext);
     impl_->walletPath = path;
     return true;
 }

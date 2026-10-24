@@ -23,9 +23,11 @@ static bool loadKeys(const std::string& dir, synapse::crypto::PrivateKey& sk,
                      synapse::crypto::PublicKey& pk) {
     Keys keys;
     const std::string path = dir + "/wallet.key";
-    if (!keys.load(path, "") || !keys.isValid()) {
-        keys.generate();
-        keys.save(path, "");
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec)) {
+        if (!keys.load(path, "") || !keys.isValid()) return false;
+    } else if (!keys.generate() || !keys.save(path, "") || !keys.isValid()) {
+        return false;
     }
     auto pub = keys.getPublicKey();
     auto priv = keys.getPrivateKey();

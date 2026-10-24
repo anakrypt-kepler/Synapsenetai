@@ -1,10 +1,12 @@
 #include "ide/skills.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <regex>
 #include <set>
 #include <sstream>
+#include <system_error>
 
 namespace synapse {
 namespace ide {
@@ -73,23 +75,27 @@ std::string xmlEscape(const std::string& s) {
 
 void walkDir(const std::string& dir, std::vector<std::string>& skillFiles,
              std::set<std::string>& seen) {
-    std::string cmd = "find " + dir + " -name '" + SkillFileName + "' -type f 2>/dev/null";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return;
-    char buf[4096];
-    std::string output;
-    while (fgets(buf, sizeof(buf), pipe)) {
-        output += buf;
-    }
-    pclose(pipe);
-
-    std::istringstream iss(output);
-    std::string path;
-    while (std::getline(iss, path)) {
-        if (path.empty()) continue;
-        if (seen.count(path)) continue;
-        seen.insert(path);
-        skillFiles.push_back(path);
+    // The directory is caller text. Walk it in process instead of a shell find.
+    std::error_code ec;
+    const std::filesystem::recursive_directory_iterator end;
+    std::filesystem::recursive_directory_iterator it(
+        std::filesystem::path(dir),
+        std::filesystem::directory_options::skip_permission_denied,
+        ec);
+    if (ec) return;
+    while (it != end) {
+        std::error_code stEc;
+        const std::filesystem::file_status st = it->symlink_status(stEc);
+        if (!stEc && std::filesystem::is_regular_file(st) &&
+            it->path().filename() == SkillFileName) {
+            const std::string path = it->path().generic_string();
+            if (seen.insert(path).second) skillFiles.push_back(path);
+        }
+        const std::filesystem::path here = it->path();
+        it.increment(ec);
+        if (!ec) continue;
+        ec.clear();
+        if (it == end || it->path() == here) break;
     }
 }
 

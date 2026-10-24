@@ -1,6 +1,8 @@
 #include "ide/session_db.h"
 
+#include <filesystem>
 #include <mutex>
+#include <system_error>
 #include <unordered_map>
 #include <vector>
 
@@ -24,6 +26,169 @@ struct SessionDB::Impl {
     std::unordered_map<std::string, std::vector<SessionMessage>> messages;
 };
 
+#if SYNAPSE_HAVE_SQLITE3
+namespace {
+
+// A connection may not load an extension or follow a caller-supplied name to
+// another file. URI filenames stay disabled and ATTACH is refused.
+bool sqlitePathRejected(const std::string& path) {
+    if (path.empty()) return true;
+    if (path == ":memory:") return false;
+    if (path.find('\0') != std::string::npos) return true;
+    if (path.find('?') != std::string::npos ||
+        path.find('#') != std::string::npos ||
+        path.find('%') != std::string::npos) {
+        return true;
+    }
+    for (unsigned char c : path) {
+        if (c < 0x20 || c == 0x7f) return true;
+    }
+    if (path.size() >= 2 &&
+        ((path[0] == '\\' && path[1] == '\\') || (path[0] == '/' && path[1] == '/'))) {
+        return true;
+    }
+
+    std::string lower(path.size(), '\0');
+    for (size_t i = 0; i < path.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(path[i]);
+        lower[i] = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
+    }
+    if (lower.compare(0, 5, "file:") == 0) return true;
+    if (lower.find("://") != std::string::npos) return true;
+
+    const std::filesystem::path fsPath(path);
+    for (const auto& part : fsPath) {
+        if (part == "..") return true;
+    }
+    for (const auto& part : fsPath.lexically_normal()) {
+        if (part == "..") return true;
+    }
+    const auto filename = fsPath.filename();
+    return filename.empty() || filename == "." || filename == "..";
+}
+
+#ifndef SQLITE_OMIT_AUTHORIZATION
+bool nameIsLoadExtension(const char* name) {
+    static constexpr char kExpected[] = "load_extension";
+    if (!name) return false;
+    for (size_t i = 0; kExpected[i] != '\0'; ++i) {
+        const unsigned char c = static_cast<unsigned char>(name[i]);
+        if (c == 0) return false;
+        const char lower = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
+        if (lower != kExpected[i]) return false;
+    }
+    return name[sizeof(kExpected) - 1] == '\0';
+}
+
+extern "C" int synapseSessionSqliteDenyForeignFile(
+    void*,
+    int action,
+    const char* arg1,
+    const char* arg2,
+    const char*,
+    const char*) {
+    if (action == SQLITE_ATTACH || action == SQLITE_DETACH) return SQLITE_DENY;
+    if (action == SQLITE_FUNCTION &&
+        (nameIsLoadExtension(arg1) || nameIsLoadExtension(arg2))) {
+        return SQLITE_DENY;
+    }
+    return SQLITE_OK;
+}
+#endif
+
+bool lockDownSqlite(sqlite3* db) {
+    if (!db) return false;
+#ifndef SQLITE_OMIT_LOAD_EXTENSION
+    if (sqlite3_enable_load_extension(db, 0) != SQLITE_OK) return false;
+#if SQLITE_VERSION_NUMBER >= 3013000
+    {
+        int prior = 0;
+        if (sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 0, &prior) != SQLITE_OK) {
+            return false;
+        }
+    }
+#endif
+#endif
+#if SQLITE_VERSION_NUMBER >= 3026000
+    {
+        int prior = 0;
+        if (sqlite3_db_config(db, SQLITE_DBCONFIG_DEFENSIVE, 1, &prior) != SQLITE_OK) return false;
+    }
+#endif
+#if SQLITE_VERSION_NUMBER >= 3031000
+    {
+        int prior = 0;
+        if (sqlite3_db_config(db, SQLITE_DBCONFIG_TRUSTED_SCHEMA, 0, &prior) != SQLITE_OK) return false;
+    }
+#endif
+    sqlite3_limit(db, SQLITE_LIMIT_ATTACHED, 0);
+#ifndef SQLITE_OMIT_AUTHORIZATION
+    if (sqlite3_set_authorizer(db, synapseSessionSqliteDenyForeignFile, nullptr) != SQLITE_OK) {
+        return false;
+    }
+#endif
+    return true;
+}
+
+std::filesystem::path canonicalDirectory(const std::filesystem::path& dir, std::error_code& ec) {
+    ec.clear();
+    std::filesystem::path parent = dir;
+    if (parent.empty()) parent = std::filesystem::current_path(ec);
+    if (ec) return {};
+    const auto canonical = std::filesystem::weakly_canonical(parent, ec);
+    if (ec || canonical.empty()) return {};
+    return canonical;
+}
+
+bool sameCanonicalDirectory(const std::filesystem::path& left, const std::filesystem::path& right) {
+    std::error_code ec;
+    const auto leftDir = canonicalDirectory(left, ec);
+    if (ec || leftDir.empty()) return false;
+    const auto rightDir = canonicalDirectory(right, ec);
+    if (ec || rightDir.empty()) return false;
+    return leftDir == rightDir;
+}
+
+bool openedDatabaseStaysPut(sqlite3* db, const std::string& requested) {
+    const char* actual = sqlite3_db_filename(db, "main");
+    if (requested == ":memory:") return actual == nullptr || actual[0] == '\0';
+    if (!actual || actual[0] == '\0') return false;
+    if (std::string(actual) == requested) return true;
+    if (sqlitePathRejected(actual)) return false;
+    return sameCanonicalDirectory(
+        std::filesystem::path(requested).parent_path(),
+        std::filesystem::path(actual).parent_path());
+}
+
+bool openContainedSqlite(const std::string& path, sqlite3** out) {
+    if (!out) return false;
+    *out = nullptr;
+    if (sqlitePathRejected(path)) return false;
+    if (path != ":memory:") {
+        std::error_code ec;
+        const auto status = std::filesystem::symlink_status(path, ec);
+        if (!ec && std::filesystem::is_symlink(status)) return false;
+        if (ec && ec != std::errc::no_such_file_or_directory) return false;
+    }
+    sqlite3* db = nullptr;
+    // SQLITE_OPEN_URI is omitted so a file: name cannot select another file.
+    const int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+    const int rc = sqlite3_open_v2(path.c_str(), &db, flags, nullptr);
+    if (rc != SQLITE_OK || !db) {
+        if (db) sqlite3_close(db);
+        return false;
+    }
+    if (!lockDownSqlite(db) || !openedDatabaseStaysPut(db, path)) {
+        sqlite3_close(db);
+        return false;
+    }
+    *out = db;
+    return true;
+}
+
+}  // namespace
+#endif
+
 SessionDB::SessionDB() : impl_(std::make_unique<Impl>()) {}
 SessionDB::~SessionDB() { close(); }
 
@@ -33,14 +198,11 @@ bool SessionDB::open(const std::string& path) {
     impl_->dbPath = path;
 
 #if SYNAPSE_HAVE_SQLITE3
-    int rc = sqlite3_open(path.c_str(), &impl_->db);
-    if (rc != SQLITE_OK) {
-        if (impl_->db) {
-            sqlite3_close(impl_->db);
-            impl_->db = nullptr;
-        }
-        return false;
+    if (impl_->db) {
+        sqlite3_close(impl_->db);
+        impl_->db = nullptr;
     }
+    if (!openContainedSqlite(path, &impl_->db)) return false;
 
     sqlite3_exec(impl_->db, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
     sqlite3_exec(impl_->db, "PRAGMA synchronous=NORMAL;", nullptr, nullptr, nullptr);
@@ -70,14 +232,22 @@ bool SessionDB::open(const std::string& path) {
         ");";
 
     char* errMsg = nullptr;
-    rc = sqlite3_exec(impl_->db, createSessions, nullptr, nullptr, &errMsg);
+    int rc = sqlite3_exec(impl_->db, createSessions, nullptr, nullptr, &errMsg);
     if (errMsg) sqlite3_free(errMsg);
-    if (rc != SQLITE_OK) return false;
+    if (rc != SQLITE_OK) {
+        sqlite3_close(impl_->db);
+        impl_->db = nullptr;
+        return false;
+    }
 
     errMsg = nullptr;
     rc = sqlite3_exec(impl_->db, createMessages, nullptr, nullptr, &errMsg);
     if (errMsg) sqlite3_free(errMsg);
-    if (rc != SQLITE_OK) return false;
+    if (rc != SQLITE_OK) {
+        sqlite3_close(impl_->db);
+        impl_->db = nullptr;
+        return false;
+    }
 
     impl_->isOpen = true;
     return true;

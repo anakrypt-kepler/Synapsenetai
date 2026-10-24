@@ -1,4 +1,5 @@
 #include "network/network.h"
+#include "crypto/crypto.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -15,6 +16,7 @@
 #include <functional>
 #include <atomic>
 #include <thread>
+#include <openssl/crypto.h>
 #include <openssl/rand.h>
 
 namespace synapse {
@@ -678,6 +680,7 @@ public:
 
         PeerInfo peer;
         peer.id = generatePeerId();
+        if (peer.id.empty()) return false;
         peer.address.ip = ip;
         peer.address.port = port;
         peer.state = PeerState::CONNECTING;
@@ -694,6 +697,7 @@ public:
 
         PeerInfo peer;
         peer.id = generatePeerId();
+        if (peer.id.empty()) return false;
         peer.address.ip = ip;
         peer.address.port = port;
         peer.state = PeerState::HANDSHAKING;
@@ -723,10 +727,11 @@ public:
     }
 
     std::string generatePeerId() {
+        crypto::containForeignCryptoModules();
         unsigned char buf[16];
         if (RAND_bytes(buf, sizeof(buf)) != 1) {
-            std::random_device rd;
-            for (size_t i = 0; i < sizeof(buf); ++i) buf[i] = static_cast<unsigned char>(rd() & 0xFF);
+            OPENSSL_cleanse(buf, sizeof(buf));
+            return {};
         }
         std::ostringstream ss;
         ss << std::hex << std::setfill('0');

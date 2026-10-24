@@ -123,6 +123,9 @@ struct LoaderStats {
     double avgLatencyMs;
 };
 
+// Canonical path of the one GGUF llama may map. Empty means do not map it.
+std::string canonicalModelFileForLlama(const std::string& path);
+
 class ModelLoader {
 public:
     ModelLoader();

@@ -53,9 +53,34 @@ static void testPeerDisplayPrefersOnionThenDisplayIdThenRaw() {
     assert(!display.tor);
 }
 
+static void testPeerHelloStaysOnItsSocket() {
+    const std::string onionHost(56, 'b');
+    synapse::core::PeerHelloInfo claimed;
+    claimed.transport = "tor-onion";
+    claimed.advertisedHost = onionHost + ".onion";
+    claimed.advertisedPort = 8333;
+
+    assert(synapse::core::peerHelloMatchesSocket("127.0.0.1", claimed));
+    assert(synapse::core::peerHelloMatchesSocket(claimed.advertisedHost, claimed));
+    assert(!synapse::core::peerHelloMatchesSocket("144.31.169.103", claimed));
+
+    const std::string otherHost(56, 'c');
+    assert(!synapse::core::peerHelloMatchesSocket(otherHost + ".onion", claimed));
+
+    auto display = synapse::core::selectPeerDisplayInfo("144.31.169.103", 8333, claimed);
+    assert(display.transport == "clearnet");
+    assert(display.displayAddress == "144.31.169.103:8333");
+    assert(!display.tor);
+
+    display = synapse::core::selectPeerDisplayInfo(otherHost + ".onion", 8333, claimed);
+    assert(display.transport == "tor-onion");
+    assert(display.displayAddress == otherHost + ".onion:8333");
+}
+
 int main() {
     testPeerHelloRoundTrip();
     testMalformedPeerHelloIsIgnored();
     testPeerDisplayPrefersOnionThenDisplayIdThenRaw();
+    testPeerHelloStaysOnItsSocket();
     return 0;
 }

@@ -63,6 +63,20 @@ static uint64_t monotonicMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+static bool isLocalInboundAddress(const std::string& address) {
+    return address == "127.0.0.1" || address.rfind("127.", 0) == 0;
+}
+
+static bool peerRecordMatchesSocket(const Peer& peer, const std::string& peerId, int fd, uint64_t serial) {
+    return peer.id == peerId && peer.socket == fd && fd >= 0 &&
+           serial != 0 && peer.sessionSerial == serial;
+}
+
+static uint64_t nextPeerSessionSerial() {
+    static std::atomic<uint64_t> serial{1};
+    return serial.fetch_add(1, std::memory_order_relaxed);
+}
+
 static bool setNonBlocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) return false;
@@ -513,6 +527,20 @@ void Network::Impl::acceptLoop() {
             pruneExpiredBansLocked(now);
             updateOverloadModeLocked(now);
 
+            // When Tor is required, a public inbound socket is not a peer.
+            // Drop it before the receive loop can read it.
+            if (config.torRequired && !isLocalInboundAddress(addr)) {
+                rejectedConnections += 1;
+                close(clientSock);
+                continue;
+            }
+            // Keep the hello and outbound queue on the socket that already owns this id.
+            if (peers.find(peerId) != peers.end()) {
+                rejectedConnections += 1;
+                close(clientSock);
+                continue;
+            }
+
             auto banIt = bannedPeers.find(addr);
             if (banIt != bannedPeers.end()) {
                 if (now < banIt->second) {
@@ -583,6 +611,7 @@ void Network::Impl::acceptLoop() {
             peer.isOutbound = false;
             peer.state = PeerState::CONNECTED;
             peer.socket = clientSock;
+            peer.sessionSerial = nextPeerSessionSerial();
 
             peers[peerId] = peer;
             rx[peerId] = PeerRxState{};
@@ -597,6 +626,7 @@ void Network::Impl::recvLoop() {
     while (running) {
         std::vector<struct pollfd> fds;
         std::vector<std::string> peerIds;
+        std::vector<uint64_t> peerSerials;
         
         std::vector<Peer> removedPeers;
         {
@@ -627,6 +657,7 @@ void Network::Impl::recvLoop() {
                     if (oqit != outboundQueues.end() && !oqit->second.empty()) pfd.events |= POLLOUT;
                     fds.push_back(pfd);
                     peerIds.push_back(id);
+                    peerSerials.push_back(peer.sessionSerial);
                 }
             }
         }
@@ -647,7 +678,12 @@ void Network::Impl::recvLoop() {
                 std::optional<Peer> dropped;
                 {
                     std::lock_guard<std::mutex> lock(mtx);
-                    dropped = removePeerLocked(peerIds[i]);
+                    auto pit = peers.find(peerIds[i]);
+                    // A reused peer id must not be closed by the previous socket.
+                    if (pit != peers.end() &&
+                        peerRecordMatchesSocket(pit->second, peerIds[i], fds[i].fd, peerSerials[i])) {
+                        dropped = removePeerLocked(peerIds[i]);
+                    }
                 }
                 if (dropped && disconnectHandler) disconnectHandler(*dropped);
                 continue;
@@ -661,7 +697,10 @@ void Network::Impl::recvLoop() {
             {
                 std::lock_guard<std::mutex> lock(mtx);
                 auto pit = peers.find(peerIds[i]);
-                if (pit == peers.end()) continue;
+                if (pit == peers.end() ||
+                    !peerRecordMatchesSocket(pit->second, peerIds[i], fds[i].fd, peerSerials[i])) {
+                    continue;
+                }
 
                 const uint64_t nowSec = static_cast<uint64_t>(std::time(nullptr));
                 const uint64_t nowMs = monotonicMs();
@@ -826,8 +865,21 @@ void Network::Impl::recvLoop() {
 
             if (droppedPeer && disconnectHandler) disconnectHandler(*droppedPeer);
             if (!decoded.empty() && messageHandler) {
-                for (auto& msg : decoded) {
-                    messageHandler(peerIds[i], msg);
+                bool deliver = false;
+                {
+                    std::lock_guard<std::mutex> lock(mtx);
+                    auto pit = peers.find(peerIds[i]);
+                    if (pit == peers.end()) {
+                        deliver = droppedPeer
+                            && peerRecordMatchesSocket(*droppedPeer, peerIds[i], fds[i].fd, peerSerials[i]);
+                    } else {
+                        deliver = peerRecordMatchesSocket(pit->second, peerIds[i], fds[i].fd, peerSerials[i]);
+                    }
+                }
+                if (deliver) {
+                    for (auto& msg : decoded) {
+                        messageHandler(peerIds[i], msg);
+                    }
                 }
             }
         }
@@ -1088,6 +1140,7 @@ bool Network::connect(const std::string& address, uint16_t port) {
     peer.isOutbound = true;
     peer.state = PeerState::CONNECTED;
     peer.socket = sock;
+    peer.sessionSerial = nextPeerSessionSerial();
 
     {
         std::lock_guard<std::mutex> lock(impl_->mtx);

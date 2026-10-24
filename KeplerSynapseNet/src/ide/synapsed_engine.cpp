@@ -12,10 +12,13 @@
 #include "crypto/confidential_tx.h"
 #include "privacy/privacy.h"
 #include "privacy/private_transfer.h"
+#include "web/curl_fetch.h"
 #include "model/model_inference.h"
 #include "quantum/quantum_security.h"
+#include "utils/secret_file.h"
 #include "node/poe_runtime.h"
 #include "../third_party/llama.cpp/vendor/nlohmann/json.hpp"
+#include "utils/json_secret_fields.h"
 
 #include <sodium.h>
 
@@ -101,9 +104,14 @@ extern "C" char** environ;
 namespace synapse {
 namespace ide {
 
+// std::rename on Windows leaves the old file in place when the destination
+// already exists.
+bool replaceFile(const std::string& from, const std::string& to);
+
 namespace {
 
 std::vector<uint8_t> scalarFromSeed(const std::string& seed) {
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) throw std::runtime_error("sodium init failed");
     unsigned char wide[crypto_core_ed25519_NONREDUCEDSCALARBYTES];
     crypto_hash_sha512(wide, reinterpret_cast<const unsigned char*>(seed.data()), seed.size());
@@ -114,6 +122,7 @@ std::vector<uint8_t> scalarFromSeed(const std::string& seed) {
 }
 
 std::vector<uint8_t> pointFromScalar(const std::vector<uint8_t>& scalar) {
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) throw std::runtime_error("sodium init failed");
     std::vector<uint8_t> point(crypto_core_ed25519_BYTES);
     if (crypto_scalarmult_ed25519_base_noclamp(point.data(), scalar.data()) != 0)
@@ -377,6 +386,42 @@ std::string execArgv(const std::vector<std::string>& args) {
 #endif
 }
 
+// Exit status of one program plus arguments. The shell is not involved.
+int execArgvExit(const std::vector<std::string>& args) {
+    if (args.empty() || args[0].empty()) return -1;
+    for (const auto& a : args) {
+        if (a.find('\0') != std::string::npos) return -1;
+    }
+#ifdef _WIN32
+    std::string line;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (i) line.push_back(' ');
+        line += quoteWinArg(args[i]);
+    }
+    const HiddenCmd ran = runHiddenCommandLine(line);
+    if (!ran.started) return -1;
+    return static_cast<int>(ran.exitCode);
+#else
+    posix_spawn_file_actions_t actions;
+    if (posix_spawn_file_actions_init(&actions) != 0) return -1;
+    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+    std::vector<char*> av;
+    av.reserve(args.size() + 1);
+    for (const auto& a : args) av.push_back(const_cast<char*>(a.c_str()));
+    av.push_back(nullptr);
+    pid_t pid = 0;
+    const int rc = posix_spawnp(&pid, av[0], &actions, nullptr, av.data(), environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (rc != 0) return -1;
+    int st = 0;
+    while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+    if (!WIFEXITED(st)) return -1;
+    return WEXITSTATUS(st);
+#endif
+}
+
 std::string execCmd(const std::string& cmd) {
     std::vector<std::string> args;
     // Quoted arguments take the argv path. Pipelines still need a shell.
@@ -421,26 +466,25 @@ std::string randomListenerCred() {
 }
 
 // Local file secret. Empty means the listener must not be published.
+// The file is kept only when it can be limited to the current user.
 std::string ensureListenerCredential(const std::string& dataDir) {
     static std::mutex mu;
     std::lock_guard<std::mutex> lock(mu);
     const std::string path = dataDir + "/listener.cred";
-    {
-        std::ifstream in(path);
-        if (in.good()) {
-            std::string line;
-            std::getline(in, line);
-            return normalizeListenerCred(line);
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(path, ec) && !ec) {
+        if (!synapse::utils::lockFileToCurrentUser(path)) {
+            std::filesystem::remove(path, ec);
+            return "";
         }
+        std::ifstream in(path);
+        if (!in.good()) return "";
+        std::string line;
+        std::getline(in, line);
+        return normalizeListenerCred(line);
     }
     const std::string cred = randomListenerCred();
-    std::ofstream out(path, std::ios::trunc);
-    if (!out.good()) return "";
-    out << cred << "\n";
-    out.close();
-#ifndef _WIN32
-    chmod(path.c_str(), 0600);
-#endif
+    if (!synapse::utils::writeFileForCurrentUser(path, cred + "\n")) return "";
     return cred;
 }
 
@@ -504,16 +548,6 @@ std::string jsonEscape(const std::string& s) {
         else r += c;
     }
     return r;
-}
-
-std::string shQuote(const std::string& s) {
-    std::string o = "'";
-    for (char c : s) {
-        if (c == '\'') o += "'\\''";
-        else o += c;
-    }
-    o += "'";
-    return o;
 }
 
 std::string fileToDataUrl(const std::string& path, const std::string& mime) {
@@ -586,6 +620,8 @@ bool ensureGdiplus(std::string& err) {
         return false;
     }
     Gdiplus::GdiplusStartupInput input;
+    // Built-in PNG and JPEG decoders stay. External codec plugins do not load.
+    input.SuppressExternalCodecs = TRUE;
     if (Gdiplus::GdiplusStartup(&token, &input, nullptr) != Gdiplus::Ok) {
         state = -1;
         err = "gdiplus unavailable";
@@ -1018,12 +1054,8 @@ bool sendOnionPayload(const std::string& onionHost, uint16_t port,
     return true;
 }
 
-void restrictSecretFile(const std::string& path) {
-#ifndef _WIN32
-    chmod(path.c_str(), S_IRUSR | S_IWUSR);
-#else
-    (void)path;
-#endif
+bool restrictSecretFile(const std::string& path) {
+    return synapse::utils::lockFileToCurrentUser(path);
 }
 
 uint64_t ngtToAtoms(double ngt) {
@@ -1145,20 +1177,6 @@ std::vector<synapse::privacy::OwnedOutput> loadOwnedOutputs(const std::string& d
     return out;
 }
 
-// std::rename on Windows leaves the old file in place when the destination
-// already exists. The first coin was saved, and every later reward was dropped
-// on the floor while the history note still appended.
-bool replaceFile(const std::string& from, const std::string& to) {
-#ifdef _WIN32
-    return MoveFileExA(from.c_str(), to.c_str(),
-                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-#else
-    if (std::rename(from.c_str(), to.c_str()) == 0) return true;
-    std::remove(to.c_str());
-    return std::rename(from.c_str(), to.c_str()) == 0;
-#endif
-}
-
 void saveOwnedOutputs(const std::string& dataDir,
                       const std::vector<synapse::privacy::OwnedOutput>& wallet) {
     std::string path = dataDir + "/private_utxo.jsonl";
@@ -1177,11 +1195,18 @@ void saveOwnedOutputs(const std::string& dataDir,
         f << j.dump() << "\n";
     }
     f.close();
+    if (!restrictSecretFile(tmp)) {
+        std::remove(tmp.c_str());
+        return;
+    }
     if (!replaceFile(tmp, path)) {
         std::remove(tmp.c_str());
         return;
     }
-    restrictSecretFile(path);
+    if (!restrictSecretFile(path)) {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
 }
 
 std::vector<synapse::privacy::DecoyMember> loadDecoyPool(const std::string& dataDir) {
@@ -1243,7 +1268,11 @@ void appendWalletNote(const std::string& dataDir, const nlohmann::json& note) {
     std::string path = dataDir + "/wallet_notes.jsonl";
     std::ofstream f(path, std::ios::app);
     if (f.good()) f << note.dump() << "\n";
-    restrictSecretFile(path);
+    f.close();
+    if (!restrictSecretFile(path)) {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
 }
 
 struct SeedEndpoint {
@@ -1425,13 +1454,12 @@ int connectLocalPort(uint16_t port, int timeoutSec) {
 }
 
 bool controlAuthenticate(int fd, const std::string& cookiePath) {
-    std::string cmd = "AUTHENTICATE\r\n";
-    if (!cookiePath.empty()) {
-        std::string cookie = readBinaryFile(cookiePath);
-        if (!cookie.empty()) {
-            cmd = "AUTHENTICATE " + binToHexUpper(cookie) + "\r\n";
-        }
-    }
+    // Cookie only. A missing path or an unreadable cookie must not send a bare AUTHENTICATE.
+    if (cookiePath.empty()) return false;
+    if (!synapse::utils::lockFileToCurrentUser(cookiePath)) return false;
+    const std::string cookie = readBinaryFile(cookiePath);
+    if (cookie.empty()) return false;
+    const std::string cmd = "AUTHENTICATE " + binToHexUpper(cookie) + "\r\n";
     if (send(fd, cmd.c_str(), cmd.size(), 0) <= 0) return false;
     char buf[2048];
     ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
@@ -1543,27 +1571,66 @@ int64_t parseGetinfoInt(const std::string& resp, const std::string& key) {
 
 }
 
-namespace {
-std::atomic<bool> g_synapsedEngineAlive{false};
+bool replaceFile(const std::string& from, const std::string& to) {
+#ifdef _WIN32
+    return MoveFileExA(from.c_str(), to.c_str(),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    if (std::rename(from.c_str(), to.c_str()) == 0) return true;
+    std::remove(to.c_str());
+    return std::rename(from.c_str(), to.c_str()) == 0;
+#endif
 }
 
+namespace {
+
+enum class EnginePhase : int { Absent = 0, Live = 1, Retired = 2 };
+
+std::atomic<int> g_enginePhase{static_cast<int>(EnginePhase::Absent)};
+std::atomic<int> g_engineInflight{0};
+
+void retireEngineAndWait() {
+    g_enginePhase.store(static_cast<int>(EnginePhase::Retired), std::memory_order_release);
+    while (g_engineInflight.load(std::memory_order_acquire) != 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+}  // namespace
+
 bool synapsedEngineAlive() {
-    return g_synapsedEngineAlive.load(std::memory_order_acquire);
+    return g_enginePhase.load(std::memory_order_acquire) == static_cast<int>(EnginePhase::Live);
+}
+
+bool synapsedEngineEnter() {
+    g_engineInflight.fetch_add(1, std::memory_order_acq_rel);
+    if (g_enginePhase.load(std::memory_order_acquire) == static_cast<int>(EnginePhase::Retired)) {
+        g_engineInflight.fetch_sub(1, std::memory_order_acq_rel);
+        return false;
+    }
+    return true;
+}
+
+void synapsedEngineLeave() {
+    g_engineInflight.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 SynapsedEngine::SynapsedEngine() {
-    g_synapsedEngineAlive.store(true, std::memory_order_release);
+    g_enginePhase.store(static_cast<int>(EnginePhase::Live), std::memory_order_release);
 }
 
 SynapsedEngine::~SynapsedEngine() {
-    // Drop the FFI gate before members go away. A late atexit handler must
-    // not call instance() on this function-local static after it is destroyed.
-    g_synapsedEngineAlive.store(false, std::memory_order_release);
+    // atexit normally retires the gate before this destructor starts.
+    // Wait again so a call that lost the race cannot touch members below.
+    retireEngineAndWait();
     shutdown();
 }
 
 SynapsedEngine& SynapsedEngine::instance() {
     static SynapsedEngine eng;
+    // Registered after eng is constructed, so the handler runs before ~eng.
+    static std::once_flag retireAtExit;
+    std::call_once(retireAtExit, [] { std::atexit(retireEngineAndWait); });
     return eng;
 }
 
@@ -1898,6 +1965,12 @@ bool SynapsedEngine::startSessionTor() const {
     std::error_code ec;
     std::filesystem::remove_all(sessionTorDataDir_, ec);
     std::filesystem::create_directories(sessionTorDataDir_ + "/data", ec);
+    if (ec ||
+        !synapse::utils::lockDirectoryToCurrentUser(sessionTorDataDir_) ||
+        !synapse::utils::lockDirectoryToCurrentUser(sessionTorDataDir_ + "/data")) {
+        if (!waitOrStop(2000)) return false;
+        continue;
+    }
     sessionCookiePath_ = sessionTorDataDir_ + "/data/control_auth_cookie";
     const std::string rcPath = sessionTorDataDir_ + "/torrc";
     const std::string logPath = sessionTorDataDir_ + "/tor.log";
@@ -1939,6 +2012,7 @@ bool SynapsedEngine::startSessionTor() const {
             if (sf.good()) {
                 std::string content((std::istreambuf_iterator<char>(sf)),
                                      std::istreambuf_iterator<char>());
+                if (!synapse::json_containment::blankJsonSecretStrings(content)) content.clear();
                 nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
                 if (!j.is_discarded() && j.is_object()) {
                     if (j.contains("bridge_lines") && j["bridge_lines"].is_string())
@@ -2073,6 +2147,12 @@ bool SynapsedEngine::startSessionTor() const {
     std::error_code ec;
     std::filesystem::remove_all(sessionTorDataDir_, ec);
     std::filesystem::create_directories(sessionTorDataDir_ + "/data", ec);
+    if (ec ||
+        !synapse::utils::lockDirectoryToCurrentUser(sessionTorDataDir_) ||
+        !synapse::utils::lockDirectoryToCurrentUser(sessionTorDataDir_ + "/data")) {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        continue;
+    }
 
     sessionCookiePath_ = sessionTorDataDir_ + "/data/control_auth_cookie";
     std::string rcPath = sessionTorDataDir_ + "/torrc";
@@ -2101,6 +2181,7 @@ bool SynapsedEngine::startSessionTor() const {
             if (sf.good()) {
                 std::string content((std::istreambuf_iterator<char>(sf)),
                                      std::istreambuf_iterator<char>());
+                if (!synapse::json_containment::blankJsonSecretStrings(content)) content.clear();
                 nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
                 if (!j.is_discarded() && j.is_object()) {
                     if (j.contains("bridge_lines") && j["bridge_lines"].is_string())
@@ -2372,10 +2453,6 @@ void SynapsedEngine::startOnionService() const {
         cfd = connectLocalPort(p, 3);
         if (cfd < 0) continue;
         if (controlAuthenticate(cfd, cookie)) break;
-        CLOSESOCK(cfd);
-        cfd = connectLocalPort(p, 3);
-        if (cfd < 0) continue;
-        if (controlAuthenticate(cfd, "")) break;
         CLOSESOCK(cfd);
         cfd = -1;
     }
@@ -2743,13 +2820,20 @@ void SynapsedEngine::fetchBlocksFromSeed(const std::string& seedOnion) {
 
     std::string response;
     char buf[4096];
-    while (true) {
+    // The 15s receive timeout does not fire while a seed keeps sending.
+    // Match the local RPC client's 8 MB response ceiling and drop the rest.
+    constexpr size_t kMaxSeedRpcResponse = 8 * 1024 * 1024;
+    size_t received = 0;
+    while (received <= kMaxSeedRpcResponse) {
         ssize_t r = recv(fd, buf, sizeof(buf) - 1, 0);
         if (r <= 0) break;
+        received += static_cast<size_t>(r);
+        if (received > kMaxSeedRpcResponse) break;
         buf[r] = '\0';
         response += buf;
     }
     CLOSESOCK(fd);
+    if (received > kMaxSeedRpcResponse) return;
 
     auto bodyPos = response.find("\r\n\r\n");
     if (bodyPos == std::string::npos) return;
@@ -2762,22 +2846,33 @@ void SynapsedEngine::fetchBlocksFromSeed(const std::string& seedOnion) {
         if (!blocks.is_array() || blocks.empty()) return;
 
         uint64_t newHeight = parsed["result"].value("height", (uint64_t)0);
-        if (newHeight < lastBlockHeight_.load()) return;
-
+        const size_t blockCount = blocks.size();
+        bool replaced = false;
         {
-            std::lock_guard<std::mutex> lock(mtx_);
-            lastBlockHeight_ = newHeight;
-            seedPeerCount_ = blocks.size();
-        }
+            // Height check and the file replace stay together. A harvest thread
+            // may append a local block while this RPC result is still in hand.
+            std::lock_guard<std::mutex> chain(localChainMtx_);
+            if (newHeight < lastBlockHeight_.load()) return;
 
-        std::string tmpPath = dataDir_ + "/blocks.jsonl.tmp";
-        std::ofstream blkf(tmpPath, std::ios::trunc);
-        if (!blkf.good()) return;
-        for (const auto& b : blocks) {
-            blkf << b.dump() << "\n";
+            std::string tmpPath = dataDir_ + "/blocks.jsonl.tmp";
+            std::ofstream blkf(tmpPath, std::ios::trunc);
+            if (!blkf.good()) return;
+            for (const auto& b : blocks) {
+                blkf << b.dump() << "\n";
+            }
+            blkf.close();
+            const std::string finalPath = dataDir_ + "/blocks.jsonl";
+            if (!replaceFile(tmpPath, finalPath)) {
+                std::remove(tmpPath.c_str());
+                return;
+            }
+            lastBlockHeight_ = newHeight;
+            replaced = true;
         }
-        blkf.close();
-        std::rename(tmpPath.c_str(), (dataDir_ + "/blocks.jsonl").c_str());
+        if (replaced) {
+            std::lock_guard<std::mutex> lock(mtx_);
+            seedPeerCount_ = static_cast<uint32_t>(blockCount);
+        }
     } catch (...) {}
 }
 
@@ -2829,13 +2924,20 @@ std::vector<std::string> SynapsedEngine::fetchPeersFromSeed(const std::string& s
 
     std::string response;
     char buf[4096];
-    while (true) {
+    // The 15s receive timeout does not fire while a seed keeps sending.
+    // Match the local RPC client's 8 MB response ceiling and drop the rest.
+    constexpr size_t kMaxSeedRpcResponse = 8 * 1024 * 1024;
+    size_t received = 0;
+    while (received <= kMaxSeedRpcResponse) {
         ssize_t r = recv(fd, buf, sizeof(buf) - 1, 0);
         if (r <= 0) break;
+        received += static_cast<size_t>(r);
+        if (received > kMaxSeedRpcResponse) break;
         buf[r] = '\0';
         response += buf;
     }
     CLOSESOCK(fd);
+    if (received > kMaxSeedRpcResponse) return out;
 
     auto bodyPos = response.find("\r\n\r\n");
     if (bodyPos == std::string::npos) return out;
@@ -2943,6 +3045,7 @@ void SynapsedEngine::loadLocalProfile() const {
     if (sf.good()) {
         std::string content((std::istreambuf_iterator<char>(sf)),
                              std::istreambuf_iterator<char>());
+        if (!synapse::json_containment::blankJsonSecretStrings(content)) content.clear();
         nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
         if (!j.is_discarded() && j.is_object()) {
             if (j.contains("profile_alias") && j["profile_alias"].is_string())
@@ -2961,32 +3064,48 @@ void SynapsedEngine::loadLocalProfile() const {
 
 void SynapsedEngine::ensureMsgBoxKeys() const {
     if (msgBoxReady_) return;
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) return;
     const std::string path = dataDir_ + "/msgbox.key";
-    std::ifstream in(path);
-    std::string skHex, pkHex;
-    if (in) std::getline(in, skHex);
-    if (in) std::getline(in, pkHex);
-    skHex = trim(skHex);
-    pkHex = trim(pkHex);
-    if (isHex64(skHex) && isHex64(pkHex) &&
-        sodium_hex2bin(msgBoxSk_.data(), 32, skHex.c_str(), skHex.size(), nullptr, nullptr, nullptr) == 0 &&
-        sodium_hex2bin(msgBoxPk_.data(), 32, pkHex.c_str(), pkHex.size(), nullptr, nullptr, nullptr) == 0) {
-        msgBoxReady_ = true;
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(path, ec) && !ec) {
+        if (!synapse::utils::lockFileToCurrentUser(path)) {
+            return;
+        } else {
+            std::ifstream in(path);
+            std::string skHex, pkHex;
+            if (in) std::getline(in, skHex);
+            if (in) std::getline(in, pkHex);
+            skHex = trim(skHex);
+            pkHex = trim(pkHex);
+            if (isHex64(skHex) && isHex64(pkHex) &&
+                sodium_hex2bin(msgBoxSk_.data(), 32, skHex.c_str(), skHex.size(), nullptr, nullptr, nullptr) == 0 &&
+                sodium_hex2bin(msgBoxPk_.data(), 32, pkHex.c_str(), pkHex.size(), nullptr, nullptr, nullptr) == 0) {
+                sodium_memzero(&skHex[0], skHex.size());
+                msgBoxReady_ = true;
+                return;
+            }
+            if (!skHex.empty()) sodium_memzero(&skHex[0], skHex.size());
+        }
+    }
+    if (crypto_box_keypair(msgBoxPk_.data(), msgBoxSk_.data()) != 0) {
+        sodium_memzero(msgBoxPk_.data(), 32);
+        sodium_memzero(msgBoxSk_.data(), 32);
         return;
     }
-    crypto_box_keypair(msgBoxPk_.data(), msgBoxSk_.data());
     char skOut[65];
     char pkOut[65];
     sodium_bin2hex(skOut, sizeof(skOut), msgBoxSk_.data(), 32);
     sodium_bin2hex(pkOut, sizeof(pkOut), msgBoxPk_.data(), 32);
-    std::ofstream out(path, std::ios::trunc);
-    if (out) {
-        out << skOut << "\n" << pkOut << "\n";
-        out.close();
-#ifndef _WIN32
-        chmod(path.c_str(), S_IRUSR | S_IWUSR);
-#endif
+    std::string body = std::string(skOut) + "\n" + pkOut + "\n";
+    sodium_memzero(skOut, sizeof(skOut));
+    sodium_memzero(pkOut, sizeof(pkOut));
+    const bool wrote = synapse::utils::writeFileForCurrentUser(path, body);
+    sodium_memzero(&body[0], body.size());
+    if (!wrote) {
+        sodium_memzero(msgBoxPk_.data(), 32);
+        sodium_memzero(msgBoxSk_.data(), 32);
+        return;
     }
     msgBoxReady_ = true;
 }
@@ -3005,47 +3124,63 @@ static constexpr const char kMsgKemLabel[] = "synapse-node-msg-v3";
 static std::array<uint8_t, 32> msgKemWrapKey(const std::vector<uint8_t>& ss) {
     std::vector<uint8_t> kdfIn = ss;
     kdfIn.insert(kdfIn.end(), kMsgKemLabel, kMsgKemLabel + 19);
-    return synapse::crypto::sha256(kdfIn);
+    auto out = synapse::crypto::sha256(kdfIn);
+    sodium_memzero(kdfIn.data(), kdfIn.size());
+    return out;
 }
 
 void SynapsedEngine::ensureKemKeys() const {
     if (msgKemReady_) return;
+    crypto::containForeignCryptoModules();
     if (!synapse::quantum::getPQCBackendStatus().kyberReal) return;
     const std::string path = dataDir_ + "/msgkem.key";
-    std::ifstream in(path);
-    std::string skHex, pkHex;
-    if (in) std::getline(in, skHex);
-    if (in) std::getline(in, pkHex);
-    skHex = trim(skHex);
-    pkHex = trim(pkHex);
+    std::error_code ec;
     const size_t pkHexN = synapse::quantum::KYBER_PUBLIC_KEY_SIZE * 2;
     const size_t skHexN = synapse::quantum::KYBER_SECRET_KEY_SIZE * 2;
-    if (isHexLen(skHex, skHexN) && isHexLen(pkHex, pkHexN)) {
-        auto sk = synapse::crypto::fromHex(skHex);
-        auto pk = synapse::crypto::fromHex(pkHex);
-        if (sk.size() == synapse::quantum::KYBER_SECRET_KEY_SIZE &&
-            pk.size() == synapse::quantum::KYBER_PUBLIC_KEY_SIZE) {
-            msgKemSk_ = std::move(sk);
-            msgKemPk_ = std::move(pk);
-            msgKemReady_ = true;
+    if (std::filesystem::is_regular_file(path, ec) && !ec) {
+        if (!synapse::utils::lockFileToCurrentUser(path)) {
             return;
+        } else {
+            std::ifstream in(path);
+            std::string skHex, pkHex;
+            if (in) std::getline(in, skHex);
+            if (in) std::getline(in, pkHex);
+            skHex = trim(skHex);
+            pkHex = trim(pkHex);
+            if (isHexLen(skHex, skHexN) && isHexLen(pkHex, pkHexN)) {
+                auto sk = synapse::crypto::fromHex(skHex);
+                auto pk = synapse::crypto::fromHex(pkHex);
+                sodium_memzero(&skHex[0], skHex.size());
+                if (sk.size() == synapse::quantum::KYBER_SECRET_KEY_SIZE &&
+                    pk.size() == synapse::quantum::KYBER_PUBLIC_KEY_SIZE) {
+                    msgKemSk_ = std::move(sk);
+                    msgKemPk_ = std::move(pk);
+                    msgKemReady_ = true;
+                    return;
+                }
+                if (!sk.empty()) sodium_memzero(sk.data(), sk.size());
+            } else if (!skHex.empty()) {
+                sodium_memzero(&skHex[0], skHex.size());
+            }
         }
     }
     synapse::quantum::Kyber kyber;
     auto kp = kyber.generateKeyPair();
-    if (!kyber.validatePublicKey(kp.publicKey) || !kyber.validateSecretKey(kp.secretKey))
+    if (!kyber.validatePublicKey(kp.publicKey) || !kyber.validateSecretKey(kp.secretKey)) {
+        if (!kp.secretKey.empty()) sodium_memzero(kp.secretKey.data(), kp.secretKey.size());
         return;
+    }
+    std::string body = synapse::crypto::toHex(kp.secretKey) + "\n" +
+                             synapse::crypto::toHex(kp.publicKey) + "\n";
+    const bool wrote = synapse::utils::writeFileForCurrentUser(path, body);
+    sodium_memzero(&body[0], body.size());
+    if (!wrote) {
+        if (!kp.secretKey.empty()) sodium_memzero(kp.secretKey.data(), kp.secretKey.size());
+        return;
+    }
     msgKemPk_.assign(kp.publicKey.begin(), kp.publicKey.end());
     msgKemSk_.assign(kp.secretKey.begin(), kp.secretKey.end());
-    std::ofstream out(path, std::ios::trunc);
-    if (out) {
-        out << synapse::crypto::toHex(msgKemSk_) << "\n"
-            << synapse::crypto::toHex(msgKemPk_) << "\n";
-        out.close();
-#ifndef _WIN32
-        chmod(path.c_str(), S_IRUSR | S_IWUSR);
-#endif
-    }
+    sodium_memzero(kp.secretKey.data(), kp.secretKey.size());
     msgKemReady_ = true;
 }
 
@@ -3100,6 +3235,7 @@ bool SynapsedEngine::wrapSealHybrid(const std::string& peerKemPkHex, const std::
     kemCtB64.clear();
     wrappedSealB64.clear();
     if (!synapse::quantum::getPQCBackendStatus().kyberReal) return false;
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) return false;
     if (!isHexLen(peerKemPkHex, synapse::quantum::KYBER_PUBLIC_KEY_SIZE * 2)) return false;
     auto pkRaw = synapse::crypto::fromHex(peerKemPkHex);
@@ -3109,11 +3245,16 @@ bool SynapsedEngine::wrapSealHybrid(const std::string& peerKemPkHex, const std::
     synapse::quantum::Kyber kyber;
     auto enc = kyber.encapsulate(pk);
     if (!enc.success || enc.ciphertext.size() != synapse::quantum::KYBER_CIPHERTEXT_SIZE ||
-        enc.sharedSecret.size() != synapse::quantum::KYBER_SHARED_SECRET_SIZE)
+        enc.sharedSecret.size() != synapse::quantum::KYBER_SHARED_SECRET_SIZE) {
+        if (!enc.sharedSecret.empty()) sodium_memzero(enc.sharedSecret.data(), enc.sharedSecret.size());
         return false;
+    }
     std::vector<uint8_t> sealed = synapse::crypto::base64Decode(
         std::vector<uint8_t>(sealedB64.begin(), sealedB64.end()));
-    if (sealed.empty()) return false;
+    if (sealed.empty()) {
+        sodium_memzero(enc.sharedSecret.data(), enc.sharedSecret.size());
+        return false;
+    }
     auto keyHash = msgKemWrapKey(enc.sharedSecret);
     unsigned char nonce[crypto_secretbox_NONCEBYTES];
     randombytes_buf(nonce, sizeof(nonce));
@@ -3123,9 +3264,11 @@ bool SynapsedEngine::wrapSealHybrid(const std::string& peerKemPkHex, const std::
     if (crypto_secretbox_easy(wrapped.data() + crypto_secretbox_NONCEBYTES,
                               sealed.data(), sealed.size(), nonce, keyHash.data()) != 0) {
         sodium_memzero(enc.sharedSecret.data(), enc.sharedSecret.size());
+        sodium_memzero(keyHash.data(), keyHash.size());
         return false;
     }
     sodium_memzero(enc.sharedSecret.data(), enc.sharedSecret.size());
+    sodium_memzero(keyHash.data(), keyHash.size());
     auto kemEnc = synapse::crypto::base64Encode(enc.ciphertext);
     auto wrapEnc = synapse::crypto::base64Encode(std::vector<uint8_t>(wrapped.begin(), wrapped.end()));
     kemCtB64.assign(kemEnc.begin(), kemEnc.end());
@@ -3148,7 +3291,11 @@ bool SynapsedEngine::unwrapSealHybrid(const std::string& kemCtB64, const std::st
     std::memcpy(sk.data(), msgKemSk_.data(), msgKemSk_.size());
     synapse::quantum::Kyber kyber;
     auto ss = kyber.decapsulate(kct, sk);
-    if (ss.size() != synapse::quantum::KYBER_SHARED_SECRET_SIZE) return false;
+    sodium_memzero(sk.data(), sk.size());
+    if (ss.size() != synapse::quantum::KYBER_SHARED_SECRET_SIZE) {
+        if (!ss.empty()) sodium_memzero(ss.data(), ss.size());
+        return false;
+    }
     std::vector<uint8_t> wrapped = synapse::crypto::base64Decode(
         std::vector<uint8_t>(wrappedSealB64.begin(), wrappedSealB64.end()));
     if (wrapped.size() < crypto_secretbox_NONCEBYTES + crypto_secretbox_MACBYTES) {
@@ -3161,8 +3308,12 @@ bool SynapsedEngine::unwrapSealHybrid(const std::string& kemCtB64, const std::st
     const unsigned char* box = wrapped.data() + crypto_secretbox_NONCEBYTES;
     const size_t clen = wrapped.size() - crypto_secretbox_NONCEBYTES;
     std::vector<unsigned char> sealed(clen - crypto_secretbox_MACBYTES);
-    if (crypto_secretbox_open_easy(sealed.data(), box, clen, nonce, keyHash.data()) != 0)
+    if (crypto_secretbox_open_easy(sealed.data(), box, clen, nonce, keyHash.data()) != 0) {
+        sodium_memzero(keyHash.data(), keyHash.size());
+        if (!sealed.empty()) sodium_memzero(sealed.data(), sealed.size());
         return false;
+    }
+    sodium_memzero(keyHash.data(), keyHash.size());
     auto enc = synapse::crypto::base64Encode(std::vector<uint8_t>(sealed.begin(), sealed.end()));
     sealedB64.assign(enc.begin(), enc.end());
     return !sealedB64.empty();
@@ -3347,6 +3498,7 @@ void SynapsedEngine::ensureStealthWallet() {
 }
 
 void SynapsedEngine::compactLocalPoeChain() {
+    std::lock_guard<std::mutex> chain(localChainMtx_);
     std::error_code ec;
     std::filesystem::remove(dataDir_ + "/naan_blocks.jsonl", ec);
 
@@ -3382,7 +3534,10 @@ void SynapsedEngine::compactLocalPoeChain() {
         out << j.dump() << "\n";
     }
     out.close();
-    std::filesystem::rename(tmp, path, ec);
+    if (!replaceFile(tmp, path)) {
+        std::remove(tmp.c_str());
+        return;
+    }
     lastBlockHeight_ = height;
     // Do not zero the harvest tally here. Compacting the local chain used to
     // wipe naanSubmissions_, and the IDE level is that tally, so every launch
@@ -3708,6 +3863,7 @@ void SynapsedEngine::relayPrivateTxJson(const std::string& jsonLine) const {
         }
     }
     if (peers.empty()) return;
+    crypto::containForeignCryptoModules();
     unsigned char rb[4];
     randombytes_buf(rb, sizeof(rb));
     uint32_t r = static_cast<uint32_t>(rb[0]) | (static_cast<uint32_t>(rb[1]) << 8) |
@@ -3765,6 +3921,7 @@ int SynapsedEngine::init(const std::string& configPath) {
         if (cf.good()) {
             std::string content((std::istreambuf_iterator<char>(cf)),
                                 std::istreambuf_iterator<char>());
+            if (!synapse::json_containment::blankJsonSecretStrings(content)) content.clear();
             nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
             if (!j.is_discarded() && j.is_object() &&
                 j.contains("data_dir") && j["data_dir"].is_string()) {
@@ -3786,29 +3943,37 @@ int SynapsedEngine::init(const std::string& configPath) {
         std::string walletPath = dataDir_ + "/wallet.key";
         std::string mnemonicPath = dataDir_ + "/wallet.mnemonic";
         crypto::Keys keys;
-        std::ifstream wf(walletPath);
-        if (wf.good()) {
-            wf.close();
-            keys.load(walletPath, "");
-            std::ifstream mf(mnemonicPath);
-            if (mf.good()) std::getline(mf, walletMnemonic_);
-            if (!walletMnemonic_.empty()) {
-                keys.fromMnemonic(walletMnemonic_);
+        std::error_code secretEc;
+        const bool walletExists = std::filesystem::is_regular_file(walletPath, secretEc) && !secretEc;
+        secretEc.clear();
+        const bool mnemonicExists = std::filesystem::is_regular_file(mnemonicPath, secretEc) && !secretEc;
+        bool refusedUnlockedSecret = false;
+        if (walletExists && !keys.load(walletPath, "")) {
+            // Load failed, including a lock that did not stick. Do not mint a
+            // replacement over the file that is already there.
+            refusedUnlockedSecret = true;
+        }
+        if (mnemonicExists) {
+            if (!synapse::utils::lockFileToCurrentUser(mnemonicPath)) {
+                refusedUnlockedSecret = true;
+            } else {
+                std::ifstream mf(mnemonicPath);
+                if (mf.good()) std::getline(mf, walletMnemonic_);
+                if (!walletMnemonic_.empty()) keys.fromMnemonic(walletMnemonic_);
             }
         }
-        if (!keys.isValid()) {
-            keys.generate();
-            walletMnemonic_ = keys.generateMnemonic(24);
-            keys.fromMnemonic(walletMnemonic_);
-            keys.save(walletPath, "");
-            std::ofstream mf(mnemonicPath, std::ios::trunc);
-            if (mf.good()) mf << walletMnemonic_;
-        } else if (walletMnemonic_.empty()) {
-            walletMnemonic_ = keys.generateMnemonic(24);
-            keys.fromMnemonic(walletMnemonic_);
-            keys.save(walletPath, "");
-            std::ofstream mf(mnemonicPath, std::ios::trunc);
-            if (mf.good()) mf << walletMnemonic_;
+        if (refusedUnlockedSecret) {
+            // An existing key file could not be limited to the current user.
+            // Leave it in place and do not mint a replacement over it.
+        } else if (!keys.isValid()) {
+            const bool generated = keys.generate();
+            std::string mnemonic = generated ? keys.generateMnemonic(24) : std::string();
+            if (generated && !mnemonic.empty() && keys.fromMnemonic(mnemonic)) {
+                if (synapse::utils::writeFileForCurrentUser(mnemonicPath, mnemonic) &&
+                    keys.save(walletPath, "")) {
+                    walletMnemonic_ = std::move(mnemonic);
+                }
+            }
         }
         walletAddress_ = keys.getAddress();
     }
@@ -3838,8 +4003,11 @@ int SynapsedEngine::init(const std::string& configPath) {
                     std::string full = modelsDir + "/" + name;
                     std::ifstream f(full, std::ios::ate | std::ios::binary);
                     if (f.good()) {
-                        size_t sz = f.tellg();
-                        if (sz > bestSize) { bestSize = sz; bestPath = full; }
+                        const std::streamoff pos = f.tellg();
+                        if (pos > 0) {
+                            const size_t sz = static_cast<size_t>(pos);
+                            if (sz > bestSize) { bestSize = sz; bestPath = full; }
+                        }
                     }
                 }
             }
@@ -3902,7 +4070,10 @@ void SynapsedEngine::shutdown() {
         poeReady_.store(false);
     }
     initialized_ = false;
-    subscribers_.clear();
+    {
+        std::lock_guard<std::mutex> subscribers(subscribersMtx_);
+        subscribers_.clear();
+    }
     nodeId_.clear();
     peerCount_ = 0;
     connectionType_ = "disconnected";
@@ -3936,8 +4107,13 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             if (existing.empty()) {
                 existing = "{\"connection_type\":\"tor\",\"model_loaded\":false}";
             }
+            std::string patchText = paramsJson;
+            if (!synapse::json_containment::blankJsonSecretStrings(existing) ||
+                !synapse::json_containment::blankJsonSecretStrings(patchText)) {
+                return "{\"error\":\"invalid settings json\"}";
+            }
             nlohmann::json base = nlohmann::json::parse(existing, nullptr, false);
-            nlohmann::json patch = nlohmann::json::parse(paramsJson, nullptr, false);
+            nlohmann::json patch = nlohmann::json::parse(patchText, nullptr, false);
             if (base.is_discarded()) base = nlohmann::json::object();
             if (patch.is_discarded() || !patch.is_object()) {
                 return "{\"error\":\"invalid settings json\"}";
@@ -4068,24 +4244,24 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             return existing.dump();
         }
         crypto::Keys keys;
-        keys.generate();
+        if (!keys.generate()) return "{\"error\":\"key generation failed\"}";
         walletMnemonic_ = keys.generateMnemonic(24);
-        keys.fromMnemonic(walletMnemonic_);
+        if (walletMnemonic_.empty() || !keys.fromMnemonic(walletMnemonic_)) {
+            walletMnemonic_.clear();
+            return "{\"error\":\"key generation failed\"}";
+        }
         walletAddress_ = keys.getAddress();
-        keys.save(dataDir_ + "/wallet.key", "");
-        {
-            std::ofstream mf(dataDir_ + "/wallet.mnemonic", std::ios::trunc);
-            if (mf.good()) mf << walletMnemonic_;
+        if (!keys.save(dataDir_ + "/wallet.key", "") ||
+            !synapse::utils::writeFileForCurrentUser(dataDir_ + "/wallet.mnemonic", walletMnemonic_)) {
+            return "{\"error\":\"could not store the wallet\"}";
         }
         ensureStealthWallet();
         loadMigratePrivateWallet();
         std::string recv = stealthReceiveAddress();
         if (recv.empty()) recv = walletAddress_;
-        nlohmann::json out;
-        out["address"] = recv;
-        out["seed"] = walletMnemonic_;
-        out["ok"] = true;
-        return out.dump();
+        // The phrase stays in the reply the owner just created. nlohmann does not store it.
+        return std::string("{\"address\":\"") + jsonEscape(recv) +
+            "\",\"ok\":true,\"seed\":\"" + jsonEscape(walletMnemonic_) + "\"}";
     }
 
     if (method == "wallet.seed") {
@@ -4103,10 +4279,9 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                 if (keys.fromMnemonic(mnemonic)) {
                     walletMnemonic_ = mnemonic;
                     walletAddress_ = keys.getAddress();
-                    keys.save(dataDir_ + "/wallet.key", "");
-                    {
-                        std::ofstream mf(dataDir_ + "/wallet.mnemonic", std::ios::trunc);
-                        if (mf.good()) mf << walletMnemonic_;
+                    if (!keys.save(dataDir_ + "/wallet.key", "") ||
+                        !synapse::utils::writeFileForCurrentUser(dataDir_ + "/wallet.mnemonic", walletMnemonic_)) {
+                        return "{\"error\":\"could not store the wallet\"}";
                     }
                     ensureStealthWallet();
                     loadMigratePrivateWallet();
@@ -4124,7 +4299,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         crypto::Keys keys;
         if (walletMnemonic_.empty() || !keys.fromMnemonic(walletMnemonic_))
             return "{\"error\":\"no mnemonic to export — restore 24 words first\"}";
-        keys.save(path, "");
+        if (!keys.save(path, "")) return "{\"error\":\"could not store the export\"}";
         return "{\"ok\":true,\"path\":\"" + jsonEscape(path) + "\"}";
     }
 
@@ -4373,6 +4548,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         std::vector<std::string> lines;
         int totalEvents = 0;
         {
+            std::lock_guard<std::mutex> chain(localChainMtx_);
             std::ifstream bf(dataDir_ + "/blocks.jsonl");
             if (bf.good()) {
                 std::string line;
@@ -4459,7 +4635,10 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             }
         };
         std::string result;
-        searchFile(dataDir_ + "/blocks.jsonl", result);
+        {
+            std::lock_guard<std::mutex> chain(localChainMtx_);
+            searchFile(dataDir_ + "/blocks.jsonl", result);
+        }
         if (!result.empty()) return result;
         return "{\"error\":\"block not found\"}";
     }
@@ -4475,10 +4654,11 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         if (keys.load(importPath, "")) {
             walletMnemonic_ = keys.toMnemonic();
             walletAddress_ = keys.getAddress();
-            keys.save(dataDir_ + "/wallet.key", "");
+            if (!keys.save(dataDir_ + "/wallet.key", ""))
+                return "{\"error\":\"could not store the wallet\"}";
             if (!walletMnemonic_.empty()) {
-                std::ofstream mf(dataDir_ + "/wallet.mnemonic", std::ios::trunc);
-                if (mf.good()) mf << walletMnemonic_;
+                if (!synapse::utils::writeFileForCurrentUser(dataDir_ + "/wallet.mnemonic", walletMnemonic_))
+                    return "{\"error\":\"could not store the wallet\"}";
                 ensureStealthWallet();
                 loadMigratePrivateWallet();
             }
@@ -4611,6 +4791,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             std::set<size_t> usedIdx;
             while (decoys.size() < 3 && usedIdx.size() < pool.size()) {
                 std::vector<uint8_t> rb = synapse::crypto::randomBytes(4);
+                if (rb.size() != 4) return "{\"error\":\"rng failed\"}";
                 uint32_t r = static_cast<uint32_t>(rb[0]) |
                              (static_cast<uint32_t>(rb[1]) << 8) |
                              (static_cast<uint32_t>(rb[2]) << 16) |
@@ -4632,6 +4813,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             size_t signerIndex = 0;
             {
                 std::vector<uint8_t> rb = synapse::crypto::randomBytes(1);
+                if (rb.size() != 1) return "{\"error\":\"rng failed\"}";
                 size_t target = static_cast<size_t>(rb[0]) % ring.size();
                 std::swap(ring[signerIndex], ring[target]);
                 signerIndex = target;
@@ -4688,7 +4870,20 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             if (params.is_discarded()) return "{\"error\":\"bad json\"}";
             if (!params.contains("view_priv") || !params.contains("spend_pub"))
                 return "{\"error\":\"view_priv and spend_pub required\"}";
-            std::vector<uint8_t> viewPriv = synapse::crypto::fromHex(params["view_priv"].get<std::string>());
+            std::string viewHex = params["view_priv"].get<std::string>();
+            if (params["view_priv"].is_string()) {
+                std::string& stored = params["view_priv"].get_ref<std::string&>();
+                if (!stored.empty()) sodium_memzero(&stored[0], stored.size());
+            }
+            std::vector<uint8_t> viewPriv = synapse::crypto::fromHex(viewHex);
+            if (!viewHex.empty()) sodium_memzero(&viewHex[0], viewHex.size());
+            struct WipeView {
+                std::vector<uint8_t>& key;
+                ~WipeView() {
+                    if (!key.empty()) sodium_memzero(key.data(), key.size());
+                }
+            } holdView{viewPriv};
+            crypto::containForeignCryptoModules();
             std::vector<uint8_t> spendPub = synapse::crypto::fromHex(params["spend_pub"].get<std::string>());
             if (viewPriv.size() != crypto_core_ed25519_SCALARBYTES)
                 return "{\"error\":\"view_priv must be a 32 byte scalar\"}";
@@ -4717,8 +4912,10 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                 if (crypto_core_ed25519_is_valid_point(ephPub.data()) != 1) continue;
 
                 std::vector<uint8_t> shared(crypto_core_ed25519_BYTES);
-                if (crypto_scalarmult_ed25519_noclamp(shared.data(), viewPriv.data(), ephPub.data()) != 0)
+                if (crypto_scalarmult_ed25519_noclamp(shared.data(), viewPriv.data(), ephPub.data()) != 0) {
+                    sodium_memzero(shared.data(), shared.size());
                     continue;
+                }
                 std::vector<uint8_t> firstHash(crypto_hash_sha256_BYTES);
                 crypto_hash_sha256(firstHash.data(), shared.data(), shared.size());
                 std::vector<uint8_t> secondHash(crypto_hash_sha256_BYTES);
@@ -4727,6 +4924,20 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                 std::memcpy(wide.data(), firstHash.data(), crypto_hash_sha256_BYTES);
                 std::memcpy(wide.data() + crypto_hash_sha256_BYTES, secondHash.data(), crypto_hash_sha256_BYTES);
                 std::vector<uint8_t> scalar(crypto_core_ed25519_SCALARBYTES);
+                struct WipeDerived {
+                    std::vector<uint8_t>& shared;
+                    std::vector<uint8_t>& firstHash;
+                    std::vector<uint8_t>& secondHash;
+                    std::vector<uint8_t>& wide;
+                    std::vector<uint8_t>& scalar;
+                    ~WipeDerived() {
+                        sodium_memzero(shared.data(), shared.size());
+                        sodium_memzero(firstHash.data(), firstHash.size());
+                        sodium_memzero(secondHash.data(), secondHash.size());
+                        sodium_memzero(wide.data(), wide.size());
+                        sodium_memzero(scalar.data(), scalar.size());
+                    }
+                } holdDerived{shared, firstHash, secondHash, wide, scalar};
                 crypto_core_ed25519_scalar_reduce(scalar.data(), wide.data());
                 std::vector<uint8_t> hG(crypto_core_ed25519_BYTES);
                 if (crypto_scalarmult_ed25519_base_noclamp(hG.data(), scalar.data()) != 0)
@@ -5200,6 +5411,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         if (sf.good()) {
             std::string content((std::istreambuf_iterator<char>(sf)),
                                  std::istreambuf_iterator<char>());
+            if (!synapse::json_containment::blankJsonSecretStrings(content)) content.clear();
             nlohmann::json file = nlohmann::json::parse(content, nullptr, false);
             nlohmann::json base = nlohmann::json::parse(live, nullptr, false);
             if (!file.is_discarded() && file.is_object() && !base.is_discarded() && base.is_object()) {
@@ -5269,9 +5481,11 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             {
                 std::ifstream sf(dataDir_ + "/settings.json");
                 if (sf.good()) {
-                    auto parsed = nlohmann::json::parse(
-                        std::string((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>()),
-                        nullptr, false);
+                    std::string raw((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+                    if (!synapse::json_containment::blankJsonSecretStrings(raw)) {
+                        return "{\"error\":\"invalid settings json\"}";
+                    }
+                    auto parsed = nlohmann::json::parse(raw, nullptr, false);
                     if (!parsed.is_discarded() && parsed.is_object()) settings = std::move(parsed);
                 }
             }
@@ -5311,9 +5525,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             std::ofstream py(pyPath, std::ios::trunc);
             py << kStripAvatarPy;
         }
-        std::string cmd = "python3 " + shQuote(pyPath) + " " + shQuote(srcPath) + " " +
-                          shQuote(destPng) + " " + shQuote(destJpg) + " 2>/dev/null";
-        int rc = std::system(cmd.c_str());
+        const int rc = execArgvExit({"python3", pyPath, srcPath, destPng, destJpg});
         if (rc != 0) return "{\"error\":\"could not strip image metadata\"}";
 #endif
         restrictSecretFile(destPng);
@@ -5331,6 +5543,9 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             if (sf.good()) {
                 std::string content((std::istreambuf_iterator<char>(sf)),
                                      std::istreambuf_iterator<char>());
+                if (!synapse::json_containment::blankJsonSecretStrings(content)) {
+                    return "{\"error\":\"invalid settings json\"}";
+                }
                 auto parsed = nlohmann::json::parse(content, nullptr, false);
                 if (!parsed.is_discarded() && parsed.is_object()) settings = parsed;
             }
@@ -5352,40 +5567,43 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
     }
 
     (void)paramsJson;
-    return "{\"error\":\"unknown method\",\"method\":\"" + method + "\"}";
+    return "{\"error\":\"unknown method\",\"method\":\"" + jsonEscape(method) + "\"}";
   } catch (const std::exception& e) {
-    return std::string("{\"error\":\"internal: ") + e.what() + "\"}";
+    return std::string("{\"error\":\"internal: ") + jsonEscape(e.what()) + "\"}";
   } catch (...) {
     return "{\"error\":\"internal error\"}";
   }
 }
 
 int SynapsedEngine::subscribe(const std::string& eventType, EventCallback callback) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::lock_guard<std::mutex> lock(subscribersMtx_);
     subscribers_[eventType].push_back(std::move(callback));
     return 0;
 }
 
-uint64_t SynapsedEngine::localChainHeight() const {
+uint64_t SynapsedEngine::readLocalChainHeightUnlocked() const {
     uint64_t h = lastBlockHeight_.load();
-    auto bump = [&](const std::string& path) {
-        std::ifstream f(path);
-        if (!f.good()) return;
-        std::string line;
-        while (std::getline(f, line)) {
-            if (line.empty()) continue;
-            size_t hp = line.find("\"height\":");
-            if (hp == std::string::npos) continue;
-            uint64_t x = static_cast<uint64_t>(std::atoll(line.c_str() + hp + 9));
-            if (x > h) h = x;
-        }
-    };
-    bump(dataDir_ + "/blocks.jsonl");
+    std::ifstream f(dataDir_ + "/blocks.jsonl");
+    if (!f.good()) return h;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        size_t hp = line.find("\"height\":");
+        if (hp == std::string::npos) continue;
+        uint64_t x = static_cast<uint64_t>(std::atoll(line.c_str() + hp + 9));
+        if (x > h) h = x;
+    }
     return h;
 }
 
+uint64_t SynapsedEngine::localChainHeight() const {
+    std::lock_guard<std::mutex> chain(localChainMtx_);
+    return readLocalChainHeightUnlocked();
+}
+
 void SynapsedEngine::appendLocalChainBlock(const std::string& eventType, const std::string& eventHash) {
-    uint64_t height = localChainHeight() + 1;
+    std::lock_guard<std::mutex> chain(localChainMtx_);
+    uint64_t height = readLocalChainHeightUnlocked() + 1;
     int64_t ts = nowMillis();
     std::string prev = std::string(64, '0');
     auto lastHash = [&](const std::string& path) {
@@ -5421,8 +5639,9 @@ void SynapsedEngine::appendLocalChainBlock(const std::string& eventType, const s
              << "\",\"hash\":\"" << jsonEscape(eventHash)
              << "\",\"ts\":" << ts << "}]"
              << "}\n";
+        blkf.flush();
+        if (blkf.good()) lastBlockHeight_ = height;
     }
-    lastBlockHeight_ = height;
 }
 
 std::string SynapsedEngine::getStatus() const {
@@ -5525,9 +5744,7 @@ SynapsedEngine::TorInfo SynapsedEngine::queryTorControl() const {
     for (uint16_t p : ports) {
         fd = connectLocalPort(p, 0);
         if (fd < 0) continue;
-        if (controlAuthenticate(fd, cookie) || (CLOSESOCK(fd), fd = connectLocalPort(p, 0), fd >= 0 && controlAuthenticate(fd, ""))) {
-            break;
-        }
+        if (controlAuthenticate(fd, cookie)) break;
         if (fd >= 0) CLOSESOCK(fd);
         fd = -1;
     }
@@ -5628,7 +5845,7 @@ std::string SynapsedEngine::fetchViaTor(const std::string& url, const std::strin
         ? (dataDir_ + "/tor_cookies.txt")
         : (dataDir_ + "/tor_cookies_" + tag + ".txt");
     return execArgv({
-        "curl", "-s", "-k", "--compressed",
+        "curl", "-q", "--proto", "-all,http,https", "--proto-redir", "-all,http,https", "-s", "-k", "--compressed",
         "--max-time", std::to_string(timeout),
         "--socks5-hostname", "127.0.0.1:" + std::to_string(socksPort),
         "-L",
@@ -5925,19 +6142,22 @@ std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
                   (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=' || c == '\n' || c == '\r'))
                 return "";
         }
+        const auto decoded = synapse::crypto::base64Decode(
+            std::vector<uint8_t>(b64.begin(), b64.end()));
         {
-            std::ofstream b64f(tmpImg + ".b64", std::ios::binary);
-            if (!b64f) return "";
-            b64f.write(b64.c_str(), b64.size());
+            std::ofstream out(tmpImg, std::ios::binary | std::ios::trunc);
+            if (!out) return "";
+            if (!decoded.empty()) {
+                out.write(reinterpret_cast<const char*>(decoded.data()),
+                          static_cast<std::streamsize>(decoded.size()));
+            }
+            if (!out.good()) return "";
         }
-        std::string decodeCmd = "base64 -d < " + tmpImg + ".b64 > " + tmpImg + " 2>/dev/null";
-        SYSTEM_IGNORE(decodeCmd.c_str());
-        std::remove((tmpImg + ".b64").c_str());
     } else {
         if (imgUrl[0] == '/') return "";
         if (!isUrlSafe(imgUrl)) return "";
         execArgv({
-            "curl", "-s", "--max-time", "15",
+            "curl", "-q", "--proto", "-all,http,https", "--proto-redir", "-all,http,https", "-s", "--max-time", "15",
             "--socks5-hostname", "127.0.0.1:" + std::to_string(gSocksPort.load()),
             "-L",
             "-c", dataDir_ + "/tor_cookies.txt",
@@ -5951,10 +6171,10 @@ std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
     {
         std::ifstream cnnCheck(cnnModel);
         if (cnnCheck.good()) {
-            std::string cnnCmd = "python3 " + dataDir_ +
-                "/../tools/captcha_cnn/infer.py --model " + cnnModel +
-                " " + tmpImg + " 2>/dev/null";
-            std::string cnnResult = trim(execCmd(cnnCmd));
+            std::string cnnResult = trim(execArgv({
+                "python3", dataDir_ + "/../tools/captcha_cnn/infer.py",
+                "--model", cnnModel, tmpImg
+            }));
             if (cnnResult.size() >= 3 && cnnResult.size() <= 8) {
                 std::string cnnAnswer;
                 for (char c : cnnResult)
@@ -5969,10 +6189,9 @@ std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
     }
 
     std::string mlScript =
-        "python3 -c \""
         "import sys, os\\n"
-        "img_path = '" + tmpImg + "'\\n"
-        "clean_path = '" + cleanImg + "'\\n"
+        "img_path = sys.argv[1]\\n"
+        "clean_path = sys.argv[2]\\n"
         "WL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'\\n"
         "results = []\\n"
         "try:\\n"
@@ -6094,9 +6313,8 @@ std::string SynapsedEngine::solveTextCaptcha(const std::string& imgUrl) const {
         "  print(ans)\\n"
         "# Cleanup\\n"
         "import glob\\n"
-        "for f in glob.glob(clean_path.replace('.png', '*.png')): os.remove(f)\\n"
-        "\" 2>/dev/null";
-    std::string mlResult = trim(execCmd(mlScript));
+        "for f in glob.glob(clean_path.replace('.png', '*.png')): os.remove(f)\\n";
+    std::string mlResult = trim(execArgv({"python3", "-c", mlScript, tmpImg, cleanImg}));
 
     std::remove(tmpImg.c_str());
     std::remove(cleanImg.c_str());
@@ -6117,11 +6335,15 @@ std::string SynapsedEngine::submitCaptchaAndRefetch(const std::string& url,
     if (!isUrlSafe(postUrl)) return "";
 
     std::string postData = field + "=" + answer;
-    std::string cmd = "curl -s --max-time 30 " + socks5Arg() + " -L "
-                      "-c " + dataDir_ + "/cookies.txt -b " + dataDir_ + "/cookies.txt "
-                      "-d \"" + postData + "\" "
-                      "\"" + postUrl + "\" 2>/dev/null";
-    std::string result = execCmd(cmd);
+    std::string result = execArgv({
+        "curl", "-q", "--proto", "-all,http,https", "--proto-redir", "-all,http,https", "-s", "--max-time", "30",
+        "--socks5-hostname", "127.0.0.1:" + std::to_string(gSocksPort.load()),
+        "-L",
+        "-c", dataDir_ + "/cookies.txt",
+        "-b", dataDir_ + "/cookies.txt",
+        "-d", postData,
+        postUrl
+    });
 
     if (result.find("captcha") != std::string::npos ||
         result.find("CAPTCHA") != std::string::npos) {
@@ -6134,7 +6356,7 @@ std::string SynapsedEngine::downloadCaptchaImage(const std::string& imgUrl) cons
     if (imgUrl.empty() || !isUrlSafe(imgUrl)) return "";
     std::string tmpImg = "" + dataDir_ + "/cap_" + std::to_string(nowMillis()) + ".png";
     execArgv({
-        "curl", "-s", "--max-time", "15",
+        "curl", "-q", "--proto", "-all,http,https", "--proto-redir", "-all,http,https", "-s", "--max-time", "15",
         "--socks5-hostname", "127.0.0.1:" + std::to_string(gSocksPort.load()),
         "-L", "-o", tmpImg,
         imgUrl
@@ -6146,19 +6368,29 @@ std::string SynapsedEngine::downloadCaptchaImage(const std::string& imgUrl) cons
 
 std::string SynapsedEngine::classifyImage(const std::string& imgPath) const {
     std::string preprocessed = imgPath + "_proc.png";
-    std::string cmd = "convert " + imgPath +
-        " -resize 224x224! -colorspace Gray -normalize " +
-        preprocessed + " 2>/dev/null";
-    SYSTEM_IGNORE(cmd.c_str());
+    (void)execArgv({
+        "convert", imgPath, "-resize", "224x224!", "-colorspace", "Gray",
+        "-normalize", preprocessed
+    });
 
-    std::string result = execCmd(
-        "tesseract " + preprocessed + " stdout --psm 13 2>/dev/null");
+    std::string result = execArgv({
+        "tesseract", preprocessed, "stdout", "--psm", "13"
+    });
     std::remove(preprocessed.c_str());
     std::string clean = trim(result);
     if (!clean.empty()) return clean;
 
-    std::string identify = execCmd(
-        "identify -verbose " + imgPath + " 2>/dev/null | head -40");
+    std::string identify = execArgv({"identify", "-verbose", imgPath});
+    {
+        size_t lines = 0;
+        for (size_t i = 0; i < identify.size(); ++i) {
+            if (identify[i] != '\n') continue;
+            if (++lines == 40) {
+                identify.resize(i + 1);
+                break;
+            }
+        }
+    }
 
     std::string label;
     size_t colors = 0;
@@ -6189,13 +6421,12 @@ std::string SynapsedEngine::solveTextCaptchaCyrillic(const std::string& imgUrl) 
     if (tmpImg.empty()) return "";
 
     std::string preprocessed = tmpImg + "_clean.png";
-    SYSTEM_IGNORE(("convert " + tmpImg +
-            " -colorspace Gray -blur 0x1 -threshold 50% -morphology Open Square "
-            + preprocessed + " 2>/dev/null").c_str());
+    (void)execArgv({
+        "convert", tmpImg, "-colorspace", "Gray", "-blur", "0x1",
+        "-threshold", "50%", "-morphology", "Open", "Square", preprocessed
+    });
 
-    std::string ocrResult = execCmd(
-        "tesseract " + preprocessed + " stdout -l rus --psm 7 "
-        "-c tessedit_char_whitelist="
+    const std::string whitelist =
         "\xD0\x90\xD0\x91\xD0\x92\xD0\x93\xD0\x94\xD0\x95\xD0\x96\xD0\x97"
         "\xD0\x98\xD0\x99\xD0\x9A\xD0\x9B\xD0\x9C\xD0\x9D\xD0\x9E\xD0\x9F"
         "\xD0\xA0\xD0\xA1\xD0\xA2\xD0\xA3\xD0\xA4\xD0\xA5\xD0\xA6\xD0\xA7"
@@ -6204,7 +6435,11 @@ std::string SynapsedEngine::solveTextCaptchaCyrillic(const std::string& imgUrl) 
         "\xD0\xB8\xD0\xB9\xD0\xBA\xD0\xBB\xD0\xBC\xD0\xBD\xD0\xBE\xD0\xBF"
         "\xD1\x80\xD1\x81\xD1\x82\xD1\x83\xD1\x84\xD1\x85\xD1\x86\xD1\x87"
         "\xD1\x88\xD1\x89\xD1\x8A\xD1\x8B\xD1\x8C\xD1\x8D\xD1\x8E\xD1\x8F"
-        "0123456789 2>/dev/null");
+        "0123456789";
+    std::string ocrResult = execArgv({
+        "tesseract", preprocessed, "stdout", "-l", "rus", "--psm", "7",
+        "-c", "tessedit_char_whitelist=" + whitelist
+    });
 
     std::remove(tmpImg.c_str());
     std::remove(preprocessed.c_str());
@@ -6285,16 +6520,17 @@ std::string SynapsedEngine::solveClockCaptcha(const std::string& imgUrl) const {
     if (tmpImg.empty()) return "";
 
     std::string grayImg = tmpImg + "_gray.png";
-    SYSTEM_IGNORE(("convert " + tmpImg +
-            " -colorspace Gray -blur 0x2 -canny 0x1+10%+30% " +
-            grayImg + " 2>/dev/null").c_str());
+    (void)execArgv({
+        "convert", tmpImg, "-colorspace", "Gray", "-blur", "0x2",
+        "-canny", "0x1+10%+30%", grayImg
+    });
 
-    std::string lines = execCmd(
-        "python3 -c \""
+    std::string lines = execArgv({
+        "python3", "-c",
         "import sys;"
         "try:\n"
         "  import cv2, math, numpy as np;"
-        "  img=cv2.imread('" + grayImg + "',0);"
+        "  img=cv2.imread(sys.argv[1],0);"
         "  h,w=img.shape;"
         "  cx,cy=w//2,h//2;"
         "  edges=cv2.Canny(img,50,150);"
@@ -6314,8 +6550,9 @@ std::string SynapsedEngine::solveClockCaptcha(const std::string& imgUrl) const {
         "  mins=int((mAng/360)*60)%60;"
         "  hrs=int((hAng/360)*12)%12;"
         "  print(f'{hrs:02d}:{mins:02d}');"
-        "except: print('ERR');"
-        "\" 2>/dev/null");
+        "except: print('ERR');\n",
+        grayImg
+    });
 
     std::remove(tmpImg.c_str());
     std::remove(grayImg.c_str());
@@ -6515,11 +6752,10 @@ std::string SynapsedEngine::solveMultiStepCaptcha(const std::string& html) const
 
 double SynapsedEngine::detectImageRotation(const std::string& imgPath) const {
     std::string script =
-        "python3 -c \""
         "import sys;"
         "try:\n"
         "  import cv2, numpy as np, math;"
-        "  img = cv2.imread('" + imgPath + "');"
+        "  img = cv2.imread(sys.argv[1]);"
         "  if img is None: print(0);sys.exit();"
         "  gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY);"
         "  edges = cv2.Canny(gray, 50, 150);"
@@ -6534,9 +6770,8 @@ double SynapsedEngine::detectImageRotation(const std::string& imgPath) const {
         "  mean_a = sum(angles)/len(angles);"
         "  offset = mean_a - 90.0;"
         "  print(round(-offset, 1));"
-        "except: print(0);"
-        "\" 2>/dev/null";
-    std::string result = trim(execCmd(script));
+        "except: print(0);\n";
+    std::string result = trim(execArgv({"python3", "-c", script, imgPath}));
     if (result.empty()) return 0.0;
     return std::atof(result.c_str());
 }
@@ -6544,19 +6779,17 @@ double SynapsedEngine::detectImageRotation(const std::string& imgPath) const {
 int SynapsedEngine::detectSliderOffset(const std::string& bgPath,
     const std::string& piecePath) const {
     std::string script =
-        "python3 -c \""
         "import sys;"
         "try:\n"
         "  import cv2, numpy as np;"
-        "  bg = cv2.imread('" + bgPath + "', 0);"
-        "  pc = cv2.imread('" + piecePath + "', 0);"
+        "  bg = cv2.imread(sys.argv[1], 0);"
+        "  pc = cv2.imread(sys.argv[2], 0);"
         "  if bg is None or pc is None: print(0);sys.exit();"
         "  res = cv2.matchTemplate(bg, pc, cv2.TM_CCOEFF_NORMED);"
         "  _, _, _, max_loc = cv2.minMaxLoc(res);"
         "  print(max_loc[0]);"
-        "except: print(0);"
-        "\" 2>/dev/null";
-    std::string result = trim(execCmd(script));
+        "except: print(0);\n";
+    std::string result = trim(execArgv({"python3", "-c", script, bgPath, piecePath}));
     if (result.empty()) return 0;
     return std::atoi(result.c_str());
 }
@@ -6875,11 +7108,11 @@ std::string SynapsedEngine::solveSliderCaptcha(const std::string& html) const {
         offset = detectSliderOffset(bgPath, piecePath);
         std::remove(piecePath.c_str());
     } else if (!bgPath.empty()) {
-        std::string script = "python3 -c \""
+        std::string script =
             "import sys;"
             "try:\n"
             "  import cv2, numpy as np;"
-            "  img = cv2.imread('" + bgPath + "', 0);"
+            "  img = cv2.imread(sys.argv[1], 0);"
             "  if img is None: print(0);sys.exit();"
             "  edges = cv2.Canny(img, 100, 200);"
             "  contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE);"
@@ -6887,9 +7120,8 @@ std::string SynapsedEngine::solveSliderCaptcha(const std::string& html) const {
             "  best = max(contours, key=cv2.contourArea);"
             "  x, y, w, h = cv2.boundingRect(best);"
             "  print(x);"
-            "except: print(0);"
-            "\" 2>/dev/null";
-        offset = std::atoi(trim(execCmd(script)).c_str());
+            "except: print(0);\n";
+        offset = std::atoi(trim(execArgv({"python3", "-c", script, bgPath})).c_str());
     }
     if (!bgPath.empty()) std::remove(bgPath.c_str());
     std::string result = "slider_0=" + std::to_string(offset);
@@ -6937,12 +7169,12 @@ std::string SynapsedEngine::solvePairCaptcha(const std::string& html) const {
         std::string path = downloadCaptchaImage(img.first);
         if (path.empty()) { hashes.push_back({img.second, "fail"}); continue; }
 
-        std::string phash = execCmd(
-            "python3 -c \""
+        std::string phash = execArgv({
+            "python3", "-c",
             "import sys;"
             "try:\n"
             "  import cv2, numpy as np;"
-            "  img = cv2.imread('" + path + "');"
+            "  img = cv2.imread(sys.argv[1]);"
             "  if img is None: print('fail');sys.exit();"
             "  small = cv2.resize(img, (8, 8));"
             "  gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY);"
@@ -6951,8 +7183,9 @@ std::string SynapsedEngine::solvePairCaptcha(const std::string& html) const {
             "  h = 0;"
             "  for b in bits: h = (h << 1) | int(b);"
             "  print(hex(h));"
-            "except: print('fail');"
-            "\" 2>/dev/null");
+            "except: print('fail');\n",
+            path
+        });
         std::remove(path.c_str());
         hashes.push_back({img.second, trim(phash)});
     }
@@ -7082,49 +7315,49 @@ std::string SynapsedEngine::fetchClearnet(const std::string& url) const {
     std::string ua = randomUserAgent();
     std::string cookieJar = "" + dataDir_ + "/clearnet_cookies.txt";
     // Still SOCKS even on the "clearnet" helper — destination may be HTTPS, transport is Tor.
-    std::string cmd = "curl -s --max-time 30 " + socks5Arg() + " -L "
-        "-H \"User-Agent: " + ua + "\" "
-        "-H \"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\" "
-        "-H \"Accept-Language: en-US,en;q=0.9\" "
-        "-H \"Accept-Encoding: gzip, deflate, br\" "
-        "-H \"Connection: keep-alive\" "
-        "-H \"Upgrade-Insecure-Requests: 1\" "
-        "-H \"Sec-Fetch-Dest: document\" "
-        "-H \"Sec-Fetch-Mode: navigate\" "
-        "-H \"Sec-Fetch-Site: none\" "
-        "-H \"Sec-Fetch-User: ?1\" "
-        "--compressed "
-        "-c " + cookieJar + " -b " + cookieJar + " "
-        "-w \"\\n__HTTP_CODE__%{http_code}\" "
-        "\"" + url + "\" 2>/dev/null";
-    return execCmd(cmd);
+    return execArgv({
+        "curl", "-q", "--proto", "-all,http,https", "--proto-redir", "-all,http,https", "-s", "--max-time", "30",
+        "--socks5-hostname", "127.0.0.1:" + std::to_string(gSocksPort.load()),
+        "-L",
+        "-H", "User-Agent: " + ua,
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "-H", "Accept-Language: en-US,en;q=0.9",
+        "-H", "Accept-Encoding: gzip, deflate, br",
+        "-H", "Connection: keep-alive",
+        "-H", "Upgrade-Insecure-Requests: 1",
+        "-H", "Sec-Fetch-Dest: document",
+        "-H", "Sec-Fetch-Mode: navigate",
+        "-H", "Sec-Fetch-Site: none",
+        "-H", "Sec-Fetch-User: ?1",
+        "--compressed",
+        "-c", cookieJar,
+        "-b", cookieJar,
+        "-w", "\\n__HTTP_CODE__%{http_code}",
+        url
+    });
 }
 
 std::string SynapsedEngine::bypassCloudflareChallenge(const std::string& url) const {
     if (!isUrlSafe(url)) return "";
 
+    const std::string cookieFile = dataDir_ + "/cf_cookies.txt";
     std::string script =
-        "python3 -c \""
-        "import sys;"
+        "import sys\n"
         "try:\n"
-        "  from subprocess import run, PIPE;"
-        "  import time, json;"
-        "  r = run(['curl-impersonate-chrome', '-s', '-L', '--max-time', '30',"
-        "    '-c', '" + dataDir_ + "/cf_cookies.txt',"
-        "    '-b', '" + dataDir_ + "/cf_cookies.txt',"
-        "    '" + url + "'], capture_output=True, text=True, timeout=35);"
-        "  if r.returncode == 0 and len(r.stdout) > 100:"
-        "    print(r.stdout);"
-        "  else:"
-        "    r2 = run(['curl', '-s', '-L', '--max-time', '30',"
-        "      '-H', 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',"
-        "      '-c', '" + dataDir_ + "/cf_cookies.txt',"
-        "      '-b', '" + dataDir_ + "/cf_cookies.txt',"
-        "      '" + url + "'], capture_output=True, text=True, timeout=35);"
-        "    print(r2.stdout);"
-        "except Exception as e: print('');"
-        "\" 2>/dev/null";
-    std::string result = execCmd(script);
+        "  from subprocess import run\n"
+        "  cookie, url = sys.argv[1], sys.argv[2]\n"
+        "  r = run(['curl-impersonate-chrome', '-s', '-L', '--max-time', '30',\n"
+        "    '-c', cookie, '-b', cookie, url], capture_output=True, text=True, timeout=35)\n"
+        "  if r.returncode == 0 and len(r.stdout) > 100:\n"
+        "    print(r.stdout)\n"
+        "  else:\n"
+        "    r2 = run(['curl', '-s', '-L', '--max-time', '30',\n"
+        "      '-H', 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',\n"
+        "      '-c', cookie, '-b', cookie, url], capture_output=True, text=True, timeout=35)\n"
+        "    print(r2.stdout)\n"
+        "except Exception:\n"
+        "  print('')\n";
+    std::string result = execArgv({"python3", "-c", script, cookieFile, url});
     if (result.size() < 100) return "";
     return result;
 }
@@ -7134,28 +7367,28 @@ std::string SynapsedEngine::solveRecaptchaAudio(const std::string& siteKey,
     if (siteKey.empty() || pageUrl.empty()) return "";
 
     std::string script =
-        "python3 -c \""
-        "import sys;"
+        "import sys\n"
         "try:\n"
-        "  import requests, base64, json, speech_recognition as sr;"
-        "  from io import BytesIO;"
-        "  import urllib.request;"
-        "  api = 'https://www.google.com/recaptcha/api2';"
-        "  s = requests.Session();"
-        "  s.headers['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64) Chrome/124.0.0.0';"
-        "  r = s.get(f'{api}/anchor?ar=1&k=" + siteKey + "&co=aHR0cHM6Ly9leGFtcGxlLmNvbQ..&hl=en&v=jF0kMEbCnEo&size=normal');"
-        "  import re;"
-        "  tok = re.search(r'recaptcha-token.*?value=\"(.*?)\"', r.text);"
-        "  if not tok: print('');sys.exit();"
-        "  token = tok.group(1);"
-        "  r2 = s.post(f'{api}/reload?k=" + siteKey + "', data={'v':'jF0kMEbCnEo','reason':'q','c':token,'k':'" + siteKey + "','co':'aHR0cHM6Ly9leGFtcGxlLmNvbQ..','hl':'en','size':'normal','chr':'','vh':'','bg':''});"
-        "  aud = re.search(r'rresp\",\"(.*?)\"', r2.text);"
-        "  if not aud: r3 = s.post(f'{api}/reload?k=" + siteKey + "', data={'v':'jF0kMEbCnEo','reason':'a','c':token,'k':'" + siteKey + "','co':'aHR0cHM6Ly9leGFtcGxlLmNvbQ..','hl':'en','size':'normal'}); aud = re.search(r'rresp\",\"(.*?)\"', r3.text);"
-        "  if aud: print(aud.group(1));"
-        "  else: print('');"
-        "except: print('');"
-        "\" 2>/dev/null";
-    return trim(execCmd(script));
+        "  import requests, re\n"
+        "  api = 'https://www.google.com/recaptcha/api2'\n"
+        "  key = sys.argv[1]\n"
+        "  s = requests.Session()\n"
+        "  s.headers['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64) Chrome/124.0.0.0'\n"
+        "  r = s.get(f'{api}/anchor?ar=1&k={key}&co=aHR0cHM6Ly9leGFtcGxlLmNvbQ..&hl=en&v=jF0kMEbCnEo&size=normal')\n"
+        "  tok = re.search(r'recaptcha-token.*?value=\"(.*?)\"', r.text)\n"
+        "  if not tok:\n"
+        "    print('')\n"
+        "    sys.exit()\n"
+        "  token = tok.group(1)\n"
+        "  r2 = s.post(f'{api}/reload?k={key}', data={'v':'jF0kMEbCnEo','reason':'q','c':token,'k':key,'co':'aHR0cHM6Ly9leGFtcGxlLmNvbQ..','hl':'en','size':'normal','chr':'','vh':'','bg':''})\n"
+        "  aud = re.search(r'rresp\",\"(.*?)\"', r2.text)\n"
+        "  if not aud:\n"
+        "    r3 = s.post(f'{api}/reload?k={key}', data={'v':'jF0kMEbCnEo','reason':'a','c':token,'k':key,'co':'aHR0cHM6Ly9leGFtcGxlLmNvbQ..','hl':'en','size':'normal'})\n"
+        "    aud = re.search(r'rresp\",\"(.*?)\"', r3.text)\n"
+        "  print(aud.group(1) if aud else '')\n"
+        "except Exception:\n"
+        "  print('')\n";
+    return trim(execArgv({"python3", "-c", script, siteKey}));
 }
 
 std::string SynapsedEngine::solveHCaptcha(const std::string& siteKey,
@@ -7163,22 +7396,23 @@ std::string SynapsedEngine::solveHCaptcha(const std::string& siteKey,
     if (siteKey.empty()) return "";
 
     std::string script =
-        "python3 -c \""
-        "import sys;"
+        "import sys\n"
         "try:\n"
-        "  import requests, json;"
-        "  s = requests.Session();"
-        "  s.headers['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64) Chrome/124.0.0.0';"
-        "  r = s.post('https://hcaptcha.com/checksiteconfig', json={'host':'" + pageUrl + "','sitekey':'" + siteKey + "','sc':1,'swa':1});"
-        "  d = r.json();"
-        "  if d.get('pass'): print('bypass');sys.exit();"
-        "  r2 = s.post('https://hcaptcha.com/getcaptcha/' + '" + siteKey + "', json={'host':'" + pageUrl + "','sitekey':'" + siteKey + "','motionData':'{}'});"
-        "  d2 = r2.json();"
-        "  if 'generated_pass_UUID' in d2: print(d2['generated_pass_UUID']);"
-        "  else: print('');"
-        "except: print('');"
-        "\" 2>/dev/null";
-    return trim(execCmd(script));
+        "  import requests\n"
+        "  key, host = sys.argv[1], sys.argv[2]\n"
+        "  s = requests.Session()\n"
+        "  s.headers['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64) Chrome/124.0.0.0'\n"
+        "  r = s.post('https://hcaptcha.com/checksiteconfig', json={'host':host,'sitekey':key,'sc':1,'swa':1})\n"
+        "  d = r.json()\n"
+        "  if d.get('pass'):\n"
+        "    print('bypass')\n"
+        "    sys.exit()\n"
+        "  r2 = s.post('https://hcaptcha.com/getcaptcha/' + key, json={'host':host,'sitekey':key,'motionData':'{}'})\n"
+        "  d2 = r2.json()\n"
+        "  print(d2.get('generated_pass_UUID', ''))\n"
+        "except Exception:\n"
+        "  print('')\n";
+    return trim(execArgv({"python3", "-c", script, siteKey, pageUrl}));
 }
 
 SynapsedEngine::EndGameV3Challenge SynapsedEngine::detectEndGameV3(
@@ -7313,20 +7547,33 @@ std::string SynapsedEngine::submitEndGamePoW(const EndGameV3Challenge& ch,
     if (!ch.extraFields.empty())
         postData += "&" + ch.extraFields;
 
-    std::string cmd = "curl -s -k --max-time 45 " + socks5Arg() + " -L "
-        "-c " + dataDir_ + "/tor_cookies.txt -b " + dataDir_ + "/tor_cookies.txt "
-        "-H \"User-Agent: " + randomUserAgent() + "\" "
-        "-d \"" + postData + "\" "
-        "\"" + ch.submitUrl + "\" 2>/dev/null";
-    return execCmd(cmd);
+    return execArgv({
+        "curl", "-q", "--proto", "-all,http,https", "--proto-redir", "-all,http,https", "-s", "-k", "--max-time", "45",
+        "--socks5-hostname", "127.0.0.1:" + std::to_string(gSocksPort.load()),
+        "-L",
+        "-c", dataDir_ + "/tor_cookies.txt",
+        "-b", dataDir_ + "/tor_cookies.txt",
+        "-H", std::string("User-Agent: ") + randomUserAgent(),
+        "-d", postData,
+        ch.submitUrl
+    });
 }
 
 void SynapsedEngine::emitEvent(const std::string& eventType,
     const std::string& payloadJson) const {
-    auto it = subscribers_.find(eventType);
-    if (it == subscribers_.end()) return;
-    for (const auto& cb : it->second) {
-        if (cb) cb(eventType.c_str(), payloadJson.c_str());
+    std::vector<EventCallback> callbacks;
+    {
+        std::lock_guard<std::mutex> lock(subscribersMtx_);
+        auto it = subscribers_.find(eventType);
+        if (it == subscribers_.end()) return;
+        callbacks = it->second;
+    }
+    // Own the bytes the C callback sees. The caller's string can be a
+    // temporary, and the callback may re-enter the engine.
+    const std::string eventCopy = eventType;
+    const std::string payloadCopy = payloadJson;
+    for (const auto& cb : callbacks) {
+        if (cb) cb(eventCopy.c_str(), payloadCopy.c_str());
     }
 }
 
@@ -7532,13 +7779,14 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
             if (prot.recaptcha && !prot.siteKey.empty()) {
                 std::string token = solveRecaptchaAudio(prot.siteKey, url);
                 if (!token.empty()) {
-                    std::string postCmd = "curl -s --max-time 30 -L "
-                        "-H \"User-Agent: " + randomUserAgent() + "\" "
-                        "-d \"g-recaptcha-response=" + token + "\" "
-                        "-c " + dataDir_ + "/clearnet_cookies.txt "
-                        "-b " + dataDir_ + "/clearnet_cookies.txt "
-                        "\"" + url + "\" 2>/dev/null";
-                    std::string result = execCmd(postCmd);
+                    std::string result = execArgv({
+                        "curl", "-q", "--proto", "-all,http,https", "--proto-redir", "-all,http,https", "-s", "--max-time", "30", "-L",
+                        "-H", std::string("User-Agent: ") + randomUserAgent(),
+                        "-d", std::string("g-recaptcha-response=") + token,
+                        "-c", dataDir_ + "/clearnet_cookies.txt",
+                        "-b", dataDir_ + "/clearnet_cookies.txt",
+                        url
+                    });
                     if (!result.empty() && result.find("g-recaptcha") == std::string::npos) {
                         recordBypass("NAAN-CAP-RECAPTCHA", "google_recaptcha_v2",
                             "audio_speech_to_text", "clearnet", ttfbMs, 200,
@@ -7552,13 +7800,14 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
             if (prot.hcaptcha && !prot.siteKey.empty()) {
                 std::string token = solveHCaptcha(prot.siteKey, url);
                 if (!token.empty() && token != "bypass") {
-                    std::string postCmd = "curl -s --max-time 30 -L "
-                        "-H \"User-Agent: " + randomUserAgent() + "\" "
-                        "-d \"h-captcha-response=" + token + "\" "
-                        "-c " + dataDir_ + "/clearnet_cookies.txt "
-                        "-b " + dataDir_ + "/clearnet_cookies.txt "
-                        "\"" + url + "\" 2>/dev/null";
-                    std::string result = execCmd(postCmd);
+                    std::string result = execArgv({
+                        "curl", "-q", "--proto", "-all,http,https", "--proto-redir", "-all,http,https", "-s", "--max-time", "30", "-L",
+                        "-H", std::string("User-Agent: ") + randomUserAgent(),
+                        "-d", std::string("h-captcha-response=") + token,
+                        "-c", dataDir_ + "/clearnet_cookies.txt",
+                        "-b", dataDir_ + "/clearnet_cookies.txt",
+                        url
+                    });
                     if (!result.empty()) {
                         recordBypass("NAAN-CAP-HCAPTCHA", "hcaptcha",
                             "image_classifier_solve", "clearnet", ttfbMs, 200,
@@ -7625,12 +7874,16 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                 postData = formField + "=" + darkCap.answer;
             }
 
-            std::string submitCmd = "curl -s -k --max-time 30 " + socks5Arg() + " -L "
-                "-c " + dataDir_ + "/tor_cookies.txt -b " + dataDir_ + "/tor_cookies.txt "
-                "-H \"User-Agent: " + randomUserAgent() + "\" "
-                "-d \"" + postData + "\" "
-                "\"" + formAction + "\" 2>/dev/null";
-            std::string solved = execCmd(submitCmd);
+            std::string solved = execArgv({
+                "curl", "-q", "--proto", "-all,http,https", "--proto-redir", "-all,http,https", "-s", "-k", "--max-time", "30",
+                "--socks5-hostname", "127.0.0.1:" + std::to_string(gSocksPort.load()),
+                "-L",
+                "-c", dataDir_ + "/tor_cookies.txt",
+                "-b", dataDir_ + "/tor_cookies.txt",
+                "-H", std::string("User-Agent: ") + randomUserAgent(),
+                "-d", postData,
+                formAction
+            });
             if (!solved.empty() &&
                 solved.find("Invalid captcha") == std::string::npos &&
                 solved.find("invalid captcha") == std::string::npos &&
@@ -7699,14 +7952,19 @@ std::string SynapsedEngine::fetchWithRetry(const std::string& url, int maxRetrie
                         }
                     }
                 }
-                std::string socksArg = socks5Arg() + " ";
-                std::string cookieArg = isOnion ?
-                    "-c " + dataDir_ + "/tor_cookies.txt -b " + dataDir_ + "/tor_cookies.txt " :
-                    "-c " + dataDir_ + "/clearnet_cookies.txt -b " + dataDir_ + "/clearnet_cookies.txt ";
-                std::string llmCmd = "curl -s -k --max-time 30 " + socksArg + "-L " +
-                    cookieArg + "-H \"User-Agent: " + randomUserAgent() + "\" "
-                    "-d \"" + postData + "\" \"" + formAction + "\" 2>/dev/null";
-                std::string llmResult = execCmd(llmCmd);
+                const std::string cookieFile = isOnion
+                    ? dataDir_ + "/tor_cookies.txt"
+                    : dataDir_ + "/clearnet_cookies.txt";
+                std::string llmResult = execArgv({
+                    "curl", "-q", "--proto", "-all,http,https", "--proto-redir", "-all,http,https", "-s", "-k", "--max-time", "30",
+                    "--socks5-hostname", "127.0.0.1:" + std::to_string(gSocksPort.load()),
+                    "-L",
+                    "-c", cookieFile,
+                    "-b", cookieFile,
+                    "-H", std::string("User-Agent: ") + randomUserAgent(),
+                    "-d", postData,
+                    formAction
+                });
                 if (!llmResult.empty() &&
                     llmResult.find("captcha") == std::string::npos &&
                     llmResult.find("invalid") == std::string::npos &&
@@ -8803,14 +9061,15 @@ void SynapsedEngine::ensureSigningKey() const {
     std::string keyPath = dataDir_ + "/node_ed25519.pem";
     std::ifstream check(keyPath);
     if (check.good()) return;
-    std::string cmd = "openssl genpkey -algorithm ed25519 -out " + keyPath + " 2>/dev/null";
-    SYSTEM_IGNORE(cmd.c_str());
+    crypto::containForeignCryptoModules();
+    (void)execArgv({"openssl", "genpkey", "-algorithm", "ed25519", "-out", keyPath});
 }
 
 std::string SynapsedEngine::ed25519Sign(const std::string& data) const {
 #ifdef _WIN32
     // openssl genpkey / pkeyutl are console programs and are not on PATH here.
     // Sign with the libsodium key already linked into this DLL.
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) return "";
     unsigned char seed[crypto_sign_SEEDBYTES];
     const std::string seedPath = dataDir_ + "/node_ed25519.seed";
@@ -8830,6 +9089,7 @@ std::string SynapsedEngine::ed25519Sign(const std::string& data) const {
     unsigned char pk[crypto_sign_PUBLICKEYBYTES];
     unsigned char sk[crypto_sign_SECRETKEYBYTES];
     if (crypto_sign_seed_keypair(pk, sk, seed) != 0) {
+        sodium_memzero(sk, sizeof(sk));
         sodium_memzero(seed, sizeof(seed));
         return "";
     }
@@ -8851,6 +9111,7 @@ std::string SynapsedEngine::ed25519Sign(const std::string& data) const {
     return hex;
 #else
     ensureSigningKey();
+    crypto::containForeignCryptoModules();
     std::string keyPath = dataDir_ + "/node_ed25519.pem";
     std::string tmpIn = "" + dataDir_ + "/sign_in_" + std::to_string(nowMillis());
     std::string tmpOut = "" + dataDir_ + "/sign_out_" + std::to_string(nowMillis());
@@ -8858,9 +9119,10 @@ std::string SynapsedEngine::ed25519Sign(const std::string& data) const {
         std::ofstream f(tmpIn, std::ios::binary);
         f.write(data.c_str(), data.size());
     }
-    std::string cmd = "openssl pkeyutl -sign -rawin -inkey " + keyPath +
-                      " -in " + tmpIn + " -out " + tmpOut + " 2>/dev/null";
-    SYSTEM_IGNORE(cmd.c_str());
+    (void)execArgv({
+        "openssl", "pkeyutl", "-sign", "-rawin", "-inkey", keyPath,
+        "-in", tmpIn, "-out", tmpOut
+    });
     std::ifstream sf(tmpOut, std::ios::binary);
     std::string sig;
     if (sf) {
@@ -9143,7 +9405,7 @@ std::string SynapsedEngine::downloadAsset(const std::string& url, bool isOnion,
 
     std::string tmpPath = assetsDir + "/dl_" + std::to_string(nowMillis()) + ext;
     execArgv({
-        "curl", "-s", "-k", "--max-time", "30", "--max-filesize", "10485760",
+        "curl", "-q", "--proto", "-all,http,https", "--proto-redir", "-all,http,https", "-s", "-k", "--max-time", "30", "--max-filesize", "10485760",
         "--socks5-hostname", "127.0.0.1:" + std::to_string(gSocksPort.load()),
         "-L", "-o", tmpPath,
         "-H", std::string("User-Agent: ") + randomUserAgent(),
@@ -9217,10 +9479,11 @@ std::string SynapsedEngine::vtScanFile(const std::string& sha256,
 
     if (vtApiKey_.empty()) return "unchecked";
 
-    std::string cmd = "curl -s --max-time 10 "
-        "-H \"x-apikey: " + vtApiKey_ + "\" "
-        "\"https://www.virustotal.com/api/v3/files/" + sha256 + "\" 2>/dev/null";
-    std::string resp = execCmd(cmd);
+    std::string resp = execArgv({
+        "curl", "-q", "--proto", "-all,http,https", "--proto-redir", "-all,http,https", "-s", "--max-time", "10",
+        "-H", "x-apikey: " + vtApiKey_,
+        "https://www.virustotal.com/api/v3/files/" + sha256
+    });
 
     if (resp.empty()) return "unchecked";
 
@@ -9406,7 +9669,11 @@ std::string SynapsedEngine::modelLoad(const std::string& paramsJson) {
     if (!validateGguf(path)) return "{\"error\":\"invalid GGUF file\"}";
 
     std::ifstream f(path, std::ios::ate | std::ios::binary);
-    size_t sz = f ? static_cast<size_t>(f.tellg()) : 0;
+    size_t sz = 0;
+    if (f) {
+        const std::streamoff pos = f.tellg();
+        if (pos > 0) sz = static_cast<size_t>(pos);
+    }
 
     size_t slash = path.find_last_of("/\\");
     std::string name = (slash != std::string::npos) ? path.substr(slash + 1) : path;
@@ -9422,13 +9689,15 @@ std::string SynapsedEngine::modelLoad(const std::string& paramsJson) {
     {
         std::ifstream sf(dataDir_ + "/settings.json");
         std::string content((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
-        nlohmann::json saved = nlohmann::json::parse(content, nullptr, false);
-        const bool keep = !saved.is_discarded() && saved.is_object();
-        if (keep || content.empty()) {
-            if (!keep) saved = nlohmann::json::object();
-            saved["model_path"] = path;
-            std::ofstream settingsOut(dataDir_ + "/settings.json", std::ios::trunc);
-            if (settingsOut.good()) settingsOut << saved.dump();
+        if (synapse::json_containment::blankJsonSecretStrings(content)) {
+            nlohmann::json saved = nlohmann::json::parse(content, nullptr, false);
+            const bool keep = !saved.is_discarded() && saved.is_object();
+            if (keep || content.empty()) {
+                if (!keep) saved = nlohmann::json::object();
+                saved["model_path"] = path;
+                std::ofstream settingsOut(dataDir_ + "/settings.json", std::ios::trunc);
+                if (settingsOut.good()) settingsOut << saved.dump();
+            }
         }
     }
 
@@ -9564,9 +9833,9 @@ std::string SynapsedEngine::naanStatus() const {
     {
         std::ifstream sf(dataDir_ + "/settings.json");
         if (sf.good()) {
-            nlohmann::json j = nlohmann::json::parse(
-                std::string((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>()),
-                nullptr, false);
+            std::string raw((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+            if (!synapse::json_containment::blankJsonSecretStrings(raw)) raw.clear();
+            nlohmann::json j = nlohmann::json::parse(raw, nullptr, false);
             if (!j.is_discarded() && j.contains("naan_crew") && j["naan_crew"].is_array()) {
                 for (const auto& row : j["naan_crew"]) {
                     if (!row.is_object() || !row.contains("id") || !row["id"].is_string()) continue;
@@ -9605,6 +9874,7 @@ bool SynapsedEngine::isKnownNaanAgent(const std::string& agentId) const {
     std::ifstream sf(dataDir_ + "/settings.json");
     if (!sf.good()) return false;
     std::string content((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+    if (!synapse::json_containment::blankJsonSecretStrings(content)) content.clear();
     nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
     if (j.is_discarded() || !j.is_object() || !j.contains("naan_crew")) return false;
     const auto& crew = j["naan_crew"];
@@ -9627,6 +9897,7 @@ void SynapsedEngine::applyCrewModelSettings(const std::string& agentId) {
     std::ifstream sf(dataDir_ + "/settings.json");
     if (!sf.good()) return;
     std::string content((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+    if (!synapse::json_containment::blankJsonSecretStrings(content)) content.clear();
     nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
     if (j.is_discarded() || !j.is_object() || !j.contains("naan_crew") || !j["naan_crew"].is_array()) return;
     for (const auto& row : j["naan_crew"]) {
@@ -9784,9 +10055,9 @@ std::string SynapsedEngine::startNaanAgent(const std::string& agentId) {
             {
                 std::ifstream sf(dataDir_ + "/settings.json");
                 if (sf.good()) {
-                    nlohmann::json sj = nlohmann::json::parse(
-                        std::string((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>()),
-                        nullptr, false);
+                    std::string raw((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+                    if (!synapse::json_containment::blankJsonSecretStrings(raw)) raw.clear();
+                    nlohmann::json sj = nlohmann::json::parse(raw, nullptr, false);
                     if (!sj.is_discarded() && sj.contains("ram_limit_mb") && sj["ram_limit_mb"].is_number())
                         ramLimit = sj["ram_limit_mb"].get<uint64_t>();
                 }
@@ -10099,9 +10370,10 @@ void SynapsedEngine::clearNaanAutostart() {
     const std::string path = dataDir_ + "/settings.json";
     std::ifstream sf(path);
     if (!sf.good()) return;
-    const std::string content((std::istreambuf_iterator<char>(sf)),
+    std::string content((std::istreambuf_iterator<char>(sf)),
                               std::istreambuf_iterator<char>());
     sf.close();
+    if (!synapse::json_containment::blankJsonSecretStrings(content)) content.clear();
     nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
     if (j.is_discarded() || !j.is_object() || !j.contains("naan_enabled")) return;
     bool want = false;
@@ -10146,7 +10418,9 @@ void SynapsedEngine::loadNaanWebConfig() {
 }
 
 void SynapsedEngine::loadNaanEngineSettings(const std::string& settingsJson) {
-    nlohmann::json j = nlohmann::json::parse(settingsJson.empty() ? "{}" : settingsJson, nullptr, false);
+    std::string text = settingsJson.empty() ? std::string("{}") : settingsJson;
+    if (!synapse::json_containment::blankJsonSecretStrings(text)) return;
+    nlohmann::json j = nlohmann::json::parse(text, nullptr, false);
     if (j.is_discarded() || !j.is_object()) return;
     auto known = [](const std::string& id) {
         if (id.empty() || id == "auto") return true;
@@ -10745,7 +11019,8 @@ void SynapsedEngine::applyDesktopConfig() {
         if (path.empty() || !validateGguf(path)) return;
         std::ifstream f(path, std::ios::ate | std::ios::binary);
         if (!f.good()) return;
-        size_t sz = static_cast<size_t>(f.tellg());
+        const std::streamoff pos = f.tellg();
+        const size_t sz = pos > 0 ? static_cast<size_t>(pos) : 0;
         size_t slash = path.find_last_of("/\\");
         modelName_ = (slash != std::string::npos) ? path.substr(slash + 1) : path;
         modelPath_ = path;
@@ -10773,6 +11048,7 @@ void SynapsedEngine::applyDesktopConfig() {
     if (sf.good()) {
         std::string content((std::istreambuf_iterator<char>(sf)),
                              std::istreambuf_iterator<char>());
+        if (!synapse::json_containment::blankJsonSecretStrings(content)) content.clear();
         nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
         if (!j.is_discarded() && j.is_object()) {
             if (j.contains("model_path") && j["model_path"].is_string()) {
@@ -11215,6 +11491,10 @@ bool winhttpDownload(const std::string& url, const std::string& partial,
 bool hiddenCurlDownload(const std::string& url, const std::string& partial, int socksPort,
                         std::atomic<bool>& stop, std::atomic<long>& pidSlot, std::string& err) {
     err.clear();
+    if (!web::curlUrlIsAllowed(url, false) || web::curlTextHasControlChar(partial)) {
+        err = "download URL scheme is not allowed";
+        return false;
+    }
     char found[MAX_PATH];
     std::string curl = "C:\\Windows\\System32\\curl.exe";
     DWORD n = SearchPathA(nullptr, "curl.exe", nullptr, MAX_PATH, found, nullptr);
@@ -11224,11 +11504,35 @@ bool hiddenCurlDownload(const std::string& url, const std::string& partial, int 
         err = "curl.exe not found";
         return false;
     }
-    std::string cmd = "\"" + curl + "\" -L --fail -C - --retry 5 --retry-delay 3 --connect-timeout 30"
-                      " -A SynapseNet/0.1 -o \"" + partial + "\"";
-    if (socksPort > 0)
-        cmd += " --socks5-hostname 127.0.0.1:" + std::to_string(socksPort);
-    cmd += " \"" + url + "\"";
+    // Argument vector, then Windows quoting. No cookie, RPC cookie, or control password.
+    // https only, matching the non-Tor download. SOCKS is added only for the session proxy.
+    std::vector<std::string> args;
+    args.push_back(curl);
+    web::appendCurlContainmentArgs(args, false);
+    args.push_back("-L");
+    args.push_back("--fail");
+    args.push_back("-C");
+    args.push_back("-");
+    args.push_back("--retry");
+    args.push_back("5");
+    args.push_back("--retry-delay");
+    args.push_back("3");
+    args.push_back("--connect-timeout");
+    args.push_back("30");
+    args.push_back("-A");
+    args.push_back("SynapseNet/0.1");
+    args.push_back("-o");
+    args.push_back(partial);
+    if (socksPort > 0) {
+        args.push_back("--socks5-hostname");
+        args.push_back("127.0.0.1:" + std::to_string(socksPort));
+    }
+    args.push_back(url);
+    std::string cmd;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (i != 0) cmd.push_back(' ');
+        cmd += quoteWinArg(args[i]);
+    }
     std::vector<char> mutableCmd(cmd.begin(), cmd.end());
     mutableCmd.push_back('\0');
     STARTUPINFOA si{};
@@ -11269,15 +11573,31 @@ bool hiddenCurlDownload(const std::string& url, const std::string& partial, int 
 
 void SynapsedEngine::modelDownloadLoop(std::string id, std::string url, std::string dest,
                                        uint64_t expected, bool viaTor) {
+    if (!web::curlUrlIsAllowed(url, false) || web::curlTextHasControlChar(dest)) {
+        std::lock_guard<std::mutex> dl(modelDlMtx_);
+        modelDl_.running = false;
+        modelDl_.failed = true;
+        modelDl_.error = "download URL scheme is not allowed";
+        return;
+    }
 #ifndef _WIN32
     std::string partial = dest + ".partial";
-    std::vector<std::string> args = {
-        "curl", "-L", "--fail", "-C", "-",
-        "--retry", "5", "--retry-delay", "3",
-        "--connect-timeout", "30",
-        "-A", "SynapseNet/0.1",
-        "-o", partial
-    };
+    std::vector<std::string> args = {"curl"};
+    web::appendCurlContainmentArgs(args, false);
+    args.push_back("-L");
+    args.push_back("--fail");
+    args.push_back("-C");
+    args.push_back("-");
+    args.push_back("--retry");
+    args.push_back("5");
+    args.push_back("--retry-delay");
+    args.push_back("3");
+    args.push_back("--connect-timeout");
+    args.push_back("30");
+    args.push_back("-A");
+    args.push_back("SynapseNet/0.1");
+    args.push_back("-o");
+    args.push_back(partial);
     if (viaTor) {
         int sp = sessionSocksPort_ > 0 ? static_cast<int>(sessionSocksPort_) : gSocksPort.load();
         args.push_back("--socks5-hostname");
@@ -11441,6 +11761,7 @@ static int desktopGpuLayers(const std::string& dataDir) {
     std::ifstream sf(dataDir + "/settings.json");
     if (!sf.good()) return 0;
     std::string content((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+    if (!synapse::json_containment::blankJsonSecretStrings(content)) content.clear();
     nlohmann::json j = nlohmann::json::parse(content, nullptr, false);
     if (j.is_discarded() || !j.is_object()) return 0;
     bool gpuOn = false;
@@ -12010,14 +12331,15 @@ std::string SynapsedEngine::findRpc(const std::string& op, const std::string& pa
         int kept = 0;
         for (const auto& pic : pics) {
             if (kept >= 4 || socksPort <= 0 || !isUrlSafe(pic.url)) continue;
-            std::string cmd = "curl -s -k --compressed --max-time 12 --socks5-hostname 127.0.0.1:" +
-                std::to_string(socksPort) + " -L -o \"" + imgPath + "\" \"" + pic.url + "\""
-#ifdef _WIN32
-                " 2>NUL";
-#else
-                " 2>/dev/null";
-#endif
-            execCmd(cmd);
+            // The picture URL comes from the page. Pass it as an argument so it
+            // is not a shell string.
+            execArgv({
+                "curl", "-q", "--proto", "-all,http,https", "--proto-redir", "-all,http,https", "-s", "-k", "--compressed",
+                "--max-time", "12",
+                "--socks5-hostname", "127.0.0.1:" + std::to_string(socksPort),
+                "-L", "-o", imgPath,
+                pic.url,
+            });
             std::ifstream in(imgPath, std::ios::binary);
             std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
             in.close();

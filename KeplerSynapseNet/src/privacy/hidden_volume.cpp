@@ -6,6 +6,7 @@
 #include <cstring>
 #include <algorithm>
 #include <openssl/evp.h>
+#include <openssl/crypto.h>
 
 namespace synapse {
 namespace privacy {
@@ -31,9 +32,10 @@ struct HiddenVolume::Impl {
     }
     
     std::vector<uint8_t> deriveKey(const std::string& password, const std::vector<uint8_t>& salt) {
+        crypto::containForeignCryptoModules();
         std::vector<uint8_t> out(32);
         if (!PKCS5_PBKDF2_HMAC(password.c_str(), static_cast<int>(password.size()), salt.data(), static_cast<int>(salt.size()), 100000, EVP_sha256(), static_cast<int>(out.size()), out.data())) {
-            std::fill(out.begin(), out.end(), 0);
+            OPENSSL_cleanse(out.data(), out.size());
         }
         return out;
     }
@@ -135,8 +137,14 @@ bool HiddenVolume::mountHidden(const std::string& path, const std::string& passw
 
 void HiddenVolume::unmount() {
     std::lock_guard<std::mutex> lock(impl_->mtx);
-    impl_->outerKey.clear();
-    impl_->hiddenKey.clear();
+    if (!impl_->outerKey.empty()) {
+        OPENSSL_cleanse(impl_->outerKey.data(), impl_->outerKey.size());
+        impl_->outerKey.clear();
+    }
+    if (!impl_->hiddenKey.empty()) {
+        OPENSSL_cleanse(impl_->hiddenKey.data(), impl_->hiddenKey.size());
+        impl_->hiddenKey.clear();
+    }
     impl_->mounted = false;
     impl_->hiddenMounted = false;
 }

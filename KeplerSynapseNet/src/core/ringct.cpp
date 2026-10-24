@@ -95,6 +95,7 @@ bool verifyRingCtCrypto(const Transaction& tx, std::string& err) {
 namespace {
 
 void hashToScalar(const std::vector<uint8_t>& data, std::vector<uint8_t>& scalar) {
+    crypto::containForeignCryptoModules();
     unsigned char wide[crypto_core_ed25519_NONREDUCEDSCALARBYTES];
     crypto_hash_sha512(wide, data.data(), data.size());
     scalar.assign(crypto_core_ed25519_SCALARBYTES, 0);
@@ -103,6 +104,7 @@ void hashToScalar(const std::vector<uint8_t>& data, std::vector<uint8_t>& scalar
 }
 
 bool hashToPoint(const std::vector<uint8_t>& data, std::vector<uint8_t>& point) {
+    crypto::containForeignCryptoModules();
     unsigned char hash[crypto_hash_sha512_BYTES];
     crypto_hash_sha512(hash, data.data(), data.size());
     point.assign(crypto_core_ed25519_BYTES, 0);
@@ -126,6 +128,7 @@ bool buildRewardCoinbaseOutput(const crypto::PublicKey& author,
     out = TxOutput{};
     knownAmountProof.clear();
     if (amount == 0) return false;
+    crypto::containForeignCryptoModules();
     if (sodium_init() < 0) return false;
 
     std::vector<uint8_t> pSeed;

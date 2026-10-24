@@ -6,6 +6,40 @@
 namespace synapse {
 namespace ide {
 
+namespace {
+
+// JSON string literal, including the surrounding quotes.
+std::string jsonQuoted(const std::string& s) {
+    std::string r;
+    r.reserve(s.size() + 2);
+    r.push_back('"');
+    static const char* hex = "0123456789abcdef";
+    for (unsigned char c : s) {
+        switch (c) {
+        case '"': r += "\\\""; break;
+        case '\\': r += "\\\\"; break;
+        case '\b': r += "\\b"; break;
+        case '\f': r += "\\f"; break;
+        case '\n': r += "\\n"; break;
+        case '\r': r += "\\r"; break;
+        case '\t': r += "\\t"; break;
+        default:
+            if (c < 0x20) {
+                r += "\\u00";
+                r.push_back(hex[c >> 4]);
+                r.push_back(hex[c & 0x0f]);
+            } else {
+                r.push_back(static_cast<char>(c));
+            }
+            break;
+        }
+    }
+    r.push_back('"');
+    return r;
+}
+
+}
+
 struct McpServer::Impl {
     mutable std::mutex mtx;
     std::unordered_map<std::string, McpToolSchema> tools;
@@ -76,8 +110,8 @@ std::string McpServer::handleRequest(const std::string& requestJson) {
         bool first = true;
         for (const auto& pair : impl_->tools) {
             if (!first) result += ",";
-            result += "{\"name\":\"" + pair.second.name + "\",\"description\":\"" +
-                      pair.second.description + "\"}";
+            result += "{\"name\":" + jsonQuoted(pair.second.name) +
+                      ",\"description\":" + jsonQuoted(pair.second.description) + "}";
             first = false;
         }
         result += "]}}";
@@ -96,11 +130,11 @@ std::string McpServer::handleRequest(const std::string& requestJson) {
                 if (handlerIt != impl_->toolHandlers.end()) {
                     auto toolResult = handlerIt->second("{}");
                     if (toolResult.success) {
-                        return "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":\"" +
-                               toolResult.content + "\"}}";
+                        return "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":" +
+                               jsonQuoted(toolResult.content) + "}}";
                     }
-                    return "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"" +
-                           toolResult.errorMessage + "\"}}";
+                    return "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":" +
+                           jsonQuoted(toolResult.errorMessage) + "}}";
                 }
             }
         }
@@ -112,8 +146,8 @@ std::string McpServer::handleRequest(const std::string& requestJson) {
         bool first = true;
         for (const auto& pair : impl_->resources) {
             if (!first) result += ",";
-            result += "{\"uri\":\"" + pair.second.uri + "\",\"name\":\"" +
-                      pair.second.name + "\"}";
+            result += "{\"uri\":" + jsonQuoted(pair.second.uri) +
+                      ",\"name\":" + jsonQuoted(pair.second.name) + "}";
             first = false;
         }
         result += "]}}";
@@ -131,8 +165,8 @@ std::string McpServer::handleRequest(const std::string& requestJson) {
                 auto handlerIt = impl_->resourceHandlers.find(resUri);
                 if (handlerIt != impl_->resourceHandlers.end()) {
                     auto content = handlerIt->second();
-                    return "{\"jsonrpc\":\"2.0\",\"result\":{\"contents\":[{\"uri\":\"" +
-                           content.uri + "\",\"text\":\"" + content.text + "\"}]}}";
+                    return "{\"jsonrpc\":\"2.0\",\"result\":{\"contents\":[{\"uri\":" +
+                           jsonQuoted(content.uri) + ",\"text\":" + jsonQuoted(content.text) + "}]}}";
                 }
             }
         }

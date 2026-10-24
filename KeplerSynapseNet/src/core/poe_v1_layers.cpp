@@ -98,6 +98,7 @@ std::string toLowerAscii(std::string s) {
 }
 
 void requireSodium() {
+    crypto::containForeignCryptoModules();
     static bool initialized = false;
     if (!initialized) {
         if (sodium_init() < 0) {
@@ -745,6 +746,8 @@ bool deriveSeniorityScalar(
     crypto_hash_sha512(hash.data(), data.data(), data.size());
     outScalar->assign(crypto_core_ed25519_SCALARBYTES, 0);
     crypto_core_ed25519_scalar_reduce(outScalar->data(), hash.data());
+    sodium_memzero(hash.data(), hash.size());
+    sodium_memzero(data.data(), data.size());
     return true;
 }
 

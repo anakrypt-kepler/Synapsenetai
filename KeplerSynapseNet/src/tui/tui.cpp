@@ -430,7 +430,6 @@ struct LocalAppState {
     std::string startupWalletPath;
     std::string startupWalletAddress;
     std::string startupPublicKeyHex;
-    std::string startupPrivateKeyHex;
     std::string startupKeyPromptMessage;
     std::string startupKeyBackupPath;
     
@@ -749,7 +748,6 @@ void TUI::Impl::initDefaultState() {
         state.startupWalletPath.clear();
         state.startupWalletAddress.clear();
         state.startupPublicKeyHex.clear();
-        state.startupPrivateKeyHex.clear();
         state.startupKeyPromptMessage.clear();
         state.startupKeyBackupPath.clear();
         
@@ -865,7 +863,6 @@ void TUI::Impl::loadStartupKeyData() {
     state.startupWalletPath.clear();
     state.startupWalletAddress.clear();
     state.startupPublicKeyHex.clear();
-    state.startupPrivateKeyHex.clear();
     state.startupKeyBackupPath.clear();
 
     std::string dataDir = synapse::utils::Config::instance().getDataDir();
@@ -900,9 +897,8 @@ void TUI::Impl::loadStartupKeyData() {
 
     state.startupWalletAddress = keys.getAddress();
     state.startupPublicKeyHex = synapse::crypto::toHex(publicKey);
-    state.startupPrivateKeyHex = synapse::crypto::toHex(privateKey.data(), privateKey.size());
     state.startupKeyDataAvailable = true;
-    state.startupKeyPromptMessage = "Save these keys to a local backup file now? [Y/N]";
+    state.startupKeyPromptMessage = "Save the address and public key to a local backup file now? [Y/N]";
 }
 
 bool TUI::Impl::saveStartupKeyBackup(std::string& outPath) {
@@ -943,7 +939,6 @@ bool TUI::Impl::saveStartupKeyBackup(std::string& outPath) {
     out << "WalletPath: " << state.startupWalletPath << "\n";
     out << "Address: " << state.startupWalletAddress << "\n";
     out << "PublicKeyHex: " << state.startupPublicKeyHex << "\n";
-    out << "PrivateKeyHex: " << state.startupPrivateKeyHex << "\n";
     out.close();
     if (!out.good()) return false;
 
@@ -1016,8 +1011,8 @@ void TUI::Impl::drawKeyBackup() {
 
     int y = boxY + 2;
     int innerW = boxW - 6;
-    printClippedLine(y++, boxX + 3, innerW, "Review your wallet key material before node startup.");
-    printClippedLine(y++, boxX + 3, innerW, "Keep backups offline and private.");
+    printClippedLine(y++, boxX + 3, innerW, "Review the wallet address and public key before node startup.");
+    printClippedLine(y++, boxX + 3, innerW, "The private key stays in the wallet file.");
     y++;
 
     if (state.startupKeyDataAvailable) {
@@ -1029,9 +1024,6 @@ void TUI::Impl::drawKeyBackup() {
         y++;
         printClippedLine(y++, boxX + 3, innerW, "Public key (hex):");
         printClippedLine(y++, boxX + 3, innerW, state.startupPublicKeyHex);
-        y++;
-        printClippedLine(y++, boxX + 3, innerW, "Private key (hex):");
-        printClippedLine(y++, boxX + 3, innerW, state.startupPrivateKeyHex);
         y += 2;
         if (state.startupKeyBackupSaved) {
             attron(COLOR_PAIR(1));

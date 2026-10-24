@@ -463,14 +463,16 @@ crypto::Hash256 validatorSetHashV1(const std::vector<crypto::PublicKey>& validat
 bool signKnowledgeEntryV1(KnowledgeEntryV1& entry, const crypto::PrivateKey& authorKey) {
     entry.authorPubKey = crypto::derivePublicKey(authorKey);
     entry.authorSig = crypto::sign(entry.signatureHash(), authorKey);
-    generateZKProof(entry, authorKey);
+    if (!generateZKProof(entry, authorKey)) return false;
     return true;
 }
 
 bool generateZKProof(KnowledgeEntryV1& entry, const crypto::PrivateKey& authorKey) {
     auto nonce = crypto::randomBytes(32);
+    if (nonce.size() != 32) return false;
     crypto::Hash256 k{};
     std::memcpy(k.data(), nonce.data(), 32);
+    crypto::secureZero(nonce.data(), nonce.size());
 
     std::vector<uint8_t> commitBuf;
     commitBuf.insert(commitBuf.end(), k.begin(), k.end());

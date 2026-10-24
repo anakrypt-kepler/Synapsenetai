@@ -361,7 +361,15 @@ ToolResult GlobTool::execute(const std::string& paramsJson) {
                     it.disable_recursion_pending();
                     continue;
                 }
-                if (entryStatus.type() != fs::file_type::regular) continue;
+                if (entryStatus.type() != fs::file_type::regular) {
+                    // Junctions are directories, not symlinks. Do not descend
+                    // when the canonical directory is outside the working tree.
+                    fs::path nested = it->path();
+                    if (!lockInside(confined.root, nested)) {
+                        it.disable_recursion_pending();
+                    }
+                    continue;
+                }
                 fs::path file = it->path();
                 if (!lockInside(confined.root, file)) {
                     it.disable_recursion_pending();
