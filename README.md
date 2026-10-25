@@ -32,6 +32,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Alpha-000000?style=for-the-badge&labelColor=000000" alt="Alpha" />
+  <a href="https://github.com/anakrypt-kepler/Synapsenetai/releases/tag/v0.2.0-alpha"><img src="https://img.shields.io/badge/Release-0.2.0--alpha-000000?style=for-the-badge&labelColor=000000" alt="0.2.0-alpha" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-000000?style=for-the-badge&labelColor=000000" alt="License" /></a>
   <img src="https://img.shields.io/badge/Transport-Tor_only-000000?style=for-the-badge&logo=torproject&logoColor=white&labelColor=000000" alt="Tor only" />
 </p>
@@ -68,6 +69,8 @@ The mesh is already live. Two cells are talking over Tor. The bootstrap seed (al
 A full cell is peer + miner + validator. PoE is votes, not a roll call of every onion. Each full cell casts its own vote over the mesh (`POE_ENTRY` / `POE_VOTE`). Recipes travel as `POE_RECIPE` / `POE_RECIPE_REPLAY`. Two full cells: both must vote, then it finalizes. When the set grows, the threshold is a strict majority (2 of 3, 3 of 5, …). A thin mailbox with no `poe_pk` stays mail — it does not judge.
 
 This is alpha. Expect bugs. Read the holes before you trust the skin.
+
+**0.2.0-alpha** is the current cut. The release is [v0.2.0-alpha](https://github.com/anakrypt-kepler/Synapsenetai/releases/tag/v0.2.0-alpha). The headless image published with this repo is [`ghcr.io/anakrypt-kepler/synapsenetai:0.2.0-alpha`](https://github.com/anakrypt-kepler/Synapsenetai/pkgs/container/synapsenetai). Docker builds `synapsed` and the PoE mesh validator from this tree, including the GGUF runtime and real liboqs. That image is the Linux node, not the desktop window. The Windows setup file is still named `SynapseNet_0.1.0_x64-setup.exe` until the next packager run. Older alpha notes stay under [`RELEASES/`](RELEASES/).
 
 <p align="center">
   <picture>
@@ -447,7 +450,18 @@ Five steps. Do them in order.
 
 This is a **Linux** image. Docker Desktop on Windows still runs Linux through WSL2. It is not a native `.exe`. Compose starts the **node daemon**, not the Tauri GUI.
 
-From `KeplerSynapseNet/`:
+The published alpha image is `ghcr.io/anakrypt-kepler/synapsenetai:0.2.0-alpha`. GitHub Actions builds it from `KeplerSynapseNet/Dockerfile` when the `v0.2.0-alpha` tag is pushed, and the package is attached to this repo. The image contains `/app/synapsed` and `/app/synapsed-poe-mesh`. The published build compiles the GGUF runtime and leaves the test suite to CI. A local `docker build` still runs the tests. `GGML_NATIVE` is off so the binary is not pinned to the build machine's CPU.
+
+Pull it, then run compose without a second build:
+
+```bash
+docker pull ghcr.io/anakrypt-kepler/synapsenetai:0.2.0-alpha
+docker tag ghcr.io/anakrypt-kepler/synapsenetai:0.2.0-alpha keplersynapsenet:local
+cd KeplerSynapseNet
+docker compose up --no-build
+```
+
+From this tree:
 
 ```bash
 cd KeplerSynapseNet

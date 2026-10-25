@@ -1,0 +1,71 @@
+name: Publish container
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Check out the tree
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image tags
+        id: image
+        run: |
+          if [ "${GITHUB_REF}" = "${GITHUB_REF#refs/tags/v}" ]; then
+            ver="0.2.0-alpha"
+            printf '%s\n' "tags<<EOF" "ghcr.io/anakrypt-kepler/synapsenetai:${ver}" "EOF" >> "$GITHUB_OUTPUT"
+          else
+            ver="${GITHUB_REF_NAME#v}"
+            printf '%s\n' "tags<<EOF" "ghcr.io/anakrypt-kepler/synapsenetai:${ver}" "ghcr.io/anakrypt-kepler/synapsenetai:alpha" "EOF" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=${ver}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push the node image
+        uses: docker/build-push-action@v6
+        with:
+          context: KeplerSynapseNet
+          file: KeplerSynapseNet/Dockerfile
+          push: true
+          # Tests stay in CI. This job compiles the daemon, the PoE mesh
+          # validator, the GGUF runtime, and real liboqs.
+          build-args: |
+            USE_LLAMA_CPP=ON
+            BUILD_TESTS=OFF
+          tags: ${{ steps.image.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/anakrypt-kepler/Synapsenetai
+            org.opencontainers.image.title=synapsenetai
+            org.opencontainers.image.description=SynapseNet headless node and PoE mesh validator
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.version=${{ steps.image.outputs.version }}
+
+      - name: Mark the package public
+        continue-on-error: true
+        run: |
+          curl -sS -o /tmp/pkg-vis.json -w "%{http_code}" -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/user/packages/container/synapsenetai \
+            -d '{"visibility":"public"}'
+          echo
+          python3 -c "import pathlib; t=pathlib.Path('/tmp/pkg-vis.json').read_text(errors='replace'); print(t[:500])"

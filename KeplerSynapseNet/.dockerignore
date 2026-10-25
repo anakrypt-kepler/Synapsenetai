@@ -17,5 +17,8 @@ models/
 
 # Desktop app artifacts — node image builds synapsed only.
 tauri-app/
+**/node_modules
+vcpkg/
+**/.git
 
 .DS_Store
