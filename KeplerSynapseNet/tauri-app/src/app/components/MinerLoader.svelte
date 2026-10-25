@@ -31,12 +31,15 @@
     max-width: 100%;
     margin: 0 auto;
     line-height: 0;
+    aspect-ratio: 112 / 64;
+    overflow: hidden;
+    contain: paint;
   }
 
   .miner-loader :global(svg) {
     display: block;
     width: 100%;
-    height: auto;
+    height: 100%;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
   }

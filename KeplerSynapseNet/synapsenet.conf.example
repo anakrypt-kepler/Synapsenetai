@@ -6,7 +6,7 @@
 # Public bootstrap cell (always-on). Not compiled into the binary.
 # First lego install copies this file to ~/.synapsenet/synapsenet.conf.
 # Extra seeds: comma-separated. PEX learns the rest over Tor.
-network.seed_nodes=ybyamaztw24233b2l7sgbxnouuncfxlrlkkgkipj7355iztjmnll7iqd.onion:8333
+network.seed_nodes=hdctily6pyzqzbdzz3367s4ceqhatbkr4yi5j3b6bdnwyqizsorvahad.onion:8333
 network.port=8333
 network.rpc_port=8332
 

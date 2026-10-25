@@ -255,6 +255,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    overflow: hidden;
   }
 
   .editor-head :global(.coder-loader) {

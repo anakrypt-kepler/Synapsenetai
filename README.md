@@ -358,7 +358,7 @@ Skip the GUI: `--skip-desktop`. Skip tests: `--skip-tests`.
 Peers are not baked into the binary. A fresh `lego-linux.sh` install writes this seed from `synapsenet.conf.example`. PEX learns the rest over Tor.
 
 ```
-network.seed_nodes=ybyamaztw24233b2l7sgbxnouuncfxlrlkkgkipj7355iztjmnll7iqd.onion:8333
+network.seed_nodes=hdctily6pyzqzbdzz3367s4ceqhatbkr4yi5j3b6bdnwyqizsorvahad.onion:8333
 ```
 
 Already have a config with an empty `network.seed_nodes=`? Paste that line. Extra seeds go in the same value, comma-separated.

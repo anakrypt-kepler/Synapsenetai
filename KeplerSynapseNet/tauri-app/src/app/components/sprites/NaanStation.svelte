@@ -625,21 +625,22 @@
     w.lastGoal = goal;
   }
 
-  // Crew follow their own harvest phase. Bed is only the off-duty fallback
-  // for the primary body. An extra body that owns a workstation sits there
-  // (TOR / LYMPH / RECIPE / POE), not in the empty hall, HOLD, or bedroom.
+  // Crew follow their own harvest phase only while that body is on.
+  // Off duty is bed, or the hall if this body has no bed. A stopped agent
+  // does not sit at the Tor research desk.
   function crewGoal(owner: string): RoomKind {
+    if (!harvestOn(owner)) return "bed";
     const cm = $naanCrew.find((c) => c.id === owner);
     const own = cm?.rooms?.length ? cm.rooms : (deck.enabled[owner] || []);
     if (!own.length) return inferred;
-    const st = agentState[owner] || (harvestOn(owner) ? "ACTIVE" : "OFF");
+    const st = agentState[owner] || "ACTIVE";
     const want = inferHarvestRoom(st, agentTask[owner] || "", agentLog[owner] || "");
     const bag = deck.seats[owner] || {};
     if (want !== "bed" && own.includes(want) && bag[want]?.work) return want;
     for (const id of own) {
-      if (bag[id]?.work) return id;
+      if (id !== "bed" && bag[id]?.work) return id;
     }
-    if (own.includes(want)) return want;
+    if (own.includes("bed")) return "bed";
     return own[0];
   }
 
@@ -651,6 +652,7 @@
     const key = owner === PRIMARY_NAAN_ID ? "primary" : owner;
     const want = key === "primary" ? inferred : crewGoal(key);
     const got = resolveGoal(key, want);
+    if (!harvestOn(key)) return got;
     const bag = deck.seats[key] || {};
     const hall = bag.hall;
     // A missing room used to alias its chair to the hall pad (work: false).
@@ -856,6 +858,11 @@
     const on = deck.enabled[owner] || [];
     const bag = deck.seats[owner] || {};
     const hall = bag.hall || PRIMARY_HALL_SEAT;
+    // Nearest-room fallback used to drop an idle body on the Tor chair.
+    if (!harvestOn(owner)) {
+      if (bag.bed) return { id: "bed", seat: bag.bed };
+      return { id: "hall", seat: hall };
+    }
     if (want === "hold" && bag.hold) return { id: "hold", seat: bag.hold };
     if (want === "hall" && bag.hall) return { id: "hall", seat: hall };
     if (on.includes(want as HarvestRoomId) && bag[want]) return { id: want, seat: bag[want] as Seat };

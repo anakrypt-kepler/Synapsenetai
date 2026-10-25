@@ -49,8 +49,12 @@
     try {
       const result = await rpcCall("network.info", "{}");
       const parsed = JSON.parse(result);
-      peers = parsed.peers || [];
       ownOnion = parsed.own_onion || "";
+      peers = mergeSeedRows(
+        parsed.peers || [],
+        parsed.seeds || [],
+        parsed.seed_nodes || [],
+      );
       hsPublished = !!parsed.hs_published;
       hsReachable = !!parsed.hs_reachable;
       socksPort = parsed.socks_port || 0;
@@ -68,6 +72,37 @@
 
   function hostOf(addr: string): string {
     return (addr || "").replace(/:\d+$/, "").toLowerCase();
+  }
+
+  // The bootstrap cell stays on the map even before its profile arrives.
+  // A reachable seed with no nick was dropped, so the VPS looked absent.
+  function mergeSeedRows(
+    rows: PeerInfo[],
+    probe: { address?: string; online?: boolean; latency_ms?: number }[],
+    configured: string[],
+  ): PeerInfo[] {
+    const out = rows.slice();
+    const have = new Set(out.map((p) => hostOf(p.address)));
+    const add = (address: string, online: boolean, latency: number) => {
+      const host = hostOf(address);
+      if (!host || have.has(host)) return;
+      if (ownOnion && host === hostOf(ownOnion)) return;
+      have.add(host);
+      out.push({
+        address: address.includes(":") ? address : `${address}:8333`,
+        transport: "tor",
+        latency_ms: latency > 0 ? latency : 0,
+        connected_since: "SEED",
+        online,
+        alias: "VPS",
+      });
+    };
+    for (const seed of probe) {
+      if (!seed || !seed.address) continue;
+      add(seed.address, !!seed.online, seed.latency_ms || 0);
+    }
+    for (const seed of configured) add(seed, false, 0);
+    return out;
   }
 
   function isShownRemote(p: PeerInfo): boolean {
