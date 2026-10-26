@@ -75,10 +75,9 @@
     return (addr || "").replace(/:\d+$/, "").toLowerCase();
   }
 
-  // A configured seed is not a peer until this desktop has reached it.
-  // Keep a reached seed the engine omitted for lack of a nick only after
-  // Tor is bootstrapped and the hidden service is published, and only when
-  // the probe says online. Label it with the alias the engine sent.
+  // A configured seed stays off the map until Tor has bootstrapped and the
+  // hidden service is published, and only when the probe says online.
+  // Keep a reached seed the engine already returned, even with no nick.
   function mergeSeedRows(
     rows: PeerInfo[],
     probe: { address?: string; online?: boolean; latency_ms?: number; alias?: string; avatar?: string }[],
@@ -161,14 +160,18 @@
     return h >>> 0;
   }
 
-  // Nick only if they set one. Never put an onion on the map.
+  // Alias when the engine sent one. An online seed with no nick is SEED.
+  // Never put an onion on the map. Other nameless rows stay blank here.
   function shortPeerLabel(p: PeerInfo): string {
-    return (p.alias || "").trim();
+    const alias = (p.alias || "").trim();
+    if (alias) return alias;
+    if (p.connected_since === "SEED" && p.online === true) return "SEED";
+    return "";
   }
 
   function tableLabel(p: PeerInfo): string {
     if (p.connected_since === "YOU") return (p.alias || youAlias || "YOU").trim();
-    return (p.alias || "").trim() || "PEER";
+    return shortPeerLabel(p) || "PEER";
   }
 
   // Clipped portrait only for real data:image URLs. YOU uses local profile; remotes use that peer only.

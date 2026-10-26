@@ -84,7 +84,9 @@
           <div class="hint">{$nodeStatus.tor_bootstrap}</div>
         {/if}
       {/if}
-      <div class="hint">Live remotes this desktop has reached. This node is not included. The map is NET.</div>
+      {#if $nodeStatus.peers >= 1}
+        <div class="hint">{$nodeStatus.peers === 1 ? "This 1 is a reached remote, not this computer." : "These are reached remotes, not this computer."} The map is on NET.</div>
+      {/if}
     </div>
   </div>
 

@@ -1723,13 +1723,24 @@ void SynapsedEngine::probeSeedNodes() const {
             seedRows.push_back(pe);
         }
 
+        {
+            // NODE_PROFILE can land while this probe is still walking seeds.
+            // Read the nick again so the published row is not stuck blank.
+            std::lock_guard<std::mutex> klock(knownPeersMtx_);
+            for (auto& row : seedRows) {
+                auto it = knownPeers_.find(onionHostOnly(row.address));
+                if (it == knownPeers_.end()) continue;
+                if (row.alias.empty() && !it->second.alias.empty()) row.alias = it->second.alias;
+                if (row.avatar.empty() && !it->second.avatar.empty()) row.avatar = it->second.avatar;
+            }
+        }
         std::vector<PeerEntry> live;
         if (!selfRow.address.empty()) live.push_back(selfRow);
         for (const auto& pe : seedRows) {
             if (!pe.alive) continue;
-            PeerEntry remote = pe;
-            remote.role = "PEER";
-            live.push_back(remote);
+            if (!ownOnion_.empty() && onionHostOnly(pe.address) == onionHostOnly(ownOnion_)) continue;
+            // Role stays SEED. The map uses that to label a reached seed.
+            live.push_back(pe);
         }
         {
             std::lock_guard<std::mutex> lock(peerCacheMtx_);
@@ -3402,6 +3413,22 @@ void SynapsedEngine::ingestNodeProfile(const std::string& jsonBody) const {
         if (!isHexLen(poePk, synapse::crypto::PUBLIC_KEY_SIZE * 2)) poePk.clear();
         if (!poePk.empty()) it->second.poePk = poePk;
     }
+    // network.info emits the cached seed row. A nick that lives only on the
+    // known peer never reaches that JSON object.
+    if (!alias.empty() || !avatar.empty()) {
+        std::lock_guard<std::mutex> clock(peerCacheMtx_);
+        auto paint = [&](PeerEntry& row) {
+            if (onionHostOnly(row.address) != onion) return;
+            if (!alias.empty()) row.alias = alias;
+            if (!avatar.empty()) row.avatar = avatar;
+        };
+        for (auto& row : cachedSeeds_) paint(row);
+        for (auto& row : cachedPeers_) {
+            if (row.role == "YOU" || row.role == "LOCAL") continue;
+            if (!ownOnion_.empty() && onionHostOnly(row.address) == onionHostOnly(ownOnion_)) continue;
+            paint(row);
+        }
+    }
     refreshPoeValidators();
 }
 
@@ -4401,8 +4428,10 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                 avatar = profileAvatarDataUrl_;
             } else {
                 overlayKnown(host, alias, avatar, latencyMs, online);
-                // No nick and no photo = leftover onion, not a person on the map.
-                if (alias.empty() && avatar.empty()) return false;
+                // Leftover onions stay off the map. A reached seed is kept so
+                // the UI can label it from connected_since SEED.
+                const bool reachedSeed = online && role == "SEED";
+                if (!reachedSeed && alias.empty() && avatar.empty()) return false;
             }
             emittedHosts.insert(host);
             if (emitted > 0) ss << ",";
@@ -4420,18 +4449,36 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             return true;
         };
 
+        auto seedProbe = [&](const std::string& host) {
+            bool found = false;
+            bool alive = false;
+            for (const auto& s : seedsSnap) {
+                if (onionHostOnly(s.address) != host) continue;
+                found = true;
+                if (s.alive) alive = true;
+            }
+            return std::pair<bool, bool>(found, alive);
+        };
+
         for (const auto& p : peersSnap) {
             if (p.role == "LOCAL" || p.role == "local") continue;
+            const std::string host = onionHostOnly(p.address);
+            // Reached seeds are emitted below with role SEED. Skip the cache
+            // copy so a dead seed is not published as a remote.
+            if (p.role != "YOU" && seedProbe(host).first) continue;
             int64_t seenAgo = p.alive ? 0 : -1;
             int64_t upMs = (p.alive && p.last_ok_ms > 0) ? (nowInfo - p.last_ok_ms) : 0;
             emitPeer(p.address, p.transport, p.latency_ms, p.role, p.alive, seenAgo, upMs,
                      p.alias, p.avatar);
         }
-        // Alive SOCKS seeds belong on the map as remotes, not only in DIRECTORY.
+        // A reached seed is a remote. Dead seeds stay out. Role stays SEED.
         for (const auto& s : seedsSnap) {
             if (!s.alive) continue;
+            const std::string host = onionHostOnly(s.address);
+            if (host.empty()) continue;
+            if (!ownOnion_.empty() && host == onionHostOnly(ownOnion_)) continue;
             int64_t upMs = (s.last_ok_ms > 0) ? (nowInfo - s.last_ok_ms) : 0;
-            std::string role = (s.role == "SEED" || s.role.empty()) ? "PEER" : s.role;
+            std::string role = s.role.empty() ? std::string("SEED") : s.role;
             emitPeer(s.address, s.transport.empty() ? "tor" : s.transport, s.latency_ms,
                      role, true, 0, upMs, s.alias, s.avatar);
         }
@@ -4440,15 +4487,15 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
         int64_t nowKnown = nowMillis();
         for (const auto& kv : knownSnap) {
             const auto& kp = kv.second;
-            if (!ownOnion_.empty() && onionHostOnly(kp.onion) == onionHostOnly(ownOnion_)) continue;
+            const std::string knownHost = onionHostOnly(kp.onion);
+            if (knownHost.empty()) continue;
+            if (!ownOnion_.empty() && knownHost == onionHostOnly(ownOnion_)) continue;
             if (nowKnown - kp.lastSeen > 600000 && !kp.connected) continue;
-            bool seedAlive = false;
-            for (const auto& s : seedsSnap) {
-                if (s.alive && onionHostOnly(s.address) == kp.onion) { seedAlive = true; break; }
-            }
-            if (!seedAlive && isConfiguredSeedHost(configuredSeeds, kp.onion) && kp.connected)
-                seedAlive = true;
-            bool peerOnline = kp.connected || seedAlive || (nowKnown - kp.lastSeen) < 90000;
+            const auto probed = seedProbe(knownHost);
+            // A configured seed that this probe did not reach is not a remote.
+            if (probed.first && !probed.second) continue;
+            if (!probed.first && isConfiguredSeedHost(configuredSeeds, knownHost)) continue;
+            bool peerOnline = kp.connected || probed.second || (nowKnown - kp.lastSeen) < 90000;
             int64_t seenAgo = nowKnown - kp.lastSeen;
             int64_t upMs = (kp.firstSeen > 0) ? (nowKnown - kp.firstSeen) : 0;
             if (emitPeer(kp.onion + ":8333", "tor", kp.latency_ms, "PEER", peerOnline,
@@ -4478,9 +4525,15 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
             for (size_t i = 0; i < seedsSnap.size(); i++) {
                 if (i) ss << ",";
                 const auto& s = seedsSnap[i];
+                std::string seedAlias = s.alias;
+                std::string seedAvatar = s.avatar;
+                int seedLatency = s.latency_ms;
+                bool seedOnline = s.alive;
+                overlayKnown(onionHostOnly(s.address), seedAlias, seedAvatar, seedLatency, seedOnline);
                 ss << "{\"address\":\"" << jsonEscape(s.address)
                    << "\",\"online\":" << (s.alive ? "true" : "false")
-                   << ",\"latency_ms\":" << s.latency_ms << "}";
+                   << ",\"latency_ms\":" << s.latency_ms
+                   << ",\"alias\":\"" << jsonEscape(seedAlias) << "\"}";
             }
             ss << "]";
         }
