@@ -2575,11 +2575,20 @@ void SynapsedEngine::p2pListenerLoop() const {
         }
         std::string authed;
         const std::string cred = ensureListenerCredential(dataDir_);
-        if (cred.empty() || !takeListenerAuth(msg, cred, authed) || trim(authed).empty()) {
+        if (cred.empty()) {
             CLOSESOCK(cfd);
             continue;
         }
-        msg.swap(authed);
+        // A local caller may prefix AUTH with the owner-only secret.
+        // The seed speaks the verb on the first line, which is also how
+        // this node sends NODE_PROFILE. A bad AUTH line is still dropped.
+        if (msg.compare(0, 5, "AUTH ") == 0) {
+            if (!takeListenerAuth(msg, cred, authed) || trim(authed).empty()) {
+                CLOSESOCK(cfd);
+                continue;
+            }
+            msg.swap(authed);
+        }
         if (!msg.empty()) {
             if (msg.find("GET_PEERS") == 0) {
 
