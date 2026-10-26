@@ -47,6 +47,10 @@
 <img src="pictures/linux.png" alt="Linux penguin" width="160">
 <br><strong>Linux</strong>
 </td>
+<td align="center">
+<a href="https://github.com/anakrypt-kepler/Synapsenetai/releases/download/v0.2.0-alpha/SynapseNet_0.2.0-alpha.torrent"><img src="pictures/torrent.png" alt="Torrent" width="160"></a>
+<br><strong>Torrent</strong>
+</td>
 </tr>
 </table>
 
@@ -70,7 +74,7 @@ A full cell is peer + miner + validator. PoE is votes, not a roll call of every 
 
 This is alpha. Expect bugs. Read the holes before you trust the skin.
 
-**0.2.0-alpha** is the current cut. The release is [v0.2.0-alpha](https://github.com/anakrypt-kepler/Synapsenetai/releases/tag/v0.2.0-alpha). The headless image published with this repo is [`ghcr.io/anakrypt-kepler/synapsenetai:0.2.0-alpha`](https://github.com/anakrypt-kepler/Synapsenetai/pkgs/container/synapsenetai). Docker builds `synapsed` and the PoE mesh validator from this tree, including the GGUF runtime and real liboqs. That image is the Linux node, not the desktop window. The Windows setup file is still named `SynapseNet_0.1.0_x64-setup.exe` until the next packager run. Older alpha notes stay under [`RELEASES/`](RELEASES/).
+**0.2.0-alpha** is the current cut. The release is [v0.2.0-alpha](https://github.com/anakrypt-kepler/Synapsenetai/releases/tag/v0.2.0-alpha). The headless image published with this repo is [`ghcr.io/anakrypt-kepler/synapsenetai:0.2.0-alpha`](https://github.com/anakrypt-kepler/Synapsenetai/pkgs/container/synapsenetai). Docker builds `synapsed` and the PoE mesh validator from this tree, including the GGUF runtime and real liboqs. That image is the Linux node, not the desktop window. The release file is [`SynapseNet_0.2.0-alpha_x64-setup.exe`](https://github.com/anakrypt-kepler/Synapsenetai/releases/download/v0.2.0-alpha/SynapseNet_0.2.0-alpha_x64-setup.exe), with a [desktop photo](https://github.com/anakrypt-kepler/Synapsenetai/releases/download/v0.2.0-alpha/SynapseNet-desktop.png) and a [`.torrent`](https://github.com/anakrypt-kepler/Synapsenetai/releases/download/v0.2.0-alpha/SynapseNet_0.2.0-alpha.torrent) beside it. The packager on disk still writes `SynapseNet_0.1.0_x64-setup.exe`. Older alpha notes stay under [`RELEASES/`](RELEASES/).
 
 <p align="center">
   <picture>
