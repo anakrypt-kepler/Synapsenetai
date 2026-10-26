@@ -1,5 +1,6 @@
 #include "web/web.h"
 #include "core/tor_bridge_utils.h"
+#include "utils/secret_file.h"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -1587,8 +1588,7 @@ bool saveSearchConfig(const SearchConfig& inputConfig, const std::string& path) 
     sanitizeSearchConfig(config);
     config.bypassOnionHttpsFallback = preserveBypassOnionHttpsFallback;
     config.tor.bypassOnionHttpsFallback = preserveTorBypassOnionHttpsFallback;
-    std::ofstream file(path);
-    if (!file.is_open()) return false;
+    std::ostringstream file;
     
     auto writeList = [&](const std::vector<std::string>& items) {
         for (size_t i = 0; i < items.size(); i++) {
@@ -1810,7 +1810,8 @@ bool saveSearchConfig(const SearchConfig& inputConfig, const std::string& path) 
     file << "naan_security_assessment_enabled=" << (config.naanSecurityAssessmentEnabled ? "1" : "0") << "\n";
     file << "naan_security_assessment_interval_sec=" << config.naanSecurityAssessmentIntervalSec << "\n";
 
-    return true;
+    // The control password stays in the text. The file is owner-only.
+    return utils::writeFileForCurrentUser(path, file.str());
 }
 
 }

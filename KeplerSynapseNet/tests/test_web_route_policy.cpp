@@ -72,6 +72,7 @@ static void testSearchConfigLoadSaveRouteRules() {
     cfg.naanAutoSearchMode = "darknet";
     cfg.naanAutoSearchQueries = {"nasa propulsion updates", "distributed ai systems"};
     cfg.naanAutoSearchMaxResults = 6;
+    cfg.tor.controlPassword = "keep-this-secret";
 
     const auto uniq = std::to_string(static_cast<unsigned long long>(
         std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -93,6 +94,7 @@ static void testSearchConfigLoadSaveRouteRules() {
     assert(loaded.naanAutoSearchMode == cfg.naanAutoSearchMode);
     assert(loaded.naanAutoSearchQueries == cfg.naanAutoSearchQueries);
     assert(loaded.naanAutoSearchMaxResults == cfg.naanAutoSearchMaxResults);
+    assert(loaded.tor.controlPassword == "keep-this-secret");
 
     std::error_code ec;
     fs::remove(path, ec);

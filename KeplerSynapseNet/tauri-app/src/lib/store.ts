@@ -29,6 +29,7 @@ export const myWalletAddress = writable<string>("");
 
 export const nodeStatus = writable<NodeStatus>({
   connection: "disconnected",
+  // Live remote handshakes from status JSON "peers" (countLiveRemotes).
   peers: 0,
   balance: "0.00",
   naan_state: "off",

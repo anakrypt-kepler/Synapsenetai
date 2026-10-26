@@ -53,7 +53,8 @@
       peers = mergeSeedRows(
         parsed.peers || [],
         parsed.seeds || [],
-        parsed.seed_nodes || [],
+        parsed.tor?.bootstrap || "0%",
+        !!parsed.hs_published,
       );
       hsPublished = !!parsed.hs_published;
       hsReachable = !!parsed.hs_reachable;
@@ -74,41 +75,44 @@
     return (addr || "").replace(/:\d+$/, "").toLowerCase();
   }
 
-  // The bootstrap cell stays on the map even before its profile arrives.
-  // A reachable seed with no nick was dropped, so the VPS looked absent.
+  // A configured seed is not a peer until this desktop has reached it.
+  // Keep a reached seed the engine omitted for lack of a nick only after
+  // Tor is bootstrapped and the hidden service is published, and only when
+  // the probe says online. Label it with the alias the engine sent.
   function mergeSeedRows(
     rows: PeerInfo[],
-    probe: { address?: string; online?: boolean; latency_ms?: number }[],
-    configured: string[],
+    probe: { address?: string; online?: boolean; latency_ms?: number; alias?: string; avatar?: string }[],
+    bootstrap: string,
+    hsUp: boolean,
   ): PeerInfo[] {
     const out = rows.slice();
+    if (bootstrap !== "100%" || !hsUp) return out;
     const have = new Set(out.map((p) => hostOf(p.address)));
-    const add = (address: string, online: boolean, latency: number) => {
-      const host = hostOf(address);
-      if (!host || have.has(host)) return;
-      if (ownOnion && host === hostOf(ownOnion)) return;
+    for (const seed of probe) {
+      if (!seed || !seed.address || seed.online !== true) continue;
+      const host = hostOf(seed.address);
+      if (!host || have.has(host)) continue;
+      if (ownOnion && host === hostOf(ownOnion)) continue;
       have.add(host);
+      const latency = seed.latency_ms || 0;
       out.push({
-        address: address.includes(":") ? address : `${address}:8333`,
+        address: seed.address.includes(":") ? seed.address : `${seed.address}:8333`,
         transport: "tor",
         latency_ms: latency > 0 ? latency : 0,
         connected_since: "SEED",
-        online,
-        alias: "VPS",
+        online: true,
+        alias: (seed.alias || "").trim(),
+        avatar: typeof seed.avatar === "string" ? seed.avatar : "",
       });
-    };
-    for (const seed of probe) {
-      if (!seed || !seed.address) continue;
-      add(seed.address, !!seed.online, seed.latency_ms || 0);
     }
-    for (const seed of configured) add(seed, false, 0);
     return out;
   }
 
   function isShownRemote(p: PeerInfo): boolean {
     if (p.connected_since === "YOU") return false;
     if (ownOnion && hostOf(p.address) === hostOf(ownOnion)) return false;
-    return !!(p.alias || "").trim() || !!avatarUrl(p.avatar);
+    if ((p.alias || "").trim() || avatarUrl(p.avatar)) return true;
+    return p.connected_since === "SEED" && p.online === true;
   }
 
   $: listed = peers

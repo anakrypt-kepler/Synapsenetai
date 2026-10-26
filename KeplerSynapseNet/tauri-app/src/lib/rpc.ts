@@ -181,6 +181,7 @@ export interface SystemInfo {
 
 export interface NodeStatus {
   connection: string;
+  // Distinct remotes with a live handshake. Filled by engine status field "peers".
   peers: number;
   balance: string;
   naan_state: string;
@@ -203,7 +204,10 @@ export interface NodeStatus {
 
 export function parseStatus(raw: string): NodeStatus {
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw) as NodeStatus;
+    const n = Number(parsed.peers);
+    parsed.peers = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+    return parsed;
   } catch {
     return {
       connection: "disconnected",

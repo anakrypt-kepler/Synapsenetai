@@ -407,6 +407,16 @@ private:
     };
     mutable std::mutex knownPeersMtx_;
     mutable std::map<std::string, KnownPeer> knownPeers_;
+    // Desktop-local live remotes. The stamp is a finished SOCKS/probe or inbound
+    // handshake. Directory rows and the VPS peer total never enter this map.
+    struct LiveHandshake {
+        int64_t okAt = 0;
+        bool configuredSeed = false;
+    };
+    mutable std::mutex liveRemotesMtx_;
+    mutable std::map<std::string, LiveHandshake> liveHandshakes_;
+    void noteRemoteHandshake(const std::string& onionRaw, bool ok) const;
+    int countLiveRemotes() const;
     mutable std::array<unsigned char, 32> msgBoxPk_{};
     mutable std::array<unsigned char, 32> msgBoxSk_{};
     mutable bool msgBoxReady_ = false;

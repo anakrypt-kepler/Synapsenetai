@@ -1,4 +1,5 @@
 #include "utils/config.h"
+#include "utils/secret_file.h"
 #include <unordered_map>
 #include <fstream>
 #include <sstream>
@@ -219,9 +220,7 @@ bool Config::save(const std::string& path) {
     std::string savePath = path.empty() ? impl_->configPath : path;
     if (savePath.empty()) return false;
     
-    std::ofstream file(savePath);
-    if (!file.is_open()) return false;
-    
+    std::ostringstream file;
     file << "# SynapseNet Configuration\n\n";
     
     std::vector<std::string> sortedKeys;
@@ -240,7 +239,8 @@ bool Config::save(const std::string& path) {
         lastPrefix = prefix;
         file << key << "=" << impl_->data[key] << "\n";
     }
-    return true;
+    // network.rpc_password lives in this text. Publish it owner-only.
+    return writeFileForCurrentUser(savePath, file.str());
 }
 
 std::string Config::getString(const std::string& key, const std::string& def) const {

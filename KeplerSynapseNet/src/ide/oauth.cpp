@@ -1,4 +1,5 @@
 #include "ide/oauth.h"
+#include "utils/secret_file.h"
 
 #include <chrono>
 #include <cstring>
@@ -148,12 +149,10 @@ bool OAuthManager::saveToken(const std::string& providerId, const OAuthToken& to
     std::lock_guard<std::mutex> lock(impl_->mtx);
     std::string json = "{\"provider_id\":\"" + escapeJson(providerId) + "\"," +
                        "\"token\":" + token.toJson() + "}";
-    std::ofstream out(path);
-    if (!out.is_open()) return false;
-    out << json;
-    out.close();
+    // Access and refresh tokens are secrets. Do not leave them world-readable.
+    if (!synapse::utils::writeFileForCurrentUser(path, json)) return false;
     impl_->tokenCache[providerId] = token;
-    return out.good() || true;
+    return true;
 }
 
 OAuthToken OAuthManager::loadToken(const std::string& providerId,

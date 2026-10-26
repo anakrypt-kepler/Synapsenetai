@@ -1698,6 +1698,7 @@ void SynapsedEngine::probeSeedNodes() const {
             pe.transport = "tor";
             pe.role = "SEED";
             auto t0 = std::chrono::steady_clock::now();
+            const std::string host = onionHostOnly(s.host);
             pe.alive = probeSocks5(s.host, s.port);
             auto t1 = std::chrono::steady_clock::now();
             if (pe.alive) {
@@ -1705,8 +1706,8 @@ void SynapsedEngine::probeSeedNodes() const {
                 if (pe.latency_ms < 1) pe.latency_ms = 1;
                 pe.last_ok_ms = nowMillis();
                 // SOCKS reachability is enough to show this seed as a live remote.
-                const std::string host = onionHostOnly(s.host);
                 mergeKnownPeer(host, "probe", true);
+                noteRemoteHandshake(host, true);
                 std::lock_guard<std::mutex> klock(knownPeersMtx_);
                 auto it = knownPeers_.find(host);
                 if (it != knownPeers_.end()) {
@@ -1717,6 +1718,7 @@ void SynapsedEngine::probeSeedNodes() const {
             } else {
                 pe.latency_ms = -1;
                 pe.last_ok_ms = 0;
+                noteRemoteHandshake(host, false);
             }
             seedRows.push_back(pe);
         }
@@ -2576,6 +2578,7 @@ void SynapsedEngine::p2pListenerLoop() const {
                     std::istringstream iss(rest);
                     iss >> dialer;
                     mergeKnownPeer(dialer, "inbound", true);
+                    noteRemoteHandshake(dialer, true);
                 }
                 std::vector<std::string> onions;
                 {
@@ -2597,6 +2600,7 @@ void SynapsedEngine::p2pListenerLoop() const {
             } else if (msg.find("SYNAPSE_PEER ") == 0) {
                 std::string peerAddr = trim(msg.substr(13));
                 mergeKnownPeer(peerAddr, "inbound", true);
+                noteRemoteHandshake(peerAddr, true);
                 std::string reply = "SYNAPSE_ACK " + ownOnion_ + ":8333\n";
                 send(cfd, reply.c_str(), reply.size(), 0);
                 std::string peer = onionHostOnly(peerAddr);
@@ -3014,6 +3018,47 @@ static bool isValidV3Onion(const std::string& s) {
     return true;
 }
 
+void SynapsedEngine::noteRemoteHandshake(const std::string& onionRaw, bool ok) const {
+    const std::string onion = onionHostOnly(trim(onionRaw));
+    if (!isValidV3Onion(onion)) return;
+    if (!ownOnion_.empty() && onion == onionHostOnly(ownOnion_)) return;
+    if (!ok) {
+        std::lock_guard<std::mutex> lock(liveRemotesMtx_);
+        liveHandshakes_.erase(onion);
+        return;
+    }
+    LiveHandshake row;
+    row.okAt = nowMillis();
+    row.configuredSeed = isConfiguredSeedHost(loadConfiguredSeeds(dataDir_), onion);
+    std::lock_guard<std::mutex> lock(liveRemotesMtx_);
+    liveHandshakes_[onion] = row;
+}
+
+int SynapsedEngine::countLiveRemotes() const {
+    const std::string self = onionHostOnly(ownOnion_);
+    const int64_t now = nowMillis();
+    // A non-seed drops off unless its own handshake is still fresh.
+    // A configured seed can sit in one mesh cycle (block sync, then dial)
+    // for several minutes. The next failed dial or probe erases it immediately.
+    constexpr int64_t kRemoteLiveMs = 90 * 1000;
+    constexpr int64_t kSeedLiveMs = 15 * 60 * 1000;
+    std::lock_guard<std::mutex> lock(liveRemotesMtx_);
+    int n = 0;
+    for (auto it = liveHandshakes_.begin(); it != liveHandshakes_.end(); ) {
+        const std::string& host = it->first;
+        const LiveHandshake& row = it->second;
+        const bool selfRow = host.empty() || (!self.empty() && host == self);
+        const int64_t window = row.configuredSeed ? kSeedLiveMs : kRemoteLiveMs;
+        if (selfRow || row.okAt <= 0 || now < row.okAt || now - row.okAt > window) {
+            it = liveHandshakes_.erase(it);
+            continue;
+        }
+        ++n;
+        ++it;
+    }
+    return n;
+}
+
 void SynapsedEngine::mergeKnownPeer(const std::string& onionRaw, const std::string& source, bool connected) const {
     std::string onion = onionHostOnly(trim(onionRaw));
     if (!isValidV3Onion(onion)) return;
@@ -3379,22 +3424,28 @@ std::vector<std::string> SynapsedEngine::dialPeer(const std::string& onion) {
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
+    auto failHandshake = [&]() {
+        CLOSESOCK(fd);
+        noteRemoteHandshake(onion, false);
+        return learned;
+    };
+
     struct sockaddr_in sa{};
     sa.sin_family = AF_INET;
     sa.sin_port = htons(static_cast<uint16_t>(gSocksPort.load()));
     inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr);
-    if (connect(fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) { CLOSESOCK(fd); return learned; }
+    if (connect(fd, (struct sockaddr*)&sa, sizeof(sa)) < 0) return failHandshake();
 
     uint8_t greeting[] = {0x05, 0x02, 0x00, 0x02};
     send(fd, (char*)greeting, 4, 0);
     uint8_t gresp[2];
-    if (recv(fd, (char*)gresp, 2, 0) != 2 || gresp[0] != 0x05) { CLOSESOCK(fd); return learned; }
+    if (recv(fd, (char*)gresp, 2, 0) != 2 || gresp[0] != 0x05) return failHandshake();
     if (gresp[1] == 0x02) {
         uint8_t auth[] = {0x01, 0x00, 0x00};
         send(fd, (char*)auth, 3, 0);
         uint8_t aresp[2];
-        if (recv(fd, (char*)aresp, 2, 0) != 2 || aresp[1] != 0x00) { CLOSESOCK(fd); return learned; }
-    } else if (gresp[1] != 0x00) { CLOSESOCK(fd); return learned; }
+        if (recv(fd, (char*)aresp, 2, 0) != 2 || aresp[1] != 0x00) return failHandshake();
+    } else if (gresp[1] != 0x00) return failHandshake();
 
     std::vector<uint8_t> req;
     req.push_back(0x05); req.push_back(0x01); req.push_back(0x00); req.push_back(0x03);
@@ -3407,7 +3458,7 @@ std::vector<std::string> SynapsedEngine::dialPeer(const std::string& onion) {
 
     uint8_t resp[10];
     ssize_t n = recv(fd, (char*)resp, sizeof(resp), 0);
-    if (n < 2 || resp[1] != 0x00) { CLOSESOCK(fd); return learned; }
+    if (n < 2 || resp[1] != 0x00) return failHandshake();
 
     std::string msg = "GET_PEERS " + ownOnion_ + "\n";
     send(fd, msg.c_str(), msg.size(), 0);
@@ -3419,6 +3470,7 @@ std::vector<std::string> SynapsedEngine::dialPeer(const std::string& onion) {
     CLOSESOCK(fd);
 
     mergeKnownPeer(onion, "pex", true);
+    noteRemoteHandshake(onion, true);
     {
         auto t1 = std::chrono::steady_clock::now();
         int rtt = (int)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
@@ -3901,6 +3953,10 @@ int SynapsedEngine::init(const std::string& configPath) {
     nodeId_ = generateNodeId();
     startTime_ = nowMillis();
     peerCount_ = 0;
+    {
+        std::lock_guard<std::mutex> live(liveRemotesMtx_);
+        liveHandshakes_.clear();
+    }
 
     const char* home = std::getenv("HOME");
 #ifdef _WIN32
@@ -4067,6 +4123,10 @@ void SynapsedEngine::shutdown() {
     }
     nodeId_.clear();
     peerCount_ = 0;
+    {
+        std::lock_guard<std::mutex> live(liveRemotesMtx_);
+        liveHandshakes_.clear();
+    }
     connectionType_ = "disconnected";
     modelLoaded_ = false;
 }
@@ -4395,7 +4455,7 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                          seenAgo, upMs, kp.alias, kp.avatar))
                 meshPeers++;
         }
-        peerCount_ = static_cast<int>(emitted);
+        peerCount_ = countLiveRemotes();
 
         ss << "],\"own_onion\":\"" << jsonEscape(ownOnion_)
            << "\",\"hs_published\":" << (!ownOnion_.empty() ? "true" : "false")
@@ -5645,29 +5705,17 @@ std::string SynapsedEngine::getStatus() const {
         connectionType_ = "tor";
         if (!ti.bootstrap.empty()) torBootstrap_ = ti.bootstrap;
         if (ti.circuits > 0) torCircuits_ = ti.circuits;
-        int n = 0;
-        if (!ownOnion_.empty()) n = 1;
-        {
-            std::lock_guard<std::mutex> lock(knownPeersMtx_);
-            std::set<std::string> seen;
-            if (!ownOnion_.empty()) seen.insert(onionHostOnly(ownOnion_));
-            for (const auto& kv : knownPeers_) {
-                const auto& kp = kv.second;
-                const std::string h = onionHostOnly(kp.onion);
-                if (h.empty() || seen.count(h)) continue;
-                if (kp.alias.empty() && kp.avatar.empty()) continue;
-                seen.insert(h);
-                n++;
-            }
-        }
-        peerCount_ = n;
     }
+
+    // JSON field "peers" is countLiveRemotes(): this cell's live remotes only.
+    const int liveRemotes = countLiveRemotes();
+    peerCount_ = liveRemotes;
 
     int64_t uptime = nowMillis() - startTime_;
     nlohmann::json j;
     j["node_id"] = nodeId_;
     j["connection"] = connectionType_;
-    j["peers"] = peerCount_;
+    j["peers"] = liveRemotes;
     j["balance"] = balance_;
     std::string naanTask;
     std::string naanTopics;
