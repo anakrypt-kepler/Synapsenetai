@@ -70,14 +70,9 @@
     </div>
 
     <div class="card">
-      <div class="card-header">PEERS · 1 = YOU ON TOR</div>
+      <div class="card-header">PEERS</div>
       {#if hasOnion}
-        <div class="card-value wrap">
-          {$nodeStatus.peers}
-          {#if $nodeStatus.peers >= 1}
-            <span class="you-badge">YOU</span>
-          {/if}
-        </div>
+        <div class="card-value wrap">{$nodeStatus.peers}</div>
         <div class="onion-row">
           <div class="hs-line mono" title={$nodeStatus.onion}>HS:{onionShort}…</div>
           <button class="btn-secondary" type="button" on:click={copyOnion}>[ COPY ]</button>
@@ -89,7 +84,7 @@
           <div class="hint">{$nodeStatus.tor_bootstrap}</div>
         {/if}
       {/if}
-      <div class="hint">This node counts as 1 when the onion is published. Remote mesh is NET.</div>
+      <div class="hint">Live remotes this desktop has reached. This node is not included. The map is NET.</div>
     </div>
   </div>
 
@@ -291,20 +286,6 @@
   .conn-dot.tor-pulse {
     background: var(--text-primary);
     animation: tor-pulse 2.2s var(--ease, cubic-bezier(0.22, 1, 0.36, 1)) infinite;
-  }
-
-  .you-badge {
-    font-family: var(--font);
-    font-size: 8px;
-    font-weight: 400;
-    padding: 3px 6px;
-    border-radius: 0;
-    background: var(--ok);
-    color: #000;
-    letter-spacing: 0;
-    margin-left: 8px;
-    display: inline-block;
-    vertical-align: middle;
   }
 
   .onion-row {
