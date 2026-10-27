@@ -85,7 +85,7 @@
         {/if}
       {/if}
       {#if $nodeStatus.peers >= 1}
-        <div class="hint">{$nodeStatus.peers === 1 ? "This 1 is a reached remote, not this computer." : "These are reached remotes, not this computer."} The map is on NET.</div>
+        <div class="hint">This number is this computer plus every reached remote. The map is on NET.</div>
       {/if}
     </div>
   </div>

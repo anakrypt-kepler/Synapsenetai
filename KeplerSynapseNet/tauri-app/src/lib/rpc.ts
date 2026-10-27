@@ -181,7 +181,7 @@ export interface SystemInfo {
 
 export interface NodeStatus {
   connection: string;
-  // Distinct remotes with a live handshake. Filled by engine status field "peers".
+  // This computer once its onion is up, plus each reached remote.
   peers: number;
   balance: string;
   naan_state: string;

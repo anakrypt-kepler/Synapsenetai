@@ -36,6 +36,9 @@ foreach ($src in @(
     if (-not (Test-Path $src)) { throw "Missing $src" }
     Copy-Item $src (Join-Path $stage (Split-Path $src -Leaf)) -Force
 }
+$example = Join-Path $root "synapsenet.conf.example"
+if (-not (Test-Path $example)) { throw "Missing $example" }
+Copy-Item $example (Join-Path $stage "synapsenet.conf.example") -Force
 
 $app = Join-Path $root "tauri-app"
 Push-Location $app

@@ -17,7 +17,7 @@
     <span class="conn-indicator" class:connected={isConnected} class:tor-blink={isTor}></span>
     <span class:tor-blink={isTor}>{$connectionLabel}</span>
   </div>
-  <div class="statusbar-item" title="Live remotes">
+  <div class="statusbar-item" title="This computer plus every reached remote">
     {$nodeStatus.peers}P
   </div>
   <div class="statusbar-item">

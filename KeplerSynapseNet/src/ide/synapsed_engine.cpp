@@ -4511,7 +4511,8 @@ std::string SynapsedEngine::rpcCall(const std::string& method, const std::string
                          seenAgo, upMs, kp.alias, kp.avatar))
                 meshPeers++;
         }
-        peerCount_ = countLiveRemotes();
+        // This computer counts once its onion is up, plus each reached remote.
+        peerCount_ = countLiveRemotes() + (ownOnion_.empty() ? 0 : 1);
 
         ss << "],\"own_onion\":\"" << jsonEscape(ownOnion_)
            << "\",\"hs_published\":" << (!ownOnion_.empty() ? "true" : "false")
@@ -5769,15 +5770,17 @@ std::string SynapsedEngine::getStatus() const {
         if (ti.circuits > 0) torCircuits_ = ti.circuits;
     }
 
-    // JSON field "peers" is countLiveRemotes(): this cell's live remotes only.
+    // JSON field "peers" counts this cell once its onion is published,
+    // plus every reached remote. A third computer raises the same number.
     const int liveRemotes = countLiveRemotes();
-    peerCount_ = liveRemotes;
+    const int meshCells = liveRemotes + (ownOnion_.empty() ? 0 : 1);
+    peerCount_ = meshCells;
 
     int64_t uptime = nowMillis() - startTime_;
     nlohmann::json j;
     j["node_id"] = nodeId_;
     j["connection"] = connectionType_;
-    j["peers"] = liveRemotes;
+    j["peers"] = meshCells;
     j["balance"] = balance_;
     std::string naanTask;
     std::string naanTopics;

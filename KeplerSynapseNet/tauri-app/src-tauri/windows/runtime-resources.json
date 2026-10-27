@@ -21,7 +21,8 @@
       "windows-runtime/ggml-base.dll": "ggml-base.dll",
       "windows-runtime/ggml-cpu.dll": "ggml-cpu.dll",
       "windows-runtime/oqs.dll": "oqs.dll",
-      "windows-runtime/libsecp256k1-7.dll": "libsecp256k1-7.dll"
+      "windows-runtime/libsecp256k1-7.dll": "libsecp256k1-7.dll",
+      "windows-runtime/synapsenet.conf.example": "synapsenet.conf.example"
     }
   }
 }

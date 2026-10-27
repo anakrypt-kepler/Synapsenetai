@@ -22,6 +22,46 @@ fn config_path() -> PathBuf {
     config_dir().join("config.toml")
 }
 
+fn mesh_seed_example_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(exe) = std::env::current_exe() else {
+        return out;
+    };
+    let Some(dir) = exe.parent() else {
+        return out;
+    };
+    out.push(dir.join("synapsenet.conf.example"));
+    out.push(dir.join("resources").join("synapsenet.conf.example"));
+    let mut cursor = dir.to_path_buf();
+    for _ in 0..6 {
+        out.push(cursor.join("synapsenet.conf.example"));
+        if !cursor.pop() {
+            break;
+        }
+    }
+    out
+}
+
+/// A new desktop has no mesh until this file exists. Linux lego already copies
+/// the example. The Windows setup ships the same file beside the exe. Never
+/// replace a seed the operator already wrote.
+fn ensure_mesh_seed_file() {
+    let dest = config_dir().join("synapsenet.conf");
+    if dest.is_file() {
+        return;
+    }
+    let Some(src) = mesh_seed_example_candidates()
+        .into_iter()
+        .find(|path| path.is_file())
+    else {
+        return;
+    };
+    if std::fs::create_dir_all(config_dir()).is_err() {
+        return;
+    }
+    let _ = std::fs::copy(src, dest);
+}
+
 const MODEL_PATH_KEYS: &[&str] = &["model_path", "guide_model_path", "naan_model_path"];
 
 fn renderer_path_text_ok(raw: &str) -> bool {
@@ -163,6 +203,7 @@ pub fn synapsed_init(state: State<'_, EngineState>) -> Result<(), String> {
         return Ok(());
     }
 
+    ensure_mesh_seed_file();
     ffi::load()?;
 
     let cfg = config_path();

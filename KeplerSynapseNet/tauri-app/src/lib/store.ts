@@ -29,7 +29,7 @@ export const myWalletAddress = writable<string>("");
 
 export const nodeStatus = writable<NodeStatus>({
   connection: "disconnected",
-  // Live remote handshakes from status JSON "peers" (countLiveRemotes).
+  // Status JSON "peers": this computer once its onion is up, plus reached remotes.
   peers: 0,
   balance: "0.00",
   naan_state: "off",
