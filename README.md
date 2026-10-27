@@ -68,6 +68,9 @@ The mesh is up. This desktop and the VPS seed are both on the map. The count is 
 <p align="center">
   <img src="pictures/mesh-net.png" alt="NET map: kepler and the VPS seed are both up." width="100%">
 </p>
+<p align="center">
+  <img src="pictures/naan-live.png" alt="NAAN working on the same live mesh. Tor is up and the peer count is 2." width="100%">
+</p>
 
 I built this. One person. C++, crypto, Tor, a local model. Not a company. Not a committee.
 
