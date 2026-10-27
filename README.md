@@ -516,7 +516,11 @@ Native Windows notes live in `KeplerSynapseNet/docker/windows/KEPLER_WRITE_THIS.
 
 If this is worth keeping online — VPS, builds, time — you can send coin. That is optional. It does not buy a feature.
 
-<p align="center"><strong>Coming soon.</strong></p>
+**Monero (XMR)**
+
+```
+42r5VJ6NVSCKuubuBxxpBTHL1tn6urt9nMXdyWc4kmFcJVWo7oirEm5Bmcyx6XPmRuXfBtjjyE2gQezmJTeW2Zf8TNEi9E6
+```
 
 ---
 
