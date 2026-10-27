@@ -60,7 +60,14 @@ Someone building that setup runs `KeplerSynapseNet/scripts/package-windows.ps1`.
 
 ---
 
-Desktop screenshots come next. The map stays here.
+The mesh is up. This desktop and the VPS seed are both on the map. The count is 2: this computer plus that reached remote.
+
+<p align="center">
+  <img src="pictures/mesh-desk.png" alt="Home: Tor is up and the peer count is 2, this computer plus the reached seed." width="100%">
+</p>
+<p align="center">
+  <img src="pictures/mesh-net.png" alt="NET map: kepler and the VPS seed are both up." width="100%">
+</p>
 
 I built this. One person. C++, crypto, Tor, a local model. Not a company. Not a committee.
 
