@@ -1,4 +1,5 @@
-<p align="center"><strong>Support</strong> — optional. The mesh runs without it. This does not buy a feature.</p>
+<p align="center"><strong>Support the project</strong></p>
+<p align="center">Optional. The mesh runs without it. This does not buy a feature.</p>
 
 <table align="center">
 <tr>
@@ -10,6 +11,19 @@
 <td valign="middle"><code>42r5VJ6NVSCKuubuBxxpBTHL1tn6urt9nMXdyWc4kmFcJVWo7oirEm5Bmcyx6XPmRuXfBtjjyE2gQezmJTeW2Zf8TNEi9E6</code></td>
 </tr>
 </table>
+
+<p align="center">If you want to support the project, I am glad. Thanks in advance to anyone who sends a piece toward keeping it online.</p>
+
+<p align="center">
+  <img src="pictures/vps-paused.png" alt="VPS server paused" width="268" height="40">
+</p>
+<p align="center">The VPS server is paused for now. This is for network tests: how peers see each other.</p>
+
+<p align="center">
+  <a href="https://bitcointalk.org/index.php?action=profile;u=3773012"><img src="pictures/contact.png" alt="BitcoinTalk" width="48" height="48"></a>
+</p>
+<p align="center">If you want to talk, I made a page where you can write to me. We can discuss the project, or you can support it. I would be glad.<br>
+<a href="https://bitcointalk.org/index.php?action=profile;u=3773012">bitcointalk.org/index.php?action=profile;u=3773012</a></p>
 
 <p align="center">
   <picture>
