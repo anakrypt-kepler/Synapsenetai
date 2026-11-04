@@ -2,11 +2,11 @@
 
 <table align="center">
 <tr>
-<td valign="middle" width="36"><img src="pictures/bitcoin.png" alt="Bitcoin" width="28" height="28"></td>
+<td valign="middle" width="72"><img src="pictures/bitcoin.png" alt="Bitcoin" width="64" height="64"></td>
 <td valign="middle"><code>bc1qq987mfm3gprkrrllzgzv9ve7np2v096f3hk6g6</code></td>
 </tr>
 <tr>
-<td valign="middle" width="36"><img src="pictures/monero.png" alt="Monero" width="28" height="28"></td>
+<td valign="middle" width="72"><img src="pictures/monero.png" alt="Monero" width="64" height="64"></td>
 <td valign="middle"><code>42r5VJ6NVSCKuubuBxxpBTHL1tn6urt9nMXdyWc4kmFcJVWo7oirEm5Bmcyx6XPmRuXfBtjjyE2gQezmJTeW2Zf8TNEi9E6</code></td>
 </tr>
 </table>
@@ -527,17 +527,6 @@ docker compose -f docker-compose.yml -f docker-compose.windows.yml up --build
 ```
 
 Native Windows notes live in `KeplerSynapseNet/docker/windows/KEPLER_WRITE_THIS.txt`. I left that file empty on purpose. The desktop itself runs on Windows. This compose path is still the Linux image.
-
----
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="pictures/art/hd-support-light.svg">
-    <img src="pictures/art/hd-support-dark.svg" alt="Support" width="100%">
-  </picture>
-</p>
-
-If this is worth keeping online — VPS, builds, time — you can send coin. That is optional. It does not buy a feature. Bitcoin and Monero are at the top of this page.
 
 ---
 
