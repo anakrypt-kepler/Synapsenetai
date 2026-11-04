@@ -1,3 +1,16 @@
+<p align="center"><strong>Support</strong> — optional. The mesh runs without it. This does not buy a feature.</p>
+
+<table align="center">
+<tr>
+<td valign="middle" width="36"><img src="pictures/bitcoin.png" alt="Bitcoin" width="28" height="28"></td>
+<td valign="middle"><code>bc1qq987mfm3gprkrrllzgzv9ve7np2v096f3hk6g6</code></td>
+</tr>
+<tr>
+<td valign="middle" width="36"><img src="pictures/monero.png" alt="Monero" width="28" height="28"></td>
+<td valign="middle"><code>42r5VJ6NVSCKuubuBxxpBTHL1tn6urt9nMXdyWc4kmFcJVWo7oirEm5Bmcyx6XPmRuXfBtjjyE2gQezmJTeW2Zf8TNEi9E6</code></td>
+</tr>
+</table>
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/hero-light.svg">
@@ -524,13 +537,7 @@ Native Windows notes live in `KeplerSynapseNet/docker/windows/KEPLER_WRITE_THIS.
   </picture>
 </p>
 
-If this is worth keeping online — VPS, builds, time — you can send coin. That is optional. It does not buy a feature.
-
-**Monero (XMR)**
-
-```
-42r5VJ6NVSCKuubuBxxpBTHL1tn6urt9nMXdyWc4kmFcJVWo7oirEm5Bmcyx6XPmRuXfBtjjyE2gQezmJTeW2Zf8TNEi9E6
-```
+If this is worth keeping online — VPS, builds, time — you can send coin. That is optional. It does not buy a feature. Bitcoin and Monero are at the top of this page.
 
 ---
 
