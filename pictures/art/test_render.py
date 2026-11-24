@@ -48,7 +48,9 @@ class RenderTests(unittest.TestCase):
                 self.assertTrue(body.startswith("<svg "))
                 self.assertIn("</svg>", body)
                 self.assertNotIn("<script", body.lower())
-                self.assertIn("#FF4D0D", body)
+                accent = "#D4D4D8" if theme == "dark" else "#18181B"
+                self.assertIn(accent, body)
+                self.assertNotIn("#FF4D0D", body)
 
     def test_core_and_flow_embed_jetbrains_mono(self):
         for name in CORE + FLOWS:

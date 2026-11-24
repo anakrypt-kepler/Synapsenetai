@@ -6,16 +6,16 @@
 <text x="80.8" y="46" fill="#18181B" font-size="24" text-anchor="middle" font-weight="600">ALPHA</text>
 <text x="80.8" y="68" fill="#71717A" font-size="9" text-anchor="middle" letter-spacing="0.7">STATUS</text>
 <rect x="169.6" y="0.5" width="161.6" height="91" fill="#FAFAFA" rx="6" stroke="#E4E4E7"/>
-<rect x="169.6" y="0.5" width="3" height="91" fill="#FF4D0D" />
-<text x="250.39999999999998" y="46" fill="#FF4D0D" font-size="24" text-anchor="middle" font-weight="600">TOR ONLY</text>
+<rect x="169.6" y="0.5" width="3" height="91" fill="#18181B" />
+<text x="250.39999999999998" y="46" fill="#18181B" font-size="24" text-anchor="middle" font-weight="600">TOR ONLY</text>
 <text x="250.39999999999998" y="68" fill="#71717A" font-size="9" text-anchor="middle" letter-spacing="0.7">MESH</text>
 <rect x="339.2" y="0.5" width="161.6" height="91" fill="#FAFAFA" rx="6" stroke="#E4E4E7"/>
 <rect x="339.2" y="0.5" width="3" height="91" fill="#E4E4E7" />
 <text x="420.0" y="46" fill="#18181B" font-size="24" text-anchor="middle" font-weight="600">MIT</text>
 <text x="420.0" y="68" fill="#71717A" font-size="9" text-anchor="middle" letter-spacing="0.7">LICENSE</text>
 <rect x="508.8" y="0.5" width="161.6" height="91" fill="#FAFAFA" rx="6" stroke="#E4E4E7"/>
-<rect x="508.8" y="0.5" width="3" height="91" fill="#FF4D0D" />
-<text x="589.6" y="46" fill="#FF4D0D" font-size="18" text-anchor="middle" font-weight="600">C++ / RUST</text>
+<rect x="508.8" y="0.5" width="3" height="91" fill="#18181B" />
+<text x="589.6" y="46" fill="#18181B" font-size="18" text-anchor="middle" font-weight="600">C++ / RUST</text>
 <text x="589.6" y="68" fill="#71717A" font-size="9" text-anchor="middle" letter-spacing="0.7">ENGINE</text>
 <rect x="678.4" y="0.5" width="161.6" height="91" fill="#FAFAFA" rx="6" stroke="#E4E4E7"/>
 <rect x="678.4" y="0.5" width="3" height="91" fill="#E4E4E7" />

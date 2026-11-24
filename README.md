@@ -1,3 +1,5 @@
+<p align="center">SynapseNet is a desktop cell. You mine knowledge through Tor, on the clearnet and on the darknet. A local model does the work. Peers meet only as hidden services. The ledger is Proof of Emergence.</p>
+
 <p align="center"><strong>Support the project</strong></p>
 <p align="center">Optional. The mesh runs without it. This does not buy a feature.</p>
 

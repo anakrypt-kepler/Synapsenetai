@@ -18,12 +18,11 @@ ROOT = Path(__file__).resolve().parents[2]
 ART = Path(__file__).resolve().parent
 PORTRAIT = ROOT / "pictures" / "kepler.jpg"
 LOGIN = "anakrypt-kepler"
-ACCENT = "#FF4D0D"
 MAP_WIDTH = 840
 MAP_HEIGHT = 640
 THEMES = {
-    "dark": {"text": "#F4F4F5", "muted": "#A1A1AA", "dim": "#71717A", "edge": "#24242A", "card": "#101013", "grid": "#151518"},
-    "light": {"text": "#18181B", "muted": "#52525B", "dim": "#71717A", "edge": "#E4E4E7", "card": "#FAFAFA", "grid": "#F4F4F5"},
+    "dark": {"text": "#F4F4F5", "muted": "#A1A1AA", "dim": "#71717A", "edge": "#24242A", "card": "#101013", "grid": "#151518", "accent": "#D4D4D8"},
+    "light": {"text": "#18181B", "muted": "#52525B", "dim": "#71717A", "edge": "#E4E4E7", "card": "#FAFAFA", "grid": "#F4F4F5", "accent": "#18181B"},
 }
 
 
@@ -50,7 +49,8 @@ class SVG:
     def section(self, title, note=""):
         self.text(22, 28, title.upper(), 16, "text", font_weight=600, letter_spacing=1.5)
         self.text(self.width - 22, 28, note, 11, "dim", text_anchor="end")
-        self.raw(f'<defs><linearGradient id="rule"><stop stop-color="{ACCENT}" stop-opacity=".9"/><stop offset="1" stop-color="{ACCENT}" stop-opacity="0"/></linearGradient></defs>')
+        accent = self.colors["accent"]
+        self.raw(f'<defs><linearGradient id="rule"><stop stop-color="{accent}" stop-opacity=".9"/><stop offset="1" stop-color="{accent}" stop-opacity="0"/></linearGradient></defs>')
         self.rect(0, 40, self.width, 1, "url(#rule)")
 
     def finish(self):
@@ -260,9 +260,9 @@ def net(theme):
     svg.rect(0, 0, MAP_WIDTH, MAP_HEIGHT, "url(#grid)")
     bottom = MAP_HEIGHT - 30
     for path in [f"M14 30V14H30", f"M826 30V14h-16", f"M14 {bottom}v16h16", f"M826 {bottom}v16h-16"]:
-        svg.raw(f'<path d="{path}" fill="none" stroke="{ACCENT}" stroke-width="2"/>')
+        svg.raw(f'<path d="{path}" fill="none" stroke="{svg.colors["accent"]}" stroke-width="2"/>')
     svg.text(22, 40, "SynapseNet", 19, "text", font_weight=600)
-    svg.text(178, 40, "@" + LOGIN, 13, ACCENT)
+    svg.text(178, 40, "@" + LOGIN, 13, svg.colors["accent"])
     svg.text(22, 62, "the cell, the mesh, the ledger", 12)
     svg.rect(0, 76, MAP_WIDTH, 1, svg.colors["edge"])
     for index, (a, b) in enumerate(sorted(mesh_edges(names))):
@@ -271,14 +271,14 @@ def net(theme):
         svg.raw(f'<path id="edge{index}" d="M{x1},{y1}L{x2},{y2}" fill="none" stroke="{svg.colors["edge"]}"/>')
         duration, begin = 3.5 + index % 7 * 0.19, -(index * 0.37 % 4)
         svg.raw(
-            f'<circle class="motion" r="2" fill="{ACCENT}" opacity="0">'
+            f'<circle class="motion" r="2" fill="{svg.colors["accent"]}" opacity="0">'
             f'<animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.12;0.88;1" dur="{duration:.2f}s" begin="{begin:.2f}s" repeatCount="indefinite"/>'
             f'<animateMotion dur="{duration:.2f}s" begin="{begin:.2f}s" repeatCount="indefinite"><mpath href="#edge{index}" xlink:href="#edge{index}"/></animateMotion></circle>'
         )
     for name, x, y, hub in names:
         radius = 16 if hub else 6
-        stroke = ACCENT if hub else svg.colors["dim"]
-        fill_node = ACCENT if hub else svg.colors["card"]
+        stroke = svg.colors["accent"] if hub else svg.colors["dim"]
+        fill_node = svg.colors["accent"] if hub else svg.colors["card"]
         slug = node_slug(name)
         info = briefs[name]
         hit = max(radius + 10, 20)
@@ -287,7 +287,7 @@ def net(theme):
         svg.raw(f'<circle class="hit" cx="{x}" cy="{y}" r="{hit}" fill="#000" fill-opacity="0"/>')
         if hub:
             svg.raw(
-                f'<circle class="motion" cx="{x}" cy="{y}" r="{radius}" fill="none" stroke="{ACCENT}">'
+                f'<circle class="motion" cx="{x}" cy="{y}" r="{radius}" fill="none" stroke="{svg.colors["accent"]}">'
                 f'<animate attributeName="r" values="{radius};{radius + 12}" dur="2.8s" repeatCount="indefinite"/>'
                 f'<animate attributeName="opacity" values=".6;0" dur="2.8s" repeatCount="indefinite"/></circle>'
             )
@@ -312,8 +312,8 @@ def net(theme):
         slug = node_slug(name)
         left, top, width, height = card_box(x, y)
         svg.raw(f'<g id="card-{slug}" class="card">')
-        svg.rect(left, top, width, height, svg.colors["card"], rx=6, stroke=ACCENT)
-        svg.rect(left, top, 3, height, ACCENT)
+        svg.rect(left, top, width, height, svg.colors["card"], rx=6, stroke=svg.colors["accent"])
+        svg.rect(left, top, 3, height, svg.colors["accent"])
         svg.text(left + 14, top + 22, info["title"], 12, "text", font_weight=600)
         svg.text(left + 14, top + 40, info["blurb"], 10, "muted")
         for index, path in enumerate(info["files"][:3]):
@@ -354,13 +354,13 @@ def add_corners(svg, height):
     bottom = height - 14
     right = svg.width - 14
     for path in [f"M14 22V8H30", f"M{right} 22V8h-16", f"M14 {bottom}v14h16", f"M{right} {bottom}v14h-16"]:
-        svg.raw(f'<path d="{path}" fill="none" stroke="{ACCENT}" stroke-width="2"/>')
+        svg.raw(f'<path d="{path}" fill="none" stroke="{svg.colors["accent"]}" stroke-width="2"/>')
 
 
 def add_packet(svg, eid, index):
     duration, begin = 3.2 + index % 7 * 0.18, -(index * 0.41 % 4)
     svg.raw(
-        f'<circle class="motion" r="2.2" fill="{ACCENT}" opacity="0">'
+        f'<circle class="motion" r="2.2" fill="{svg.colors["accent"]}" opacity="0">'
         f'<animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.12;0.88;1" dur="{duration:.2f}s" begin="{begin:.2f}s" repeatCount="indefinite"/>'
         f'<animateMotion dur="{duration:.2f}s" begin="{begin:.2f}s" repeatCount="indefinite"><mpath href="#{eid}" xlink:href="#{eid}"/></animateMotion></circle>'
     )
@@ -375,11 +375,11 @@ def add_edge(svg, index, x1, y1, x2, y2, prefix="e"):
 
 def add_dot(svg, x, y, label, hub=False, side="right"):
     radius = 13 if hub else 6
-    stroke = ACCENT if hub else svg.colors["dim"]
-    fill_node = ACCENT if hub else svg.colors["card"]
+    stroke = svg.colors["accent"] if hub else svg.colors["dim"]
+    fill_node = svg.colors["accent"] if hub else svg.colors["card"]
     if hub:
         svg.raw(
-            f'<circle class="motion" cx="{x}" cy="{y}" r="{radius}" fill="none" stroke="{ACCENT}">'
+            f'<circle class="motion" cx="{x}" cy="{y}" r="{radius}" fill="none" stroke="{svg.colors["accent"]}">'
             f'<animate attributeName="r" values="{radius};{radius + 10}" dur="2.6s" repeatCount="indefinite"/>'
             f'<animate attributeName="opacity" values=".55;0" dur="2.6s" repeatCount="indefinite"/></circle>'
         )
@@ -463,9 +463,9 @@ def lego(theme):
         x, y = 18 + col * 118, 62 + row * 78
         accented = index in (0, 5, 8, 11)
         svg.raw(f'<g class="reveal" style="animation-delay:{index * 0.07:.2f}s">')
-        svg.rect(x, y, 108, 64, svg.colors["card"], rx=6, stroke=ACCENT if accented else svg.colors["edge"])
-        svg.rect(x, y, 3, 64, ACCENT if accented else svg.colors["edge"])
-        svg.text(x + 54, y + 38, label, 12, ACCENT if accented else "text", text_anchor="middle", font_weight=600)
+        svg.rect(x, y, 108, 64, svg.colors["card"], rx=6, stroke=svg.colors["accent"] if accented else svg.colors["edge"])
+        svg.rect(x, y, 3, 64, svg.colors["accent"] if accented else svg.colors["edge"])
+        svg.text(x + 54, y + 38, label, 12, svg.colors["accent"] if accented else "text", text_anchor="middle", font_weight=600)
         svg.raw("</g>")
     svg.text(22, 224, "--from N --until N   --skip-desktop   --skip-tests", 10, "dim")
     return svg
@@ -542,7 +542,7 @@ def skin(theme):
         y = 62 + index * 44
         svg.raw(f'<g class="reveal" style="animation-delay:{index * 0.12:.2f}s">')
         svg.rect(22, y, 796, 38, svg.colors["card"], rx=6, stroke=svg.colors["edge"])
-        svg.rect(22, y, 3, 38, ACCENT)
+        svg.rect(22, y, 3, 38, svg.colors["accent"])
         svg.text(42, y + 24, title, 13, "text", font_weight=600)
         svg.text(188, y + 24, blurb, 11, "muted")
         svg.raw("</g>")
@@ -583,8 +583,8 @@ def tabs(theme):
         x, y = 18 + col * 118, 62 + row * 46
         hot = name in ("SEND", "NAAN", "NET", "SET")
         svg.raw(f'<g class="reveal" style="animation-delay:{index * 0.05:.2f}s">')
-        svg.rect(x, y, 108, 34, svg.colors["card"], rx=16, stroke=ACCENT if hot else svg.colors["edge"])
-        svg.text(x + 54, y + 22, name, 11, ACCENT if hot else "text", text_anchor="middle", font_weight=600)
+        svg.rect(x, y, 108, 34, svg.colors["card"], rx=16, stroke=svg.colors["accent"] if hot else svg.colors["edge"])
+        svg.text(x + 54, y + 22, name, 11, svg.colors["accent"] if hot else "text", text_anchor="middle", font_weight=600)
         svg.raw("</g>")
     return svg
 
@@ -620,10 +620,10 @@ def cards(theme):
     )
     for x, title, blurb, lines in left:
         svg.rect(x, 8, 388, 180, svg.colors["card"], rx=6, stroke=svg.colors["edge"])
-        svg.rect(x, 8, 3, 180, ACCENT)
-        svg.raw(f'<g fill="none" stroke="{ACCENT}" stroke-width="2" opacity=".18"><path d="M{x + 292} 58l28 -16 28 16v32l-28 16-28-16ZM{x + 292} 58l28 16 28-16M{x + 320} 74v32"/><circle cx="{x + 320}" cy="74" r="10"/></g>')
+        svg.rect(x, 8, 3, 180, svg.colors["accent"])
+        svg.raw(f'<g fill="none" stroke="{svg.colors["accent"]}" stroke-width="2" opacity=".18"><path d="M{x + 292} 58l28 -16 28 16v32l-28 16-28-16ZM{x + 292} 58l28 16 28-16M{x + 320} 74v32"/><circle cx="{x + 320}" cy="74" r="10"/></g>')
         svg.text(x + 22, 44, title, 16, "text", font_weight=600)
-        svg.text(x + 22, 70, blurb, 12, ACCENT)
+        svg.text(x + 22, 70, blurb, 12, svg.colors["accent"])
         for index, line in enumerate(lines):
             svg.text(x + 22, 104 + index * 22, line, 12)
     return svg
@@ -633,7 +633,7 @@ def hero(theme):
     svg = SVG(170, theme, "SynapseNet — intelligence belongs to everyone")
     svg.section("SynapseNet", "public cell / alpha")
     svg.text(48, 92, "SynapseNet", 34, "text", font_weight=700)
-    svg.text(48, 122, "Intelligence belongs to everyone.", 14, ACCENT)
+    svg.text(48, 122, "Intelligence belongs to everyone.", 14, svg.colors["accent"])
     svg.text(48, 148, "Local GGUF models. Tor peers. Proof of Emergence. NAAN harvest on a station campus.", 12)
     return svg
 
@@ -643,10 +643,10 @@ def tiles(theme):
     items = [("ALPHA", "STATUS"), ("TOR ONLY", "MESH"), ("MIT", "LICENSE"), ("C++ / RUST", "ENGINE"), ("TAURI", "SHELL")]
     for index, (value, name) in enumerate(items):
         x = round(index * 169.6, 1)
-        color = ACCENT if index in (1, 3) else svg.colors["edge"]
+        color = svg.colors["accent"] if index in (1, 3) else svg.colors["edge"]
         svg.rect(x, 0.5, 161.6, 91, svg.colors["card"], rx=6, stroke=svg.colors["edge"])
         svg.rect(x, 0.5, 3, 91, color)
-        svg.text(x + 80.8, 46, value, 18 if len(str(value)) > 8 else 24, ACCENT if index in (1, 3) else "text", text_anchor="middle", font_weight=600)
+        svg.text(x + 80.8, 46, value, 18 if len(str(value)) > 8 else 24, svg.colors["accent"] if index in (1, 3) else "text", text_anchor="middle", font_weight=600)
         svg.text(x + 80.8, 68, name, 9, "dim", text_anchor="middle", letter_spacing=0.7)
     return svg
 
@@ -664,7 +664,7 @@ def portrait(theme):
     ]
     for index, (title, subtitle) in enumerate(rows):
         y = 88 + index * 51
-        svg.rect(246, y - 12, 2, 14, ACCENT)
+        svg.rect(246, y - 12, 2, 14, svg.colors["accent"])
         svg.text(260, y, title, 13, "text", font_weight=600)
         svg.text(260, y + 19, subtitle, 11.5)
     svg.text(260, 298, "Intelligence belongs to everyone. / Alpha development.", 11, "dim")
@@ -676,7 +676,7 @@ def footer(theme):
     svg.section("Elsewhere", "@" + LOGIN)
     for x, width, value in [(140, 160, "SynapseNet"), (314, 196, "GitHub profile"), (524, 176, "Issues + ideas")]:
         svg.rect(x, 59, width, 30, svg.colors["card"], rx=15, stroke=svg.colors["edge"])
-        svg.text(x + width / 2, 79, value, 11, ACCENT, text_anchor="middle")
+        svg.text(x + width / 2, 79, value, 11, svg.colors["accent"], text_anchor="middle")
     svg.text(420, 116, "Local models. Shared knowledge. Open infrastructure.", 11, "dim", text_anchor="middle")
     svg.text(420, 138, "Desktop screenshots are coming next. The map stays here.", 10, "dim", text_anchor="middle")
     return svg
