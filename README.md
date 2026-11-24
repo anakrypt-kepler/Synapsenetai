@@ -41,6 +41,12 @@
 </p>
 <p align="center">
   <picture>
+    <source media="(prefers-color-scheme: light)" srcset="pictures/art/inspiration-light.svg">
+    <img src="pictures/art/inspiration-dark.svg" alt="Gottfrid Svartholm and Satoshi Nakamoto. These are the people who strongly inspire me." width="100%">
+  </picture>
+</p>
+<p align="center">
+  <picture>
     <source media="(prefers-color-scheme: light)" srcset="pictures/art/footer-light.svg">
     <img src="pictures/art/footer-dark.svg" alt="Local models. Shared knowledge. Open infrastructure." width="100%">
   </picture>
