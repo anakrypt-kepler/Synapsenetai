@@ -1,0 +1,62 @@
+SynapseNet — the knowledge bridge
+24 November 2026
+
+I have been on this architecture for a long time. I come back to it. This page is the design I want on record before I cut the next piece of the node. The cell already runs. The bridge is what I am building toward. I am one person, and there is a lot of work left. I will keep at it as the hours allow.
+
+SynapseNet is not some miner with a chat window on the side. It is the interval where knowledge is assembled. The database is the body the mesh itself accepted. A site is a window on that body.
+
+
+1. The mesh
+
+A full cell is a peer, a miner, and a validator. The machine runs a local model. Cells meet only as Tor hidden services. There is no clearnet peer port.
+
+Proof of Emergence is the ledger. An LLM does not judge consensus. The model talks. The ledger counts. Each full cell casts its own vote, POE_ENTRY and POE_VOTE. Two full cells both have to vote, then the record finalizes. When the set grows, the bar is a strict majority: 2 of 3, 3 of 5, and on. A thin mailbox with no poe key stays mail. It does not judge.
+
+NGT is the unit on that ledger. You earn it or you transfer it. The protocol has no way to buy it. I am not promising it is worth anything. If nobody uses the network, the unit is air.
+
+The work is a knowledge entry other cells can re-run. It is not a hash.
+
+
+2. What a signature says
+
+CODE. A code entry is a patch plus tests. Every voting cell runs that bundle in-process, with no clock, no files, and no network, then hashes the transcript. NGT for CODE is minted only when the tests pass and a majority signs that same hash. A passing bundle adds 0.05 NGT on top of the base acceptance reward. The signature says the run matched. It is silent about a hidden footgun in the patch. It is silent about whether a paragraph is true.
+
+Harvest text. A NAAN page mints only when every voting cell runs the same usefulness check and signs the same three counts: words, distinct words, and topic hits. An error page, a thin page, a link catalog, and a page that misses its declared topic do not enter the ledger. That gate can still be farmed. It has no taste for truth.
+
+Consensus agrees on a count. It does not prove the knowledge.
+
+
+3. The bridge
+
+Anyone can raise a base. The base sits as a site, and the site connects to SynapseNet and pulls from it. You read the knowledge in the site. You do not have to live in a code tree to see it. The same person can send back up the base they accumulated on their own cell. Two directions. Down from the mesh into a window. Up from a desk into the mesh.
+
+This is the part I kept circling, because 2026 has trained people to think a local model is a pile of skills and a pile of prompts. That is not what I am describing. A record on this bridge is a job walked from step to step, the way a person walks a job. The model was given the order. It did the work. The cells signed the same walk. Most of what people will put on a tracker like this is that kind of record, taken from their own cell.
+
+I remember The Pirate Bay clearly, and I remember it because of what it was, not because of the poster. It was an index. The bytes lived on the peers. The pressure landed on the index: who is allowed to point at a file. This bridge is that shape for a model. The mesh is the swarm. The site is the index over records the cells already signed. A clearnet host can be squeezed, and I watched that happen to the trackers I used. A local model that already holds the record is a different object. The weights are on iron you own. The page can go dark. The copy you already pulled does not ask a company if it may stay.
+
+
+4. The small model
+
+On the day I write this, Fable 5.2 and Opus 5.5 are two of the strongest models you can sit down at. I have used the corporate ones. I have used a local model. The line you are sold is that the large one is much smarter, so you skip the hours and you pay. I timed the work. That line does not hold.
+
+An experienced programmer can build the same thing with a local model. It takes more time. That was the difference. The strength is the hours of work, not the size of the brain.
+
+The bridge is how the hours come back. A small model is thin when it has to invent a large memory out of its weights. It is a different tool when the tracker hands it a large body of mined records: walked jobs, code bundles whose transcript already matched, pages that already cleared the same three counts. You run that on your own machine. You do not rent the run. The work people currently pay those two models to do is the work I want the small model to do from that memory, locally, for nothing.
+
+I tested the part people argue with me about. I did not sit and write the job for the model. I wrote the order and left it. It did not matter whether the person at the keyboard knew how to program. I pointed that test at penetration work, and I tried the large hosted models and the smaller local ones. I tried more than one of each. The large ones did not finish. The smaller ones did. This repository is not a pentest framework and it is not a scanner. The test was about the lie of size. One local model, a clear order, and the time to let it work. That is the setup that held.
+
+
+5. Why Tor
+
+Tor is the room the cells already share. An onion site is a place you can publish without asking a host for an account and a name. That is the comfortable part.
+
+People say the network is slow. I run the peer on VPS boxes with a large pipe. I do not sit for hours waiting on a transfer. When I want the bytes on the desk, I move them from the VPS to the machine where I write. I write the code locally. The peer is what I leave up.
+
+
+6. Where this stands
+
+Five cells and a site are a desk. The memory starts when the records worth opening outnumber the people writing them.
+
+I have gone through the architecture again. I will keep cutting the node toward this bridge. The cell is what already runs. The bridge is the design on this page: a window any person can raise, two directions, records that are walked jobs rather than skills, a small model fed by a body the mesh already signed.
+
+I built the cell. One person. If you raise a site, you are opening a window on that body, and you can put your own walked jobs back in.
